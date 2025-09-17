@@ -37,5 +37,3 @@ jobs:
         run: make lint/shellcheck
       - name: "Run cmake-lint"
         run: make lint/cmake-lint
-      - name: "Run niti cpp linter"
-        run: make lint/niti

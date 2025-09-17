@@ -52,8 +52,8 @@ SystemEnv = namedtuple(
         "caching_allocator_config",
         "is_xnnpack_available",
         "cpu_info",
-        "vajra_version",  # vajra specific field
-        "gpu_topo",  # vajra specific field
+        "setu_version",  # setu specific field
+        "gpu_topo",  # setu specific field
         "env_vars",
     ],
 )
@@ -258,8 +258,8 @@ def get_nvidia_smi():
     return smi
 
 
-def get_vajra_version():
-    from vajra import __version__, __version_tuple__
+def get_setu_version():
+    from setu import __version__, __version_tuple__
 
     if __version__ == "dev":
         return "N/A (dev)"
@@ -555,7 +555,7 @@ def get_env_info():
 
     conda_packages = get_conda_packages(run_lambda)
 
-    vajra_version = get_vajra_version()
+    setu_version = get_setu_version()
     gpu_topo = get_gpu_topo(run_lambda)
 
     return SystemEnv(
@@ -586,7 +586,7 @@ def get_env_info():
         caching_allocator_config=get_cachingallocator_config(),
         is_xnnpack_available=is_xnnpack_available(),
         cpu_info=get_cpu_info(run_lambda),
-        vajra_version=vajra_version,
+        setu_version=setu_version,
         gpu_topo=gpu_topo,
         env_vars=get_env_vars(),
     )
@@ -629,7 +629,7 @@ Versions of relevant libraries:
 env_info_fmt += "\n"
 
 env_info_fmt += """
-vajra Version: {vajra_version}
+setu Version: {setu_version}
 GPU Topology:
 {gpu_topo}
 

@@ -191,6 +191,19 @@ docs/clean: ## clean documentation build artifacts
 docs/serve: ## serve documentation locally (default port 8000)
 	$(SCRIPTS_DIR)/docs.sh serve
 
+# === DEV CONTAINERS ===
+##@ Dev Containers
+
+.PHONY: dev_container/start dev_container/stop dev_container/attach
+dev_container/start: ## start development container (requires USERNAME)
+	$(MAKE) -C $(CURDIR)/docker/containers/dev start USERNAME=$(USERNAME)
+
+dev_container/stop: ## stop development container (requires USERNAME)
+	$(MAKE) -C $(CURDIR)/docker/containers/dev stop USERNAME=$(USERNAME)
+
+dev_container/attach: ## attach to running development container (requires USERNAME)
+	$(MAKE) -C $(CURDIR)/docker/containers/dev attach USERNAME=$(USERNAME)
+
 # === UTILITIES ===
 ##@ Utilities
 

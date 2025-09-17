@@ -19,14 +19,14 @@ permissions:
   contents: read
   packages: write
 env:
-  CONTAINER_NAME: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+  CONTAINER_NAME: nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        cuda: ["12.4"]
-        torch: ["2.4"]
+        cuda: ["12.9"]
+        torch: ["2.8"]
     runs-on: [self-hosted, cpu]
     steps:
       - uses: actions/checkout@v4

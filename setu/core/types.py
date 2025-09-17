@@ -1,5 +1,5 @@
 """
-This file defines type aliases for common types used in the Vajra codebase.
+This file defines type aliases for common types used in the Setu codebase.
 The types defined here mirror the ones defined in the C++ codebase.
 """
 

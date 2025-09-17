@@ -11,8 +11,8 @@ jobs:
   build:
     uses: ./.github/workflows/build_wheels.yml
     with:
-      cuda_version: "124"
-      torch_version: "251"
+      cuda_version: "129"
+      torch_version: "280"
       is_nightly: "true"
   publish-nightly:
     needs: build

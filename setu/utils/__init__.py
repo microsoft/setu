@@ -10,8 +10,9 @@ from typing import AsyncIterator, List, Tuple, TypeVar, Union
 
 import psutil
 import torch
-from vajra._native.utils import now_s  # type: ignore
-from vajra.core.types import GPUId
+
+from setu._native.utils import now_s  # type: ignore
+from setu.core.types import GPUId
 
 T = TypeVar("T")
 
@@ -154,7 +155,7 @@ def merge_async_iterators(*iterators: AsyncIterator[T]) -> AsyncIterator[Tuple[i
 def get_random_ipc_path() -> str:
     """Get an available IPC path"""
     tmp_dir = tempfile.gettempdir()
-    ipc_file = os.path.join(tmp_dir, f"vajra-{uuid.uuid4().hex[:8]}.ipc")
+    ipc_file = os.path.join(tmp_dir, f"setu-{uuid.uuid4().hex[:8]}.ipc")
     return ipc_file
 
 

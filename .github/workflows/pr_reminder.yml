@@ -15,7 +15,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '👋 Hi! Thank you for contributing to the Vajra project.\n\n' +
+              body: '👋 Hi! Thank you for contributing to the Setu project.\n\n' +
                 'Just a reminder: PRs would not trigger full CI run by default.\n' +
                 'It would only run `fastcheck` CI which quickly catches errors.\n' +
                 'Once approved, reviewers can run CI to test changes before merging.\n\n' +

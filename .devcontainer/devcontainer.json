@@ -1,0 +1,39 @@
+{
+    "name": "Setu Dev Container",
+    "image": "ghcr.io/project-vajra/setu-dev-cuda12.9.0-torch2.8:latest",
+    "shutdownAction": "stopContainer",
+    "runArgs": [
+        "--gpus", "all",
+        "--tmpfs", "/dev/shm:rw,exec,nosuid,nodev,mode=1777,size=16g"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.isort",
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-vscode.cmake-tools",
+                "streetsidesoftware.code-spell-checker",
+                "wmaurer.change-case",
+                "google.geminicodeassist",
+                "github.copilot",
+                "github.copilot-chat",
+                "eamodio.gitlens",
+                "github.vscode-github-actions",
+                "ms-vscode.sublime-keybindings",
+                "christian-kohler.path-intellisense",
+                "earshinov.permute-lines",
+                "xaver.clang-format",
+                "ms-python.black-formatter",
+                "LittleFoxTeam.vscode-python-test-adapter",
+                "ms-vscode.makefile-tools"
+            ],
+            "settings": {
+                "python.pythonPath": "/root/conda/envs/setu/bin/python",
+                "cmake.cmakePath": "/root/conda/envs/setu/bin/cmake",
+                "python.defaultInterpreterPath": "/root/conda/envs/setu/bin/python"
+            }
+        }
+    }
+}

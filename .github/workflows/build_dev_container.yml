@@ -13,10 +13,10 @@ on:
     inputs:
       cuda_version:
         required: true
-        default: "12.4.1"
+        default: "12.9.0"
       pytorch_version:
         required: true
-        default: "2.4"
+        default: "2.8"
 permissions:
   contents: read
   packages: write
@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: ["12.4.1"]
-        torch: ["2.4"]
+        cuda: ["12.9.0"]
+        torch: ["2.8"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

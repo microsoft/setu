@@ -5,7 +5,7 @@ requires = [
     "packaging",
     "setuptools>=61",
     "setuptools-scm>=8.0",
-    "torch == 2.4",
+    "torch == 2.8",
     "wheel",
 ]
 build-backend = "setuptools.build_meta"

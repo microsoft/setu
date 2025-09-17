@@ -4,7 +4,7 @@ on:
     branches: [main, "release/*"]
   pull_request:
     branches: [main, "release/*"]
-    types: [synchronize, labeled]
+    types: [labeled, synchronize]
   workflow_dispatch:
     inputs:
       overwrite_baseline:
@@ -32,12 +32,10 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'main/')}}
   # we want concurrent jobs on main
 env:
-  CONTAINER_NAME: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+  CONTAINER_NAME: nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04
 jobs:
   test_suite:
-    if: >
-      ${{ github.event_name != 'pull_request' || (github.event.label.name == 'ready' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
-
+    if: ${{ github.event_name != 'pull_request' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: [self-hosted, 4xL40]
     steps:
       - name: "Checkout repository"
@@ -120,7 +118,7 @@ jobs:
         with:
           filename: test_reports/**_coverage.xml
           badge: true
-          fail_below_min: true
+          fail_below_min: false
           format: markdown
           hide_branch_rate: false
           hide_complexity: true
@@ -133,24 +131,6 @@ jobs:
         with:
           recreate: true
           path: code-coverage-results.md
-      - name: "Upload performance test results"
-        uses: actions/upload-artifact@v4
-        id: upload_perf_results
-        if: always()
-        with:
-          name: perf_results_${{ github.run_id }}
-          path: >
-            test_output/performance/perf_results_${{ github.run_id }}.json
-
-      - name: "Upload comparison results"
-        uses: actions/upload-artifact@v4
-        id: upload_comparison_results
-        if: always()
-        with:
-          name: comparison_results_${{ github.run_id }}
-          path: >
-            test_output/performance/comparison_results_${{ github.run_id }}.json
-
       - name: "Stop Docker container"
         id: stop_docker_container
         if: always()

@@ -8,15 +8,15 @@ permissions:
   packages: write
   id-token: write
 env:
-  PYPI_RELEASE_CUDA_VERSION: "124"
-  PYPI_RELEASE_TORCH_VERSION: "251"
+  PYPI_RELEASE_CUDA_VERSION: "129"
+  PYPI_RELEASE_TORCH_VERSION: "280"
   IS_NIGHTLY_BUILD: "false"
 jobs:
   build:
     uses: ./.github/workflows/build_wheels.yml
     with:
-      cuda_version: "124"
-      torch_version: "251"
+      cuda_version: "129"
+      torch_version: "280"
       is_nightly: "false"
   publish:
     needs: build

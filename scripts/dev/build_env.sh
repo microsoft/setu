@@ -16,12 +16,13 @@ get_cuda_version() {
         cuda_minor=$(echo "${SETU_CI_CUDA_VERSION}" | cut -d. -f2)
         echo "cu${cuda_major}${cuda_minor}"
     else
-        echo "cu124"
+        echo "cu129"
+        echo "cu129"
     fi
 }
 
 get_torch_version() {
-    echo "${SETU_CI_TORCH_VERSION:-2.4}"
+    echo "${SETU_CI_TORCH_VERSION:-2.8}"
 }
 
 get_build_type() {

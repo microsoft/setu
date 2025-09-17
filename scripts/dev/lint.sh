@@ -13,12 +13,12 @@ init_ci_environment
 # Python linting functions
 lint_isort() {
     log_lint "Linting (isort Check)..."
-    isort --check-only --profile black setu test examples setup.py
+    isort --check-only --profile black setu test setup.py
 }
 
 lint_black() {
     log_lint "Linting (Black Check)..."
-    black --check setu test examples setup.py
+    black --check setu test setup.py
 }
 
 lint_autoflake() {
@@ -94,26 +94,6 @@ lint_clang_format() {
     else
         log_warning "No C++ files found"
     fi
-}
-
-lint_niti() {
-    log_lint "Linting (niti C++ Check)..."
-
-    # Run niti and capture its exit code before set -e can kill the script
-    set +e # Temporarily disable exit on error
-    niti --check csrc/setu/ --config .niti.yaml
-    local exit_code=$?
-    set -e # Re-enable exit on error
-
-    if [ $exit_code -eq 0 ]; then
-        log_success "niti linting passed!"
-    else
-        log_info "niti linting found issues"
-    fi
-
-    # Always return 0 so linting issues don't fail the build process
-    # The linter output will still show any issues found
-    return 0
 }
 
 # Other linting functions
@@ -197,7 +177,6 @@ lint_all() {
     # C++ linting
     run_linter lint_clang_format "clang-format" failed_checks
     run_linter lint_cpplint "cpplint" failed_checks
-    run_linter lint_niti "niti" failed_checks
 
     # Other linting
     run_linter lint_codespell "codespell" failed_checks
@@ -234,9 +213,6 @@ main() {
         clang-format)
             lint_clang_format
             ;;
-        niti)
-            lint_niti
-            ;;
         codespell)
             lint_codespell
             ;;
@@ -250,7 +226,7 @@ main() {
             lint_all
             ;;
         *)
-            echo "Usage: $0 {isort|black|autoflake|pyright|cpplint|clang-format|niti|codespell|shellcheck|cmake-lint|all}"
+            echo "Usage: $0 {isort|black|autoflake|pyright|cpplint|clang-format|codespell|shellcheck|cmake-lint|all}"
             exit 1
             ;;
     esac

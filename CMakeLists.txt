@@ -17,7 +17,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0")
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0 -DBOOST_STACKTRACE_USE_BACKTRACE)
+add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1 -DBOOST_STACKTRACE_USE_BACKTRACE)
 
 # Build optimization options
 option(SETU_ENABLE_CCACHE "Enable ccache for faster compilation" ON)
@@ -27,7 +27,7 @@ set(CMAKE_LINKER_TYPE MOLD)
 # Define supported versions
 set(PYTHON_SUPPORTED_VERSIONS "3.12")
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
-set(TORCH_SUPPORTED_VERSION_CUDA "2.4")
+set(TORCH_SUPPORTED_VERSION_CUDA "2.8")
 # ##################################################################################################
 # Conda environment detection
 if(DEFINED ENV{CONDA_PREFIX})

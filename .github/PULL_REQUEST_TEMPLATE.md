@@ -10,7 +10,7 @@ FIX #xxxx (*link existing issues this PR will resolve*)
 <!-- inside this <details> section, markdown rendering does not work, so we use raw html here. -->
 <summary><b> PR Checklist (Click to Expand) </b></summary>
 
-<p>Thank you for your contribution to Vajra! Before submitting the pull request, please ensure the PR meets the following criteria. This helps Vajra maintain the code quality and improve the efficiency of the review process.</p>
+<p>Thank you for your contribution to Setu! Before submitting the pull request, please ensure the PR meets the following criteria. This helps Setu maintain the code quality and improve the efficiency of the review process.</p>
 
 <h3>PR Title and Classification</h3>
 <p>Only specific types of PRs will be reviewed. The PR title is prefixed appropriately to indicate the type of change. Please use one of the following:</p>
@@ -32,7 +32,7 @@ FIX #xxxx (*link existing issues this PR will resolve*)
 <ul>
     <li>Pass all linter checks. Please use <code>make format</code></a> to format your code.</li>
     <li>The code need to be well-documented to ensure future contributors can easily understand the code.</li>
-    <li>Please add documentation to <code>docs/source/</code> if the PR modifies the user-facing behaviors of Vajra. It helps user understand and utilize the new features or changes.</li>
+    <li>Please add documentation to <code>docs/source/</code> if the PR modifies the user-facing behaviors of Setu. It helps user understand and utilize the new features or changes.</li>
 </ul>
 
 <h3>Notes for Large Changes</h3>
@@ -40,7 +40,7 @@ FIX #xxxx (*link existing issues this PR will resolve*)
 
 <h3>Thank You</h3>
 
-<p> Finally, thank you for taking the time to read these guidelines and for your interest in contributing to Vajra. Your contributions make Vajra a great tool for everyone! </p>
+<p> Finally, thank you for taking the time to read these guidelines and for your interest in contributing to Setu. Your contributions make Setu a great tool for everyone! </p>
 
 
 </details>
