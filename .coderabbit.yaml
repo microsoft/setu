@@ -100,7 +100,7 @@ reviews:
     ## C++ CODE REVIEW CHECKLIST (MANDATORY)
 
     ### 1. File Structure
-    - [ ] Copyright header with exact format (2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation)
+    - [ ] Copyright header with exact format ((c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation)
     - [ ] `#pragma once` used for header guards
     - [ ] Include order: StdCommon.h → TorchCommon.h → BoostCommon.h → project headers
     - [ ] Nested namespace syntax: `namespace setu::commons {`
