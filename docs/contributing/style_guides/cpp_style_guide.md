@@ -20,7 +20,8 @@ All header files must follow this exact structure:
 
 ```cpp
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -77,7 +78,8 @@ Setu uses centralized header files to ensure consistent imports and reduce compi
 
 ```cpp
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -790,7 +792,8 @@ All test files must follow this structure and be placed in the `csrc/test/` dire
 
 ```cpp
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

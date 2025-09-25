@@ -13,8 +13,8 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 
 project = "Setu"
-copyright = "2025, Systems for AI Lab, Georgia Institute of Technology; Microsoft Corporation"
-author = "Systems for AI Lab, Georgia Institute of Technology; Microsoft Corporation"
+copyright = "(c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation."
+author = "2025 Vajra Team; Georgia Institute of Technology; Microsoft Corporation"
 release = "0.1.0"
 
 # -- General configuration ---------------------------------------------------
