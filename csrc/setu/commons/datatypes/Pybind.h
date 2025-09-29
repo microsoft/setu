@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation.
+// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,19 +14,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/datatypes/Pybind.h"
-
-#include "commons/Logging.h"
-#include "commons/StdCommon.h"
-#include "commons/TorchCommon.h"
-#include "commons/enums/Pybind.h"
-#include "commons/utils/Pybind.h"
+#pragma once
 //==============================================================================
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  setu::commons::Logger::InitializeLogLevel();
-
-  setu::commons::enums::InitEnumsPybindSubmodule(m);
-  setu::commons::datatypes::InitDatatypesPybindSubmodule(m);
-  setu::commons::utils::InitPybindSubmodule(m);
-}
+#include "commons/TorchCommon.h"
+//==============================================================================
+namespace setu::commons::datatypes {
+//==============================================================================
+void InitDatatypesPybindSubmodule(py::module_& pm);
+//==============================================================================
+}  // namespace setu::commons::datatypes
 //==============================================================================

@@ -59,11 +59,8 @@ struct TensorMetadata {
         dtype(dtype_param),
         shards(shards_param),
         size(GetSize()) {
-    ASSERT_VALID_POINTER_ARGUMENT(dims_param);
-    ASSERT_VALID_POINTER_ARGUMENT(shards_param);
-    ASSERT_VALID_ARGUMENTS(dims_param->size() > 0, "Dims must be non-empty");
-    ASSERT_VALID_ARGUMENTS(shards_param->size() > 0,
-                           "Shards must be non-empty");
+    ASSERT_VALID_ARGUMENTS(dims_param.size() > 0, "Dims must be non-empty");
+    ASSERT_VALID_ARGUMENTS(shards_param.size() > 0, "Shards must be non-empty");
 
     ValidateShards();
   }
@@ -78,7 +75,7 @@ struct TensorMetadata {
    */
   [[nodiscard]] std::size_t GetSize() const {
     std::size_t size = 1;
-    for (const auto& dim : dims) {
+    for (const auto& [dim_name, dim] : dims) {
       size *= dim.size;
     }
     return size;
@@ -119,11 +116,11 @@ struct TensorMetadata {
                        name, dims, dtype, shards);
   }
 
-  TensorName name;         ///< Name of the tensor
-  TensorDimMap dims;       ///< Map of dimension names to TensorDim objects
-  DType dtype;             ///< Data type of tensor elements
-  TensorShardsMap shards;  ///< Map of node IDs to tensor shards
-  std::size_t size;        ///< Total number of elements in the tensor
+  const TensorName name;    ///< Name of the tensor
+  const TensorDimMap dims;  ///< Map of dimension names to TensorDim objects
+  const DType dtype;        ///< Data type of tensor elements
+  const TensorShardsMap shards;  ///< Map of node IDs to tensor shards
+  const std::size_t size;        ///< Total number of elements in the tensor
 
  private:
   /**
@@ -140,7 +137,7 @@ struct TensorMetadata {
 
     std::size_t total_shard_size = 0;
 
-    for (const auto& [_, shard] : *shards) {
+    for (const auto& [_, shard] : shards) {
       total_shard_size += shard->shard_size;
     }
 
@@ -148,17 +145,26 @@ struct TensorMetadata {
                            "Total shard size {} does not match tensor size {}",
                            total_shard_size, size);
 
-    // Ensure that the intersection of any two shards is empty
-    for (const auto& [_, shard1] : *shards) {
-      for (const auto& [_, shard2] : *shards) {
-        if (shard1 == shard2) continue;
-        ASSERT_VALID_ARGUMENTS(shard1->GetIntersection(shard2)->IsEmpty(),
-                               "Shards {} and {} overlap", shard1->name,
-                               shard2->name);
+    // Ensure that no two shards overlap by checking their intersections
+    for (const auto& [id1, shard1] : shards) {
+      for (const auto& [id2, shard2] : shards) {
+        if (id1 >= id2) continue;  // Only check each pair once, skip self
+
+        // Create selections from shards and check if they intersect
+        TensorSelectionPtr selection1 =
+            std::make_shared<TensorSelection>(shard1);
+        TensorSelectionPtr intersection = selection1->GetIntersection(shard2);
+
+        // If intersection is empty, shards don't overlap (good)
+        // If intersection is non-empty, shards overlap (bad)
+        ASSERT_VALID_ARGUMENTS(
+            intersection->IsEmpty(),
+            "Shards {} and {} overlap - their intersection is non-empty", id1,
+            id2);
       }
     }
   }
-}
+};
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

@@ -19,7 +19,7 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
-#include "commons/datatypes/TensorSlice.h"
+#include "commons/datatypes/TensorSelection.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================

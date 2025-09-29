@@ -58,10 +58,8 @@ struct TensorDim {
   const std::size_t size;    ///< Size of the tensor dimension
 };
 //==============================================================================
-/// @brief Shared pointer to a map of tensor dimension names to TensorDim
-/// objects
-using TensorDimMap =
-    std::shared_ptr<std::unordered_map<TensorDimName, TensorDim>>;
+/// @brief Map of tensor dimension names to TensorDim objects
+using TensorDimMap = std::unordered_map<TensorDimName, TensorDim>;
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================
