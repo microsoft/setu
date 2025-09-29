@@ -82,9 +82,8 @@ struct TensorDimShard {
   const std::size_t stride;      ///< Memory stride for accessing elements
 };
 //==============================================================================
-/// @brief Shared pointer to a map of dimension names to TensorDimShard objects
-using TensorDimShardsMap =
-    std::shared_ptr<std::unordered_map<TensorDimName, TensorDimShard>>;
+/// @brief Map of dimension names to TensorDimShard objects
+using TensorDimShardsMap = std::unordered_map<TensorDimName, TensorDimShard>;
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

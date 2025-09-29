@@ -62,8 +62,7 @@ struct TensorShard {
     ASSERT_VALID_ARGUMENTS(id_param > 0, "Shard ID {} must be greater than 0",
                            id_param);
     ASSERT_VALID_POINTER_ARGUMENT(device_ptr_param);
-    ASSERT_VALID_POINTER_ARGUMENT(dim_shards_param);
-    ASSERT_VALID_ARGUMENTS(dim_shards_param->size() > 0,
+    ASSERT_VALID_ARGUMENTS(dim_shards_param.size() > 0,
                            "Dim shards must be non-empty");
   }
 
@@ -77,7 +76,7 @@ struct TensorShard {
    */
   [[nodiscard]] std::size_t GetShardSize() const {
     std::size_t size = 1;
-    for (const auto& [_, dim_shard] : *dim_shards) {
+    for (const auto& [_, dim_shard] : dim_shards) {
       size *= dim_shard.shard_size;
     }
     return size;
@@ -101,7 +100,7 @@ struct TensorShard {
    *
    * @return Number of tensor dimensions represented in this shard
    */
-  [[nodiscard]] std::size_t GetNumDims() const { return dim_shards->size(); }
+  [[nodiscard]] std::size_t GetNumDims() const { return dim_shards.size(); }
 
   /**
    * @brief Retrieves the slice information for a specific dimension
@@ -113,9 +112,9 @@ struct TensorShard {
    */
   [[nodiscard]] TensorSlicePtr GetDimSlice(
       const TensorDimName& dim_name) const {
-    ASSERT_VALID_ARGUMENTS(dim_shards->find(dim_name) != dim_shards->end(),
+    ASSERT_VALID_ARGUMENTS(dim_shards.find(dim_name) != dim_shards.end(),
                            "Dim {} not found", dim_name);
-    return dim_shards->at(dim_name).slice;
+    return dim_shards.at(dim_name).slice;
   }
 
   const ShardId id;            ///< Unique identifier for this shard
@@ -126,14 +125,19 @@ struct TensorShard {
   const TensorDimShardsMap
       dim_shards;                ///< Map of dimension names to shard info
   const std::size_t shard_size;  ///< Size of this specific shard
+
+ private:
+  friend class TensorShardReadHandle;
+  friend class TensorShardWriteHandle;
+  mutable std::shared_mutex
+      mutex;  ///< Mutex for thread-safe access to device_ptr
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorShard object
 using TensorShardPtr = std::shared_ptr<TensorShard>;
 
-/// @brief Shared pointer to a map of shard IDs to TensorShard objects
-using TensorShardsMap =
-    std::shared_ptr<std::unordered_map<ShardId, TensorShardPtr>>;
+/// @brief Map of shard IDs to TensorShard objects
+using TensorShardsMap = std::unordered_map<ShardId, TensorShardPtr>;
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

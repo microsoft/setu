@@ -26,12 +26,11 @@ std::vector<std::pair<TensorSelectionPtr, TensorShardPtr>>
 TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
                                           TensorShardsMap shards) {
   ASSERT_VALID_POINTER_ARGUMENT(selection);
-  ASSERT_VALID_POINTER_ARGUMENT(shards);
 
   std::vector<std::pair<TensorSelectionPtr, TensorShardPtr>> ownership_map;
 
   // For each shard, determine which subset of the selection it owns
-  for (const auto& [shard_id, shard] : *shards) {
+  for (const auto& [shard_id, shard] : shards) {
     ASSERT_VALID_POINTER_ARGUMENT(shard);
 
     TensorSelectionPtr intersection = selection->GetIntersection(shard);

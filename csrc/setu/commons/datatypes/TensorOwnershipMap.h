@@ -51,9 +51,7 @@ struct TensorOwnershipMap {
                      TensorShardsMap shards_param)
       : shard_mapping(BuildOwnershipMapping(selection_param, shards_param)) {
     ASSERT_VALID_POINTER_ARGUMENT(selection_param);
-    ASSERT_VALID_POINTER_ARGUMENT(shards_param);
-    ASSERT_VALID_ARGUMENTS(shards_param->size() > 0,
-                           "Shards must be non-empty");
+    ASSERT_VALID_ARGUMENTS(shards_param.size() > 0, "Shards must be non-empty");
   }
 
   /**

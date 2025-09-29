@@ -29,15 +29,9 @@ set(PYTHON_SUPPORTED_VERSIONS "3.12")
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
 set(TORCH_SUPPORTED_VERSION_CUDA "2.8")
 # ##################################################################################################
-# Conda environment detection
-if(DEFINED ENV{CONDA_PREFIX})
-  message(STATUS "Conda environment detected: $ENV{CONDA_PREFIX}")
-  include_directories($ENV{CONDA_PREFIX}/include)
-  link_directories($ENV{CONDA_PREFIX}/lib)
-endif()
-# ##################################################################################################
 # Include utility functions and setup modules
 include(cmake/Utils.cmake)
+include(cmake/CondaDetection.cmake)
 include(cmake/CcacheSetup.cmake)
 include(cmake/Dependencies.cmake)
 include(cmake/PythonSetup.cmake)

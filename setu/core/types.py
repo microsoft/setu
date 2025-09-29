@@ -9,5 +9,6 @@ GPUId: TypeAlias = int
 TimeMS: TypeAlias = float
 TimeS: TypeAlias = float
 Rank: TypeAlias = int
+TensorName: TypeAlias = str
 TensorSize: TypeAlias = int
 SerialNumber: TypeAlias = int
