@@ -41,40 +41,27 @@ struct TensorSelection {
                            "Indices must be non-empty");
   }
 
-  /**
-   * @brief Construct TensorSelection from TensorShard
-   *
-   * Creates a selection that covers exactly the region owned by the shard.
-   *
-   * @param shard Tensor shard to create selection from
-   */
-  explicit TensorSelection(TensorShardPtr shard)
-      : name(shard->name), indices(BuildIndicesFromShard(shard)) {
-    ASSERT_VALID_POINTER_ARGUMENT(shard);
-  }
-
   [[nodiscard]] std::string ToString() const {
     return std::format("TensorSelection(name={}, indices={})", name, indices);
   }
 
-  [[nodiscard]] TensorSelectionPtr GetIntersection(TensorShardPtr shard) const {
-    ASSERT_VALID_POINTER_ARGUMENT(shard);
-    ASSERT_VALID_ARGUMENTS(name == shard->name, "Selection names do not match");
+  [[nodiscard]] TensorSelectionPtr GetIntersection(
+      TensorSelectionPtr other) const {
+    ASSERT_VALID_POINTER_ARGUMENT(other);
+    ASSERT_VALID_ARGUMENTS(name == other->name, "Selection names do not match");
     ASSERT_VALID_ARGUMENTS(
-        shard->GetNumDims() == indices.size(),
-        "Shard has {} dimensions, but selection has {} dimensions",
-        shard->GetNumDims(), indices.size());
+        indices.size() == other->indices.size(),
+        "Selections have different number of dimensions: {} vs {}",
+        indices.size(), other->indices.size());
 
     TensorIndicesMap intersection;
     for (const auto& [dim_name, dim] : indices) {
       ASSERT_VALID_ARGUMENTS(
-          shard->dim_shards.find(dim_name) != shard->dim_shards.end(),
-          "Dim {} not found in shard", dim_name);
+          other->indices.find(dim_name) != other->indices.end(),
+          "Dim {} not found in other selection", dim_name);
 
-      TensorSlicePtr slice = shard->dim_shards.at(dim_name).slice;
-      TensorIndicesBitset slice_bitset =
-          slice->ToBitset(indices.at(dim_name).size());
-      intersection[dim_name] = indices.at(dim_name) & slice_bitset;
+      intersection[dim_name] =
+          indices.at(dim_name) & other->indices.at(dim_name);
     }
     return std::make_shared<TensorSelection>(name, intersection);
   }
@@ -189,22 +176,6 @@ struct TensorSelection {
       // Initialize with all bits set (selecting all indices by default)
       TensorIndicesBitset bitset(dim.size);
       bitset.set();  // Set all bits to 1
-      result_indices[dim_name] = bitset;
-    }
-    return result_indices;
-  }
-
-  static TensorIndicesMap BuildIndicesFromShard(TensorShardPtr shard) {
-    ASSERT_VALID_POINTER_ARGUMENT(shard);
-    TensorIndicesMap result_indices;
-    for (const auto& [dim_name, dim_shard] : shard->dim_shards) {
-      // Create bitset for the full dimension size
-      TensorIndicesBitset bitset(dim_shard.dim_size);
-      // Set bits only for the slice owned by this shard
-      for (TensorIndex i = dim_shard.slice->start; i < dim_shard.slice->end;
-           ++i) {
-        bitset[static_cast<std::size_t>(i)] = true;
-      }
       result_indices[dim_name] = bitset;
     }
     return result_indices;

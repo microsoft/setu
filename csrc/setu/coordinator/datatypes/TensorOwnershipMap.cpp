@@ -14,13 +14,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/datatypes/TensorOwnershipMap.h"
+#include "coordinator/datatypes/TensorOwnershipMap.h"
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
+#include "coordinator/datatypes/TensorShardUtils.h"
 //==============================================================================
-namespace setu::commons::datatypes {
+namespace setu::coordinator::datatypes {
+//==============================================================================
+using setu::commons::datatypes::TensorSelectionPtr;
+using setu::commons::datatypes::TensorShardPtr;
+using setu::commons::datatypes::TensorShardsMap;
 //==============================================================================
 std::vector<std::pair<TensorSelectionPtr, TensorShardPtr>>
 TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
@@ -33,7 +38,10 @@ TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
   for (const auto& [shard_id, shard] : shards) {
     ASSERT_VALID_POINTER_ARGUMENT(shard);
 
-    TensorSelectionPtr intersection = selection->GetIntersection(shard);
+    // Create selection from shard and compute intersection
+    TensorSelectionPtr shard_selection = CreateSelectionFromShard(shard);
+    TensorSelectionPtr intersection =
+        selection->GetIntersection(shard_selection);
 
     if (intersection->IsEmpty()) {
       continue;
@@ -45,5 +53,5 @@ TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
   return ownership_map;
 }
 //==============================================================================
-}  // namespace setu::commons::datatypes
+}  // namespace setu::coordinator::datatypes
 //==============================================================================

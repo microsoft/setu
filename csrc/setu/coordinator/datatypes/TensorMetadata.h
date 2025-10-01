@@ -19,15 +19,20 @@
 #include "commons/ClassTraits.h"
 #include "commons/StdCommon.h"
 #include "commons/datatypes/TensorDim.h"
-#include "commons/datatypes/TensorOwnershipMap.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/enums/Enums.h"
+#include "coordinator/datatypes/TensorOwnershipMap.h"
+#include "coordinator/datatypes/TensorShardUtils.h"
 //==============================================================================
-namespace setu::commons::datatypes {
+namespace setu::coordinator::datatypes {
 //==============================================================================
 // Type aliases for convenience
 using DType = setu::commons::enums::DType;
+using setu::commons::TensorName;
+using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorSelectionPtr;
+using setu::commons::datatypes::TensorShardsMap;
 //==============================================================================
 /**
  * @brief Complete metadata for a tensor including dimensions, data type, and
@@ -133,8 +138,6 @@ struct TensorMetadata {
    * @throws std::invalid_argument if shards don't fully span the tensor
    */
   void ValidateShards() const {
-    auto selection = std::make_shared<TensorSelection>(name, dims);
-
     std::size_t total_shard_size = 0;
 
     for (const auto& [_, shard] : shards) {
@@ -145,18 +148,21 @@ struct TensorMetadata {
                            "Total shard size {} does not match tensor size {}",
                            total_shard_size, size);
 
-    // Ensure that no two shards overlap by checking their intersections
+    // Ensure that no two shards overlap by using TensorSelection intersections
     for (const auto& [id1, shard1] : shards) {
       for (const auto& [id2, shard2] : shards) {
         if (id1 >= id2) continue;  // Only check each pair once, skip self
 
-        // Create selections from shards and check if they intersect
+        // Create selections from each shard
         TensorSelectionPtr selection1 =
-            std::make_shared<TensorSelection>(shard1);
-        TensorSelectionPtr intersection = selection1->GetIntersection(shard2);
+            setu::coordinator::datatypes::CreateSelectionFromShard(shard1);
+        TensorSelectionPtr selection2 =
+            setu::coordinator::datatypes::CreateSelectionFromShard(shard2);
 
-        // If intersection is empty, shards don't overlap (good)
-        // If intersection is non-empty, shards overlap (bad)
+        // Check if they intersect
+        TensorSelectionPtr intersection =
+            selection1->GetIntersection(selection2);
+
         ASSERT_VALID_ARGUMENTS(
             intersection->IsEmpty(),
             "Shards {} and {} overlap - their intersection is non-empty", id1,
@@ -166,5 +172,5 @@ struct TensorMetadata {
   }
 };
 //==============================================================================
-}  // namespace setu::commons::datatypes
+}  // namespace setu::coordinator::datatypes
 //==============================================================================

@@ -19,12 +19,10 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
-#include "commons/datatypes/CopyIntent.h"
+#include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/Device.h"
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorDimShard.h"
-#include "commons/datatypes/TensorMetadata.h"
-#include "commons/datatypes/TensorOwnershipMap.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardHandle.h"
@@ -78,6 +76,56 @@ void InitTensorDimPybind(py::module_& m) {
       .def("__repr__", &TensorDim::ToString);
 }
 //==============================================================================
+//==============================================================================
+void InitTensorSelectionPybind(py::module_& m) {
+  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection",
+                                                  py::module_local())
+      .def(py::init<TensorName, TensorDimMap>(), py::arg("name"),
+           py::arg("dims"))
+      .def(py::init<TensorName, TensorIndicesMap>(), py::arg("name"),
+           py::arg("indices"))
+      .def_readonly("name", &TensorSelection::name, "Name of the tensor")
+      .def("get_intersection", &TensorSelection::GetIntersection,
+           py::arg("other"), "Get intersection with another selection")
+      .def("is_spanning", &TensorSelection::IsSpanning,
+           "Check if selection spans all dimensions")
+      .def("is_empty", &TensorSelection::IsEmpty, "Check if selection is empty")
+      .def("is_compatible", &TensorSelection::IsCompatible, py::arg("other"),
+           "Check if compatible with another selection")
+      .def(
+          "where",
+          py::overload_cast<const TensorDimName&, const std::set<TensorIndex>&>(
+              &TensorSelection::Where, py::const_),
+          py::arg("dim_name"), py::arg("index_set"),
+          "Create new selection with specified indices for a dimension")
+      .def("where",
+           py::overload_cast<const TensorDimName&, TensorSlicePtr>(
+               &TensorSelection::Where, py::const_),
+           py::arg("dim_name"), py::arg("slice"),
+           "Create new selection with specified slice for a dimension")
+      .def("__str__", &TensorSelection::ToString)
+      .def("__repr__", &TensorSelection::ToString);
+}
+//==============================================================================
+//==============================================================================
+void InitCopySpecPybind(py::module_& m) {
+  py::class_<CopySpec, CopySpecPtr>(m, "CopySpec", py::module_local())
+      .def(py::init<TensorName, TensorName, TensorSelectionPtr,
+                    TensorSelectionPtr>(),
+           py::arg("src_name"), py::arg("dst_name"), py::arg("src_selection"),
+           py::arg("dst_selection"))
+      .def_readonly("src_name", &CopySpec::src_name,
+                    "Name of the source tensor")
+      .def_readonly("dst_name", &CopySpec::dst_name,
+                    "Name of the destination tensor")
+      .def_readonly("src_selection", &CopySpec::src_selection,
+                    "Selection from the source tensor")
+      .def_readonly("dst_selection", &CopySpec::dst_selection,
+                    "Selection for the destination tensor")
+      .def("__str__", &CopySpec::ToString)
+      .def("__repr__", &CopySpec::ToString);
+}
+//==============================================================================
 void InitTensorDimShardPybind(py::module_& m) {
   py::class_<TensorDimShard>(m, "TensorDimShard", py::module_local())
       .def(py::init<TensorDimName, ShardId, std::size_t, TensorSlicePtr,
@@ -129,73 +177,6 @@ void InitTensorShardPybind(py::module_& m) {
       .def("__repr__", &TensorShard::ToString);
 }
 //==============================================================================
-void InitTensorSelectionPybind(py::module_& m) {
-  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection",
-                                                  py::module_local())
-      .def(py::init<TensorName, TensorDimMap>(), py::arg("name"),
-           py::arg("dims"))
-      .def(py::init<TensorName, TensorIndicesMap>(), py::arg("name"),
-           py::arg("indices"))
-      .def(py::init<TensorShardPtr>(), py::arg("shard"),
-           "Create selection from tensor shard")
-      .def_readonly("name", &TensorSelection::name, "Name of the tensor")
-      .def("get_intersection", &TensorSelection::GetIntersection,
-           py::arg("shard"), "Get intersection with a tensor shard")
-      .def("is_spanning", &TensorSelection::IsSpanning,
-           "Check if selection spans all dimensions")
-      .def("is_empty", &TensorSelection::IsEmpty, "Check if selection is empty")
-      .def("is_compatible", &TensorSelection::IsCompatible, py::arg("other"),
-           "Check if compatible with another selection")
-      .def(
-          "where",
-          py::overload_cast<const TensorDimName&, const std::set<TensorIndex>&>(
-              &TensorSelection::Where, py::const_),
-          py::arg("dim_name"), py::arg("index_set"),
-          "Create new selection with specified indices for a dimension")
-      .def("where",
-           py::overload_cast<const TensorDimName&, TensorSlicePtr>(
-               &TensorSelection::Where, py::const_),
-           py::arg("dim_name"), py::arg("slice"),
-           "Create new selection with specified slice for a dimension")
-      .def("__str__", &TensorSelection::ToString)
-      .def("__repr__", &TensorSelection::ToString);
-}
-//==============================================================================
-void InitTensorMetadataPybind(py::module_& m) {
-  py::class_<TensorMetadata>(m, "TensorMetadata", py::module_local())
-      .def(py::init<TensorName, TensorDimMap, DType, TensorShardsMap>(),
-           py::arg("name"), py::arg("dims"), py::arg("dtype"),
-           py::arg("shards"))
-      .def_readonly("name", &TensorMetadata::name, "Name of the tensor")
-      .def_readonly("dims", &TensorMetadata::dims,
-                    "Map of dimension names to TensorDim objects")
-      .def_readonly("dtype", &TensorMetadata::dtype,
-                    "Data type of tensor elements")
-      .def_readonly("shards", &TensorMetadata::shards,
-                    "Map of node IDs to tensor shards")
-      .def_readonly("size", &TensorMetadata::size,
-                    "Total number of elements in the tensor")
-      .def("get_size", &TensorMetadata::GetSize,
-           "Get total number of elements in the tensor")
-      .def("get_ownership_map", &TensorMetadata::GetOwnershipMap,
-           py::arg("selection"), "Get ownership map for a tensor selection")
-      .def("__str__", &TensorMetadata::ToString)
-      .def("__repr__", &TensorMetadata::ToString);
-}
-//==============================================================================
-void InitTensorOwnershipMapPybind(py::module_& m) {
-  py::class_<TensorOwnershipMap, TensorOwnershipMapPtr>(m, "TensorOwnershipMap",
-                                                        py::module_local())
-      .def(py::init<TensorSelectionPtr, TensorShardsMap>(),
-           py::arg("selection"), py::arg("shards"))
-      .def_readonly("shard_mapping", &TensorOwnershipMap::shard_mapping,
-                    "Vector of (selection subset, owning shard) pairs")
-      .def("get_num_shards", &TensorOwnershipMap::GetNumShards,
-           "Get number of shard ownership mappings")
-      .def("__str__", &TensorOwnershipMap::ToString)
-      .def("__repr__", &TensorOwnershipMap::ToString);
-}
-//==============================================================================
 void InitTensorShardReadHandlePybind(py::module_& m) {
   py::class_<TensorShardReadHandle, TensorShardReadHandlePtr>(
       m, "TensorShardReadHandle", py::module_local())
@@ -220,38 +201,18 @@ void InitTensorShardWriteHandlePybind(py::module_& m) {
            "Get the tensor shard being accessed");
 }
 //==============================================================================
-void InitCopySpecPybind(py::module_& m) {
-  py::class_<CopySpec, CopySpecPtr>(m, "CopySpec", py::module_local())
-      .def(py::init<TensorName, TensorName, TensorSelectionPtr,
-                    TensorSelectionPtr>(),
-           py::arg("src_name"), py::arg("dst_name"), py::arg("src_selection"),
-           py::arg("dst_selection"))
-      .def_readonly("src_name", &CopySpec::src_name,
-                    "Name of the source tensor")
-      .def_readonly("dst_name", &CopySpec::dst_name,
-                    "Name of the destination tensor")
-      .def_readonly("src_selection", &CopySpec::src_selection,
-                    "Selection from the source tensor")
-      .def_readonly("dst_selection", &CopySpec::dst_selection,
-                    "Selection for the destination tensor")
-      .def("__str__", &CopySpec::ToString)
-      .def("__repr__", &CopySpec::ToString);
-}
-//==============================================================================
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Datatypes submodule");
 
   InitDevicePybind(m);
   InitTensorSlicePybind(m);
   InitTensorDimPybind(m);
+  InitTensorSelectionPybind(m);
+  InitCopySpecPybind(m);
   InitTensorDimShardPybind(m);
   InitTensorShardPybind(m);
-  InitTensorSelectionPybind(m);
-  InitTensorMetadataPybind(m);
-  InitTensorOwnershipMapPybind(m);
   InitTensorShardReadHandlePybind(m);
   InitTensorShardWriteHandlePybind(m);
-  InitCopySpecPybind(m);
 }
 //==============================================================================
 }  // namespace setu::commons::datatypes
