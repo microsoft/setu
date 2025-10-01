@@ -47,7 +47,7 @@ class Client:
 
         Example:
             >>> client = Client()
-            >>> from setu._commons.datatypes import TensorDim
+            >>> from setu._commons.datatypes import TensorDim, TensorShard
             >>> shard = client.create_tensor_shard(
             ...     name="replica:0/worker:0/task:0/t",
             ...     dims=[
