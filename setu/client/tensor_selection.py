@@ -108,9 +108,22 @@ class TensorSelection:
 
         return TensorSelection(new_native)
 
-    def get_intersection(self, shard) -> TensorSelection:
-        """Get intersection with a tensor shard."""
-        new_native = self._native.get_intersection(shard)
+    def get_intersection(self, other: TensorSelection) -> TensorSelection:
+        """
+        Get intersection with another tensor selection.
+
+        Args:
+            other: Another TensorSelection to intersect with
+
+        Returns:
+            New TensorSelection representing the intersection
+
+        Example:
+            >>> sel1 = client.select("tensor").where("page", [0, 1, 2])
+            >>> sel2 = client.select("tensor").where("page", [1, 2, 3])
+            >>> intersection = sel1.get_intersection(sel2)  # page=[1, 2]
+        """
+        new_native = self._native.get_intersection(other._native)
         return TensorSelection(new_native)
 
     def is_spanning(self) -> bool:

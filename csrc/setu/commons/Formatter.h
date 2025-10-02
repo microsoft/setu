@@ -447,6 +447,23 @@ struct formatter<boost::dynamic_bitset<>, char> {
   }
 };
 //==============================================================================
+// Formatter for boost::uuids::uuid
+//==============================================================================
+/// @brief Formatter specialization for Boost UUID
+/// @ingroup Formatters
+template <>
+struct formatter<boost::uuids::uuid, char> {
+  template <typename ParseContext>
+  constexpr auto parse(ParseContext& ctx) {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(const boost::uuids::uuid& uuid, FormatContext& ctx) const {
+    return std::format_to(ctx.out(), "{}", boost::uuids::to_string(uuid));
+  }
+};
+//==============================================================================
 // Formatter for Printable types (types with ToString() method)
 //==============================================================================
 /// @brief Formatter specialization for types with ToString() method

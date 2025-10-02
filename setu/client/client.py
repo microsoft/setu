@@ -9,7 +9,7 @@ from typing import Dict, Iterator, List
 
 import torch
 
-from setu._commons.datatypes import TensorDim, TensorShard
+from setu._commons.datatypes import TensorDim, TensorShardRef
 from setu.client.tensor_handles import TensorReadHandle, TensorWriteHandle
 from setu.client.tensor_selection import TensorSelection
 from setu.core.types import TensorName
@@ -22,7 +22,7 @@ class Client:
 
     def __init__(self) -> None:
         """Initialize the Setu client."""
-        self._shards: Dict[TensorName, TensorShard] = {}
+        self._shards: Dict[TensorName, TensorShardRef] = {}
 
     def create_tensor_shard(
         self,
@@ -30,25 +30,25 @@ class Client:
         dims: List[TensorDim],
         dtype: torch.dtype,
         device: str,
-    ) -> TensorShard:
+    ) -> TensorShardRef:
         """
         Create a tensor shard with the specified dimensions and properties.
 
         Args:
             name: Fully qualified name for the tensor shard in the format
                   "replica:X/worker:Y/task:Z/tensor_name"
-            dims: List of TensorDim objects defining each dimension with its name,
-                  total size, and owned range
+            dims: List of TensorDim objects defining each dimension with its name
+                  and size
             dtype: PyTorch data type for the tensor (e.g., torch.bfloat16, torch.float16)
             device: Device string in PyTorch format (e.g., "cuda:0", "cpu")
 
         Returns:
-            TensorShard object representing the created shard
+            TensorShardRef object - a reference to the created shard
 
         Example:
             >>> client = Client()
-            >>> from setu._commons.datatypes import TensorDim, TensorShard
-            >>> shard = client.create_tensor_shard(
+            >>> from setu._commons.datatypes import TensorDim
+            >>> shard_ref = client.create_tensor_shard(
             ...     name="replica:0/worker:0/task:0/t",
             ...     dims=[
             ...         TensorDim("a", 2048),
@@ -109,39 +109,39 @@ class Client:
         raise NotImplementedError("copy not yet implemented")
 
     @contextmanager
-    def read(self, shard: TensorShard) -> Iterator[torch.Tensor]:
+    def read(self, shard_ref: TensorShardRef) -> Iterator[torch.Tensor]:
         """
         Context manager for read access to tensor shard.
 
         Args:
-            shard: TensorShard to read from
+            shard_ref: TensorShardRef to read from
 
         Yields:
             PyTorch tensor view with read access
 
         Example:
-            >>> with client.read(shard) as tensor:
+            >>> with client.read(shard_ref) as tensor:
             ...     data = tensor[0, :, :]
         """
-        handle = TensorReadHandle(self, shard)
+        handle = TensorReadHandle(self, shard_ref)
         with handle as tensor:
             yield tensor
 
     @contextmanager
-    def write(self, shard: TensorShard) -> Iterator[torch.Tensor]:
+    def write(self, shard_ref: TensorShardRef) -> Iterator[torch.Tensor]:
         """
         Context manager for write access to tensor shard.
 
         Args:
-            shard: TensorShard to write to
+            shard_ref: TensorShardRef to write to
 
         Yields:
             PyTorch tensor view with write access
 
         Example:
-            >>> with client.write(shard) as tensor:
+            >>> with client.write(shard_ref) as tensor:
             ...     tensor[0, :, :] = new_data
         """
-        handle = TensorWriteHandle(self, shard)
+        handle = TensorWriteHandle(self, shard_ref)
         with handle as tensor:
             yield tensor

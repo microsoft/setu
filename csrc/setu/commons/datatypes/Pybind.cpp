@@ -26,6 +26,7 @@
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardHandle.h"
+#include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorSlice.h"
 #include "commons/enums/Enums.h"
 //==============================================================================
@@ -150,10 +151,9 @@ void InitTensorDimShardPybind(py::module_& m) {
 //==============================================================================
 void InitTensorShardPybind(py::module_& m) {
   py::class_<TensorShard, TensorShardPtr>(m, "TensorShard", py::module_local())
-      .def(py::init<TensorName, ShardId, Device, DevicePtr, DType,
-                    TensorDimShardsMap>(),
-           py::arg("name"), py::arg("id"), py::arg("device"),
-           py::arg("device_ptr"), py::arg("dtype"), py::arg("dim_shards"))
+      .def(py::init<TensorName, Device, DevicePtr, DType, TensorDimShardsMap>(),
+           py::arg("name"), py::arg("device"), py::arg("device_ptr"),
+           py::arg("dtype"), py::arg("dim_shards"))
       .def_readonly("id", &TensorShard::id, "Unique identifier for this shard")
       .def_readonly("name", &TensorShard::name,
                     "Name of the tensor being sharded")
@@ -175,6 +175,23 @@ void InitTensorShardPybind(py::module_& m) {
            "Get slice information for a specific dimension")
       .def("__str__", &TensorShard::ToString)
       .def("__repr__", &TensorShard::ToString);
+}
+//==============================================================================
+void InitTensorShardRefPybind(py::module_& m) {
+  py::class_<TensorShardRef, TensorShardRefPtr>(m, "TensorShardRef",
+                                                py::module_local())
+      .def(py::init<TensorName, ShardId, TensorDimMap>(), py::arg("name"),
+           py::arg("shard_id"), py::arg("dims"))
+      .def_readonly("name", &TensorShardRef::name,
+                    "Name of the tensor being sharded")
+      .def_readonly("shard_id", &TensorShardRef::shard_id,
+                    "UUID identifier for this shard")
+      .def_readonly("dims", &TensorShardRef::dims,
+                    "Map of dimension names to TensorDim objects")
+      .def("get_num_dims", &TensorShardRef::GetNumDims,
+           "Get number of dimensions in this shard")
+      .def("__str__", &TensorShardRef::ToString)
+      .def("__repr__", &TensorShardRef::ToString);
 }
 //==============================================================================
 void InitTensorShardReadHandlePybind(py::module_& m) {
@@ -211,6 +228,7 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitCopySpecPybind(m);
   InitTensorDimShardPybind(m);
   InitTensorShardPybind(m);
+  InitTensorShardRefPybind(m);
   InitTensorShardReadHandlePybind(m);
   InitTensorShardWriteHandlePybind(m);
 }

@@ -65,8 +65,8 @@ using TensorIndicesPtr = std::shared_ptr<TensorIndices>;
 using TensorIndicesBitset = boost::dynamic_bitset<>;
 /// @brief Map from dimension names to their corresponding index bitsets
 using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndicesBitset>;
-/// @brief Unique identifier for a tensor shard
-using ShardId = std::size_t;
+/// @brief Unique identifier for a tensor shard (UUID)
+using ShardId = boost::uuids::uuid;
 
 // Binary serialization related types
 /// @brief Buffer for storing binary serialized data

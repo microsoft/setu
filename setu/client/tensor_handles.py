@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from setu._commons.datatypes import TensorShard
+from setu._commons.datatypes import TensorShardRef
 
 if TYPE_CHECKING:
     from setu.client.client import Client
@@ -17,16 +17,16 @@ if TYPE_CHECKING:
 class TensorReadHandle:
     """Context manager for read access to tensor shard device memory."""
 
-    def __init__(self, client: Client, shard: TensorShard) -> None:
+    def __init__(self, client: Client, shard_ref: TensorShardRef) -> None:
         """
         Initialize read handle.
 
         Args:
             client: Client instance for accessing tensor operations
-            shard: TensorShard to acquire read access for
+            shard_ref: TensorShardRef to acquire read access for
         """
         self._client = client
-        self._shard = shard
+        self._shard_ref = shard_ref
         self._tensor: torch.Tensor | None = None
 
     def __enter__(self) -> torch.Tensor:
@@ -49,16 +49,16 @@ class TensorReadHandle:
 class TensorWriteHandle:
     """Context manager for write access to tensor shard device memory."""
 
-    def __init__(self, client: Client, shard: TensorShard) -> None:
+    def __init__(self, client: Client, shard_ref: TensorShardRef) -> None:
         """
         Initialize write handle.
 
         Args:
             client: Client instance for accessing tensor operations
-            shard: TensorShard to acquire write access for
+            shard_ref: TensorShardRef to acquire write access for
         """
         self._client = client
-        self._shard = shard
+        self._shard_ref = shard_ref
         self._tensor: torch.Tensor | None = None
 
     def __enter__(self) -> torch.Tensor:

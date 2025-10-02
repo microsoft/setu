@@ -16,6 +16,7 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
@@ -25,6 +26,7 @@
 namespace setu::commons::datatypes {
 //==============================================================================
 // Type aliases for convenience
+using setu::commons::GenerateUUID;
 using setu::commons::enums::DType;
 //==============================================================================
 /**
@@ -39,28 +41,26 @@ struct TensorShard {
   /**
    * @brief Constructs a tensor shard with all required parameters
    *
+   * Automatically generates a UUID for the shard identifier.
+   *
    * @param name_param Name of the tensor being sharded
-   * @param id_param Unique identifier for this shard
    * @param device_param Device information where this shard resides
    * @param device_ptr_param Pointer to the device memory location
    * @param dtype_param Data type of the tensor elements
    * @param dim_shards_param Map of dimension names to their shard information
    *
-   * @throws std::invalid_argument if id is 0, device_ptr is null, dim_shards is
-   * null or empty
+   * @throws std::invalid_argument if device_ptr is null or dim_shards is empty
    */
-  TensorShard(TensorName name_param, ShardId id_param, Device device_param,
+  TensorShard(TensorName name_param, Device device_param,
               DevicePtr device_ptr_param, DType dtype_param,
               TensorDimShardsMap dim_shards_param)
-      : id(id_param),
+      : id(GenerateUUID()),
         name(name_param),
         device(device_param),
         device_ptr(device_ptr_param),
         dtype(dtype_param),
         dim_shards(dim_shards_param),
         shard_size(GetShardSize()) {
-    ASSERT_VALID_ARGUMENTS(id_param > 0, "Shard ID {} must be greater than 0",
-                           id_param);
     ASSERT_VALID_POINTER_ARGUMENT(device_ptr_param);
     ASSERT_VALID_ARGUMENTS(dim_shards_param.size() > 0,
                            "Dim shards must be non-empty");

@@ -27,6 +27,9 @@
 #include <boost/thread/concurrent_queues/sync_priority_queue.hpp>
 #include <boost/thread/concurrent_queues/sync_queue.hpp>
 #include <boost/uuid/detail/md5.hpp>
+#include <boost/uuid/random_generator.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 namespace setu::commons {
 //==============================================================================
@@ -34,6 +37,19 @@ template <typename... Args>
 using Queue = ::boost::concurrent::sync_queue<Args...>;
 template <typename... Args>
 using PriorityQueue = ::boost::concurrent::sync_priority_queue<Args...>;
+//==============================================================================
+/**
+ * @brief Generate a random UUID
+ *
+ * This function provides a layer of indirection over Boost UUID implementation,
+ * allowing the main codebase to avoid direct Boost symbol usage.
+ *
+ * @return A randomly generated UUID
+ */
+[[nodiscard]] inline boost::uuids::uuid GenerateUUID() {
+  static boost::uuids::random_generator generator;
+  return generator();
+}
 //==============================================================================
 template <typename T>
 struct is_boost_queue : std::false_type {};
