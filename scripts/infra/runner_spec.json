@@ -1,0 +1,14 @@
+[
+    {
+      "num_gpus": 4,
+      "num_instances": 1,
+      "tags": ["4xL40", "2xL40", "1xL40"],
+      "runner_name_prefix": "gcr-gpu-high"
+    },
+    {
+      "num_gpus": 0,
+      "num_instances": 8,
+      "tags": ["cpu"],
+      "runner_name_prefix": "gcr-cpu"
+    }
+]

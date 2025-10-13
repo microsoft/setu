@@ -1,0 +1,29 @@
+[Unit]
+Description=GitHub Actions Runner GPU Distributor
+After=docker.service nvidia-persistenced.service
+Requires=docker.service
+Documentation=https://github.com/microsoft/setu
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/github-runners
+
+# Load the GitHub token as a credential
+EnvironmentFile=/opt/github-runners/github-token.env
+
+# Pass the token from the credentials directory to the script
+ExecStart=/bin/bash -c "/opt/github-runners/launch_runners.sh /opt/github-runners/runner_spec.json https://github.com/microsoft/setu microsoft ${GITHUB_TOKEN}"
+ExecStop=/opt/github-runners/stop_runners.sh
+
+# Restart configuration
+Restart=always
+RestartSec=30
+
+# Standard output/error logs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
