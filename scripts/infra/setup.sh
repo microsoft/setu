@@ -44,4 +44,4 @@ sudo systemctl daemon-reload
 # Enable the service to start on boot
 sudo systemctl enable github-runner
 
-echo "Start the service with: systemctl start github-runner"
+echo "Start the service with: sudo systemctl start github-runner"
