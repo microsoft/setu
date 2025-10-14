@@ -2,7 +2,7 @@
     {
       "num_gpus": 4,
       "num_instances": 1,
-      "tags": ["4xA6000", "2xA6000", "2xA6000"],
+      "tags": ["4xA6000", "2xA6000", "1xA6000"],
       "runner_name_prefix": "gcr-gpu-high"
     },
     {
