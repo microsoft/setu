@@ -3,6 +3,7 @@ set -e
 
 # Configuration
 SPEC_FILE="${1}"
+GITHUB_REPO="${2}"
 GITHUB_ORG="${3}"
 # Accept token from multiple possible sources with credential directory being highest priority
 GITHUB_TOKEN="${4}"
@@ -126,8 +127,8 @@ for spec in "${specs[@]}"; do
 
         # Add GitHub Actions runner configuration
         docker_cmd="$docker_cmd $gpu_env \
-            --env ORG_NAME=$GITHUB_ORG \
-            --env RUNNER_SCOPE=org \
+            --env REPO_URL=$GITHUB_REPO \
+            --env RUNNER_SCOPE=repo \
             --env RUNNER_NAME=$runner_name \
             --env ACCESS_TOKEN=$GITHUB_TOKEN \
             --env LABELS="self-hosted,$runner_tags" \
