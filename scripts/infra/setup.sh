@@ -36,6 +36,9 @@ sudo cp stop_runners.sh /opt/github-runners/
 sudo cp runner_spec.json /opt/github-runners/
 sudo cp github-runner.service /etc/systemd/system/
 
+chmod 744 /opt/github-runners/launch_runners.sh
+chmod 744 /opt/github-runners/stop_runners.sh
+
 popd
 
 # Reload systemd to recognize the new service
