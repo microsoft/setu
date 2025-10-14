@@ -36,7 +36,7 @@ env:
 jobs:
   test_suite:
     if: ${{ github.event_name != 'pull_request' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) }}
-    runs-on: [self-hosted, 4xL40]
+    runs-on: [self-hosted, AxA6000]
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
