@@ -4,6 +4,9 @@ on:
     types: [opened]
 jobs:
   pr_reminder:
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     steps:
       - name: Remind to run full CI on PR
