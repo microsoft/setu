@@ -4,7 +4,7 @@ set -e
 # Configuration
 SPEC_FILE="${1}"
 GITHUB_REPO="${2}"
-GITHUB_ORG="${3}"
+# GITHUB_ORG="${3}" # ignored because we are using repo-scoped runners
 # Accept token from multiple possible sources with credential directory being highest priority
 GITHUB_TOKEN="${4}"
 DOCKER_IMAGE="myoung34/github-runner:latest"
