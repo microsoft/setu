@@ -10,40 +10,40 @@ GITHUB_TOKEN="${4}"
 DOCKER_IMAGE="myoung34/github-runner:latest"
 LOG_FILE="/var/log/github-runners.log"
 
-# Function to log messages with timestamp
-log() {
+log_with_timestamp() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
 # Validate token
 if [ -z "$GITHUB_TOKEN" ]; then
-    log "ERROR: No GitHub token provided. Set token via systemd credential, environment variable, or command argument."
+    log_with_timestamp "ERROR: No GitHub token provided. Set token via systemd credential, environment variable, or command argument."
     exit 1
 fi
+
+# Create log file if it doesn't exist
+touch "$LOG_FILE"
 
 # Token validation and obscuring in logs
 TOKEN_LENGTH=${#GITHUB_TOKEN}
 MASKED_TOKEN="${GITHUB_TOKEN:0:4}...${GITHUB_TOKEN: -4}"
-log "Using GitHub token: $MASKED_TOKEN (length: $TOKEN_LENGTH)"
+log_with_timestamp "Using GitHub token: $MASKED_TOKEN (length: $TOKEN_LENGTH)"
 
 # Trap signals for clean shutdown
-trap 'log "Received shutdown signal. Exiting..."; exit 0' SIGTERM SIGINT
+trap 'log_with_timestamp "Received shutdown signal. Exiting..."; exit 0' SIGTERM SIGINT
 
-# Create log file if it doesn't exist
-touch "$LOG_FILE"
-log "Starting GitHub Actions Runner service"
+log_with_timestamp "Starting GitHub Actions Runner service"
 
 # Check dependencies
 command -v docker >/dev/null 2>&1 || {
-    log "Docker is required but not installed. Aborting." >&2
+    log_with_timestamp "Docker is required but not installed. Aborting." >&2
     exit 1
 }
 command -v jq >/dev/null 2>&1 || {
-    log "jq is required but not installed. Aborting." >&2
+    log_with_timestamp "jq is required but not installed. Aborting." >&2
     exit 1
 }
 command -v nvidia-smi >/dev/null 2>&1 || {
-    log "nvidia-smi is required but not installed. Aborting." >&2
+    log_with_timestamp "nvidia-smi is required but not installed. Aborting." >&2
     exit 1
 }
 
@@ -102,7 +102,7 @@ for spec in "${specs[@]}"; do
         done
 
         if [ "$allocated_gpu_count" -ne "$num_gpus" ]; then
-            log "ERROR: Insufficient GPUs to allocate for runner: $runner_name"
+            log_with_timestamp "ERROR: Insufficient GPUs to allocate for runner: $runner_name"
             exit 1
         fi
 
@@ -111,8 +111,8 @@ for spec in "${specs[@]}"; do
 
         # Check if container already exists
         if docker ps -a --filter "name=$container_name" --format '{{.Names}}' | grep -q "^$container_name$"; then
-            log "WARNING: Container $container_name already exists. Removing it first..."
-            docker rm -f "$container_name" || log "Failed to remove existing container $container_name"
+            log_with_timestamp "WARNING: Container $container_name already exists. Removing it first..."
+            docker rm -f "$container_name" || log_with_timestamp "Failed to remove existing container $container_name"
         fi
 
         # Prepare Docker run command
@@ -137,9 +137,9 @@ for spec in "${specs[@]}"; do
             --volume /tmp/github-runner-$runner_name:/tmp/github-runner-$runner_name \
             $DOCKER_IMAGE"
 
-        log "Launching container for runner: $runner_name with GPUs: $allocated_gpus"
+        log_with_timestamp "Launching container for runner: $runner_name with GPUs: $allocated_gpus"
         eval "$docker_cmd" || {
-            log "ERROR: Failed to start container $container_name"
+            log_with_timestamp "ERROR: Failed to start container $container_name"
             # Release allocated GPUs on failure
             if [ -n "$allocated_gpus" ]; then
                 for gpu_id in $(echo "$allocated_gpus" | tr ',' ' '); do
@@ -152,19 +152,19 @@ for spec in "${specs[@]}"; do
     done
 done
 
-log "All runner containers have been started"
-log "GPU Allocation Summary:"
+log_with_timestamp "All runner containers have been started"
+log_with_timestamp "GPU Allocation Summary:"
 for gpu_id in "${!GPU_ALLOCATION[@]}"; do
     if [ "${GPU_ALLOCATION[$gpu_id]}" -eq 1 ]; then
         status="Allocated"
     else
         status="Available"
     fi
-    log "GPU $gpu_id: $status"
+    log_with_timestamp "GPU $gpu_id: $status"
 done
 
 # Add health monitoring loop
-log "Entering monitoring mode to ensure containers remain running..."
+log_with_timestamp "Entering monitoring mode to ensure containers remain running..."
 while true; do
     sleep 300 # Check every 5 minutes
 
@@ -177,16 +177,16 @@ while true; do
     running_count=$(echo "$running_containers" | wc -l)
 
     if [ "$running_count" -lt "$expected_count" ]; then
-        log "Warning: Some containers are not running. Expected $expected_count, found $running_count"
+        log_with_timestamp "Warning: Some containers are not running. Expected $expected_count, found $running_count"
 
         # Restart any stopped containers
         for container in $expected_containers; do
             if ! docker ps --filter "name=$container" --format "{{.Names}}" | grep -q "$container"; then
-                log "Restarting container: $container"
-                docker start "$container" || log "Failed to restart container: $container"
+                log_with_timestamp "Restarting container: $container"
+                docker start "$container" || log_with_timestamp "Failed to restart container: $container"
             fi
         done
     else
-        log "Health check: All $running_count containers are running"
+        log_with_timestamp "Health check: All $running_count containers are running"
     fi
 done
