@@ -9,13 +9,12 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Read the token
-echo -n "Enter your GitHub token: "
-read -r -s GITHUB_TOKEN
-echo
+# cannot use the user's $GITHUB_TOKEN env var because script is run as root
+# so take it as an argument instead
+GITHUB_TOKEN="${1}" 
 
 if [ -z "$GITHUB_TOKEN" ]; then
-    echo "Token cannot be empty. Aborting."
+    echo "No GitHub token provided as argument. https://docs.github.com/en/rest/actions/self-hosted-runners?apiVersion=2022-11-28#create-a-registration-token-for-a-repository"
     exit 1
 fi
 
