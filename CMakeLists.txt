@@ -58,3 +58,6 @@ add_custom_target(
 # Enable testing
 enable_testing()
 # ##################################################################################################
+
+# Toy NCCL backend
+add_subdirectory(toy/nccl_backend)
