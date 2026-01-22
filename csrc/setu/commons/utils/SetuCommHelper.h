@@ -1,3 +1,19 @@
+//==============================================================================
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//==============================================================================
 #pragma once
 //==============================================================================
 #include "commons/ClassTraits.h"
@@ -5,105 +21,74 @@
 #include "commons/Types.h"
 #include "commons/ZmqCommon.h"
 //==============================================================================
-#include "commons/enums/Enums.h"
 #include "commons/messages/Messages.h"
 #include "commons/utils/Serialization.h"
 #include "commons/utils/ZmqHelper.h"
 //==============================================================================
 namespace setu::commons::utils {
 //==============================================================================
+using setu::commons::BinaryBuffer;
+using setu::commons::BinaryRange;
 using setu::commons::ClientIdentity;
 using setu::commons::NonCopyableNonMovable;
-using setu::commons::enums::MsgType;
-using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::AnyClientRequest;
 using setu::commons::messages::AnyCoordinatorRequest;
-using setu::commons::messages::CopyOperationFinishedRequest;
-using setu::commons::messages::ExecuteRequest;
-using setu::commons::messages::Header;
-using setu::commons::messages::MsgTypeFor;
-using setu::commons::messages::RegisterTensorShardRequest;
-using setu::commons::messages::SubmitCopyRequest;
-using setu::commons::messages::WaitForCopyRequest;
 //==============================================================================
 // SetuCommHelper - Static helper for Setu protocol communication over ZMQ
 //
-// Supported socket patterns:
-//   - REQ/REP/DEALER: Use Send(), Recv<T>(), TryRecv<T>(), TryRecvRequest()
-//   - ROUTER: Use SendToClient(), RecvRequestFromClient(),
-//   TryRecvRequestFromClient()
+// Wire format uses std::variant serialization - the variant index is written
+// automatically, eliminating the need for a separate header frame.
 //
-// The header (MsgType) is handled internally - callers just work with typed
-// request/response objects.
+// Supported socket patterns:
+//   - REQ/REP/DEALER: Use Send(), Recv<T>(), TryRecv<T>()
+//   - ROUTER: Use SendToClient(), RecvRequestFromClient(), etc.
 //==============================================================================
 class SetuCommHelper : public NonCopyableNonMovable {
  public:
   //============================================================================
-  // REQ/REP/DEALER pattern: [Header][Body]
-  // Works for REQ, REP, and DEALER sockets
+  // REQ/REP/DEALER pattern: Single frame with serialized message
   //============================================================================
 
-  /// @brief Send a typed message (MsgType deduced automatically from T)
-  template <Serializable T>
+  /// @brief Send a typed message (single frame)
+  template <typename T>
   static void Send(ZmqSocketPtr socket, const T& message) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
-
-    constexpr MsgType msg_type = MsgTypeFor<T>::value;
-    Header header{.msg_type = msg_type};
-    SendFrame(socket, header, zmq::send_flags::sndmore);
     SendFrame(socket, message, zmq::send_flags::none);
   }
 
   /// @brief Receive a typed message (blocking)
-  template <Serializable T>
+  template <typename T>
   [[nodiscard]] static T Recv(ZmqSocketPtr socket) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
 
-    // Receive and discard header (internal detail)
-    zmq::message_t header_msg;
-    auto result = socket->recv(header_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive header frame");
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
+    zmq::message_t msg;
+    auto result = socket->recv(msg, zmq::recv_flags::none);
+    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive message frame");
 
-    // Receive and deserialize body to typed T
-    zmq::message_t body_msg;
-    result = socket->recv(body_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
-
-    return DeserializeFrame<T>(body_msg);
+    return DeserializeFrame<T>(msg);
   }
 
   /// @brief Try to receive a typed message (non-blocking)
-  template <Serializable T>
+  template <typename T>
   [[nodiscard]] static std::optional<T> TryRecv(ZmqSocketPtr socket) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
 
-    // Try to receive header (non-blocking)
-    zmq::message_t header_msg;
-    auto result = socket->recv(header_msg, zmq::recv_flags::dontwait);
+    zmq::message_t msg;
+    auto result = socket->recv(msg, zmq::recv_flags::dontwait);
     if (!result.has_value()) {
       return std::nullopt;
     }
 
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
-
-    // Receive body (blocking - we already started receiving)
-    zmq::message_t body_msg;
-    result = socket->recv(body_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
-
-    return DeserializeFrame<T>(body_msg);
+    return DeserializeFrame<T>(msg);
   }
 
   //============================================================================
-  // ROUTER pattern: [Identity][Delimiter][Header][Body]
-  // ROUTER sockets must explicitly handle client identity
+  // ROUTER pattern for REQ clients: [Identity][Delimiter][Body]
+  // REQ sockets add an empty delimiter frame
   //============================================================================
 
-  /// @brief Send a typed response to a specific client (MsgType deduced from T)
-  template <Serializable T>
+  /// @brief Send a typed response to a specific client (REQ pattern)
+  template <typename T>
   static void SendToClient(ZmqSocketPtr socket, const ClientIdentity& identity,
                            const T& message) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
@@ -115,19 +100,16 @@ class SetuCommHelper : public NonCopyableNonMovable {
     auto result = socket->send(identity_msg, zmq::send_flags::sndmore);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to send identity frame");
 
-    // Empty delimiter frame
+    // Empty delimiter frame (REQ pattern)
     zmq::message_t delimiter_msg;
     result = socket->send(delimiter_msg, zmq::send_flags::sndmore);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to send delimiter frame");
 
-    // Header and body frames (MsgType deduced from T)
-    constexpr MsgType msg_type = MsgTypeFor<T>::value;
-    Header header{.msg_type = msg_type};
-    SendFrame(socket, header, zmq::send_flags::sndmore);
+    // Body frame
     SendFrame(socket, message, zmq::send_flags::none);
   }
 
-  /// @brief Receive a request from a client (blocking)
+  /// @brief Receive a request from a REQ client (blocking)
   /// @return Tuple of (client identity, request variant)
   [[nodiscard]] static std::tuple<ClientIdentity, AnyClientRequest>
   RecvRequestFromClient(ZmqSocketPtr socket) {
@@ -152,29 +134,15 @@ class SetuCommHelper : public NonCopyableNonMovable {
     ASSERT_VALID_RUNTIME(delimiter_msg.more(),
                          "Expected multipart message, but delimiter was last");
 
-    // Header frame
-    zmq::message_t header_msg;
-    result = socket->recv(header_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive header frame");
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
-
-    Header header = DeserializeFrame<Header>(header_msg);
-
-    // Body frame
+    // Body frame - deserialize variant directly
     zmq::message_t body_msg;
     result = socket->recv(body_msg, zmq::recv_flags::none);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
 
-    // Deserialize to correct type based on header
-    AnyClientRequest request =
-        DeserializeClientRequest(header.msg_type, body_msg);
-
-    return {std::move(identity), std::move(request)};
+    return {std::move(identity), DeserializeFrame<AnyClientRequest>(body_msg)};
   }
 
-  /// @brief Try to receive a request from a client (non-blocking)
-  /// @return Optional tuple of (client identity, request variant)
+  /// @brief Try to receive a request from a REQ client (non-blocking)
   [[nodiscard]] static std::optional<
       std::tuple<ClientIdentity, AnyClientRequest>>
   TryRecvRequestFromClient(ZmqSocketPtr socket) {
@@ -201,93 +169,53 @@ class SetuCommHelper : public NonCopyableNonMovable {
     ASSERT_VALID_RUNTIME(delimiter_msg.more(),
                          "Expected multipart message, but delimiter was last");
 
-    // Header frame
-    zmq::message_t header_msg;
-    result = socket->recv(header_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive header frame");
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
-
-    Header header = DeserializeFrame<Header>(header_msg);
-
     // Body frame
     zmq::message_t body_msg;
     result = socket->recv(body_msg, zmq::recv_flags::none);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
 
-    // Deserialize to correct type based on header
-    AnyClientRequest request =
-        DeserializeClientRequest(header.msg_type, body_msg);
-
-    return std::make_tuple(std::move(identity), std::move(request));
+    return std::make_tuple(std::move(identity),
+                           DeserializeFrame<AnyClientRequest>(body_msg));
   }
 
   //============================================================================
-  // DEALER pattern for receiving coordinator requests: [Header][Body]
-  // Used when DEALER socket receives requests from coordinator
+  // DEALER pattern: Single frame (no identity/delimiter needed)
   //============================================================================
 
   /// @brief Receive a coordinator request from a DEALER socket (blocking)
-  /// @return The coordinator request variant
   [[nodiscard]] static AnyCoordinatorRequest RecvCoordinatorRequest(
       ZmqSocketPtr socket) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
 
-    // Header frame
-    zmq::message_t header_msg;
-    auto result = socket->recv(header_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive header frame");
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
+    zmq::message_t msg;
+    auto result = socket->recv(msg, zmq::recv_flags::none);
+    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive message frame");
 
-    Header header = DeserializeFrame<Header>(header_msg);
-
-    // Body frame
-    zmq::message_t body_msg;
-    result = socket->recv(body_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
-
-    return DeserializeCoordinatorRequest(header.msg_type, body_msg);
+    return DeserializeFrame<AnyCoordinatorRequest>(msg);
   }
 
   /// @brief Try to receive a coordinator request from a DEALER socket
   /// (non-blocking)
-  /// @return Optional coordinator request variant
   [[nodiscard]] static std::optional<AnyCoordinatorRequest>
   TryRecvCoordinatorRequest(ZmqSocketPtr socket) {
     ASSERT_VALID_POINTER_ARGUMENT(socket);
 
-    // Header frame (non-blocking)
-    zmq::message_t header_msg;
-    auto result = socket->recv(header_msg, zmq::recv_flags::dontwait);
+    zmq::message_t msg;
+    auto result = socket->recv(msg, zmq::recv_flags::dontwait);
     if (!result.has_value()) {
       return std::nullopt;
     }
 
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
-
-    Header header = DeserializeFrame<Header>(header_msg);
-
-    // Body frame (blocking - we already started receiving)
-    zmq::message_t body_msg;
-    result = socket->recv(body_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
-
-    return DeserializeCoordinatorRequest(header.msg_type, body_msg);
+    return DeserializeFrame<AnyCoordinatorRequest>(msg);
   }
 
   //============================================================================
-  // ROUTER pattern for receiving from DEALER: [Identity][Header][Body]
-  // Used when ROUTER socket receives from DEALER (no delimiter frame)
-  // This is different from REQ→ROUTER which has
-  // [Identity][Delimiter][Header][Body]
+  // ROUTER pattern for DEALER clients: [Identity][Body]
+  // DEALER sockets do NOT add a delimiter frame
   //============================================================================
 
   /// @brief Try to receive a client request from a DEALER via ROUTER socket
-  /// (non-blocking)
   /// @note DEALER→ROUTER has no delimiter frame, unlike REQ→ROUTER
-  /// @return Optional tuple of (node agent identity, request variant)
   [[nodiscard]] static std::optional<
       std::tuple<ClientIdentity, AnyClientRequest>>
   TryRecvRequestFromNodeAgent(ZmqSocketPtr socket) {
@@ -306,31 +234,18 @@ class SetuCommHelper : public NonCopyableNonMovable {
     ClientIdentity identity(static_cast<const char*>(identity_msg.data()),
                             identity_msg.size());
 
-    // Header frame (blocking - we already started receiving)
-    // NOTE: No delimiter frame in DEALER→ROUTER pattern
-    zmq::message_t header_msg;
-    result = socket->recv(header_msg, zmq::recv_flags::none);
-    ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive header frame");
-    ASSERT_VALID_RUNTIME(header_msg.more(),
-                         "Expected multipart message, but header was last");
-
-    Header header = DeserializeFrame<Header>(header_msg);
-
-    // Body frame
+    // Body frame (no delimiter in DEALER→ROUTER pattern)
     zmq::message_t body_msg;
     result = socket->recv(body_msg, zmq::recv_flags::none);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to receive body frame");
 
-    // Deserialize to correct type based on header
-    AnyClientRequest request =
-        DeserializeClientRequest(header.msg_type, body_msg);
-
-    return std::make_tuple(std::move(identity), std::move(request));
+    return std::make_tuple(std::move(identity),
+                           DeserializeFrame<AnyClientRequest>(body_msg));
   }
 
-  /// @brief Send a response to a NODE AGENT via ROUTER socket
-  /// @note NODE AGENT→ROUTER response has no delimiter frame
-  template <Serializable T>
+  /// @brief Send a response to a DEALER via ROUTER socket
+  /// @note No delimiter frame in DEALER→ROUTER pattern
+  template <typename T>
   static void SendToNodeAgent(ZmqSocketPtr socket,
                               const ClientIdentity& identity,
                               const T& message) {
@@ -343,74 +258,32 @@ class SetuCommHelper : public NonCopyableNonMovable {
     auto result = socket->send(identity_msg, zmq::send_flags::sndmore);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to send identity frame");
 
-    // NOTE: No delimiter frame in DEALER→ROUTER pattern
-
-    // Header + Body frames
-    constexpr MsgType msg_type = MsgTypeFor<T>::value;
-    Header header{.msg_type = msg_type};
-    SendFrame(socket, header, zmq::send_flags::sndmore);
+    // Body frame (no delimiter in DEALER→ROUTER pattern)
     SendFrame(socket, message, zmq::send_flags::none);
   }
 
  private:
-  template <Serializable T>
+  template <typename T>
   static void SendFrame(ZmqSocketPtr socket, const T& obj,
                         zmq::send_flags flags) {
-    const auto serialized_data = Serialize(obj);
-    zmq::message_t message(serialized_data.size());
-    std::memcpy(message.data(), serialized_data.data(), serialized_data.size());
+    BinaryBuffer buf;
+    BinaryWriter writer(buf);
+    writer.Write(obj);
+
+    zmq::message_t message(buf.size());
+    std::memcpy(message.data(), buf.data(), buf.size());
 
     const auto result = socket->send(message, flags);
     ASSERT_VALID_RUNTIME(result.has_value(), "Failed to send frame of size {}",
-                         serialized_data.size());
+                         buf.size());
   }
 
-  template <Serializable T>
-  static T DeserializeFrame(const zmq::message_t& msg) {
+  template <typename T>
+  [[nodiscard]] static T DeserializeFrame(const zmq::message_t& msg) {
     const auto* data = static_cast<const std::uint8_t*>(msg.data());
-    const std::span<const std::uint8_t> message_span(data, msg.size());
-    return Deserialize<T>(message_span);
-  }
-
-  /// @brief Deserialize client request based on MsgType
-  [[nodiscard]] static AnyClientRequest DeserializeClientRequest(
-      MsgType msg_type, const zmq::message_t& body_msg) {
-    const auto* data = static_cast<const std::uint8_t*>(body_msg.data());
-    const BinaryRange range(data, data + body_msg.size());
-
-    switch (msg_type) {
-      case MsgType::kRegisterTensorShardRequest:
-        return RegisterTensorShardRequest::Deserialize(range);
-      case MsgType::kSubmitCopyRequest:
-        return SubmitCopyRequest::Deserialize(range);
-      case MsgType::kWaitForCopyRequest:
-        return WaitForCopyRequest::Deserialize(range);
-      default:
-        RAISE_RUNTIME_ERROR(
-            "Unknown client request MsgType {} in DeserializeClientRequest",
-            static_cast<std::underlying_type_t<MsgType>>(msg_type));
-    }
-  }
-
-  /// @brief Deserialize coordinator request based on MsgType
-  [[nodiscard]] static AnyCoordinatorRequest DeserializeCoordinatorRequest(
-      MsgType msg_type, const zmq::message_t& body_msg) {
-    const auto* data = static_cast<const std::uint8_t*>(body_msg.data());
-    const BinaryRange range(data, data + body_msg.size());
-
-    switch (msg_type) {
-      case MsgType::kAllocateTensorRequest:
-        return AllocateTensorRequest::Deserialize(range);
-      case MsgType::kCopyOperationFinishedRequest:
-        return CopyOperationFinishedRequest::Deserialize(range);
-      case MsgType::kExecuteRequest:
-        return ExecuteRequest::Deserialize(range);
-      default:
-        RAISE_RUNTIME_ERROR(
-            "Unknown coordinator request MsgType {} in "
-            "DeserializeCoordinatorRequest",
-            static_cast<std::underlying_type_t<MsgType>>(msg_type));
-    }
+    BinaryBuffer buf(data, data + msg.size());
+    BinaryReader reader(BinaryRange{buf.begin(), buf.end()});
+    return reader.Read<T>();
   }
 };
 //==============================================================================

@@ -25,16 +25,7 @@ namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
-using setu::commons::enums::MsgType;
 using setu::coordinator::datatypes::Program;
-//==============================================================================
-void InitHeaderPybind(py::module_& m) {
-  py::class_<Header>(m, "Header", py::module_local())
-      .def(py::init<MsgType>(), py::arg("msg_type"))
-      .def_readonly("msg_type", &Header::msg_type)
-      .def("__str__", &Header::ToString)
-      .def("__repr__", &Header::ToString);
-}
 //==============================================================================
 void InitRegisterTensorShardRequestPybind(py::module_& m) {
   py::class_<RegisterTensorShardRequest>(m, "RegisterTensorShardRequest",
@@ -87,7 +78,6 @@ void InitExecuteProgramResponsePybind(py::module_& m) {
 void InitMessagesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("messages", "Messages submodule");
 
-  InitHeaderPybind(m);
   InitRegisterTensorShardRequestPybind(m);
   InitRegisterTensorShardResponsePybind(m);
   InitExecuteProgramRequestPybind(m);

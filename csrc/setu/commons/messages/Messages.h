@@ -19,7 +19,6 @@
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 //==============================================================================
-#include "commons/enums/Enums.h"
 #include "commons/messages/AllocateTensorRequest.h"
 #include "commons/messages/AllocateTensorResponse.h"
 #include "commons/messages/BaseResponse.h"
@@ -35,116 +34,8 @@
 #include "commons/messages/SubmitCopyResponse.h"
 #include "commons/messages/WaitForCopyRequest.h"
 #include "commons/messages/WaitForCopyResponse.h"
-#include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
-//==============================================================================
-using setu::commons::BinaryBuffer;
-using setu::commons::ClientIdentity;
-using setu::commons::enums::MsgType;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
-//==============================================================================
-// Header - Wire format for message type identification (internal use)
-//==============================================================================
-struct Header {
-  MsgType msg_type;
-
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.Write(static_cast<std::uint16_t>(msg_type));
-  }
-
-  static Header Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    const auto msg_type_val = reader.Read<std::uint16_t>();
-    return Header{.msg_type = static_cast<MsgType>(msg_type_val)};
-  }
-
-  std::string ToString() const {
-    return std::format("Header(msg_type={})",
-                       static_cast<std::uint16_t>(msg_type));
-  }
-};
-//==============================================================================
-// MsgTypeFor<T> - Compile-time mapping from message type to MsgType enum
-//==============================================================================
-template <typename T>
-struct MsgTypeFor;
-
-// Request type mappings
-template <>
-struct MsgTypeFor<RegisterTensorShardRequest> {
-  static constexpr MsgType value = MsgType::kRegisterTensorShardRequest;
-};
-
-template <>
-struct MsgTypeFor<SubmitCopyRequest> {
-  static constexpr MsgType value = MsgType::kSubmitCopyRequest;
-};
-
-template <>
-struct MsgTypeFor<WaitForCopyRequest> {
-  static constexpr MsgType value = MsgType::kWaitForCopyRequest;
-};
-
-template <>
-struct MsgTypeFor<AllocateTensorRequest> {
-  static constexpr MsgType value = MsgType::kAllocateTensorRequest;
-};
-
-template <>
-struct MsgTypeFor<CopyOperationFinishedRequest> {
-  static constexpr MsgType value = MsgType::kCopyOperationFinishedRequest;
-};
-
-template <>
-struct MsgTypeFor<ExecuteRequest> {
-  static constexpr MsgType value = MsgType::kExecuteRequest;
-};
-
-template <>
-struct MsgTypeFor<ExecuteProgramRequest> {
-  static constexpr MsgType value = MsgType::kExecuteProgramRequest;
-};
-
-// Response type mappings
-template <>
-struct MsgTypeFor<RegisterTensorShardResponse> {
-  static constexpr MsgType value = MsgType::kRegisterTensorShardResponse;
-};
-
-template <>
-struct MsgTypeFor<SubmitCopyResponse> {
-  static constexpr MsgType value = MsgType::kSubmitCopyResponse;
-};
-
-template <>
-struct MsgTypeFor<WaitForCopyResponse> {
-  static constexpr MsgType value = MsgType::kWaitForCopyResponse;
-};
-
-template <>
-struct MsgTypeFor<AllocateTensorResponse> {
-  static constexpr MsgType value = MsgType::kAllocateTensorResponse;
-};
-
-template <>
-struct MsgTypeFor<CopyOperationFinishedResponse> {
-  static constexpr MsgType value = MsgType::kCopyOperationFinishedResponse;
-};
-
-template <>
-struct MsgTypeFor<ExecuteResponse> {
-  static constexpr MsgType value = MsgType::kExecuteResponse;
-};
-
-template <>
-struct MsgTypeFor<ExecuteProgramResponse> {
-  static constexpr MsgType value = MsgType::kExecuteProgramResponse;
-};
-
 //==============================================================================
 // Request variants by source
 //==============================================================================

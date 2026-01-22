@@ -48,24 +48,12 @@ void InitErrorCodePybind(py::module_& m) {
       .export_values();
 }
 //==============================================================================
-void InitMsgTypePybind(py::module_& m) {
-  py::enum_<MsgType>(m, "MsgType", py::module_local())
-      .value("REGISTER_TENSOR_SHARD_REQUEST",
-             MsgType::kRegisterTensorShardRequest)
-      .value("REGISTER_TENSOR_SHARD_RESPONSE",
-             MsgType::kRegisterTensorShardResponse)
-      // .value("SUBMIT_COPY", MsgType::kSubmitCopy)
-      // .value("WAIT_FOR_COPY", MsgType::kWaitForCopy)
-      .export_values();
-}
-//==============================================================================
 void InitEnumsPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("enums", "Enums submodule");
 
   InitDeviceKindPybind(m);
   InitDTypePybind(m);
   InitErrorCodePybind(m);
-  InitMsgTypePybind(m);
 }
 //==============================================================================
 }  // namespace setu::commons::enums

@@ -29,7 +29,7 @@ class Client {
 
   bool IsConnected() const;
 
-  const std::string& GetEndpoint() const;
+  const std::string& GetEndpoint() const;       
 
   std::optional<TensorShardRef> RegisterTensorShard(
       const TensorShardSpec& shard_spec);

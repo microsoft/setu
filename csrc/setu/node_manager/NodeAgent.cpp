@@ -28,6 +28,7 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
+using setu::commons::messages::AnyClientRequest;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::messages::ExecuteResponse;
@@ -215,8 +216,9 @@ void NodeAgent::HandleClientRequest(const ClientIdentity& client_identity,
   LOG_DEBUG("Handling RegisterTensorShardRequest for tensor: {}",
             request.tensor_shard_spec.name);
 
-  // Forward request to coordinator
-  SetuCommHelper::Send(coordinator_dealer_handler_socket_, request);
+  // Forward request to coordinator (wrapped in variant)
+  AnyClientRequest variant_request = request;
+  SetuCommHelper::Send(coordinator_dealer_handler_socket_, variant_request);
 
   // Wait for response from coordinator
   auto response = SetuCommHelper::Recv<RegisterTensorShardResponse>(
@@ -232,8 +234,9 @@ void NodeAgent::HandleClientRequest(const ClientIdentity& client_identity,
   LOG_DEBUG("Handling SubmitCopyRequest from {} to {}",
             request.copy_spec.src_name, request.copy_spec.dst_name);
 
-  // Forward request to coordinator
-  SetuCommHelper::Send(coordinator_dealer_handler_socket_, request);
+  // Forward request to coordinator (wrapped in variant)
+  AnyClientRequest variant_request = request;
+  SetuCommHelper::Send(coordinator_dealer_handler_socket_, variant_request);
 
   // Wait for response from coordinator
   auto response = SetuCommHelper::Recv<SubmitCopyResponse>(

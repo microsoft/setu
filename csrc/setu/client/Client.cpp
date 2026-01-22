@@ -22,6 +22,7 @@
 //==============================================================================
 namespace setu::client {
 //==============================================================================
+using setu::commons::messages::AnyClientRequest;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
@@ -85,7 +86,7 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
     const TensorShardSpec& shard_spec) {
   LOG_DEBUG("Client registering tensor shard: {}", shard_spec.name);
 
-  RegisterTensorShardRequest request(shard_spec);
+  AnyClientRequest request = RegisterTensorShardRequest(shard_spec);
   SetuCommHelper::Send(request_socket_, request);
 
   auto response =
@@ -105,7 +106,7 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
   LOG_DEBUG("Client submitting copy operation from {} to {}",
             copy_spec.src_name, copy_spec.dst_name);
 
-  SubmitCopyRequest request(copy_spec);
+  AnyClientRequest request = SubmitCopyRequest(copy_spec);
   SetuCommHelper::Send(request_socket_, request);
 
   auto response = SetuCommHelper::Recv<SubmitCopyResponse>(request_socket_);
@@ -123,7 +124,7 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
 void Client::WaitForCopy(CopyOperationId copy_op_id) {
   LOG_DEBUG("Client waiting for copy operation ID: {}", copy_op_id);
 
-  WaitForCopyRequest request(copy_op_id);
+  AnyClientRequest request = WaitForCopyRequest(copy_op_id);
   SetuCommHelper::Send(request_socket_, request);
 
   auto response = SetuCommHelper::Recv<WaitForCopyResponse>(request_socket_);
