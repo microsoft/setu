@@ -50,46 +50,16 @@ TensorSelection TensorSelection::Deserialize(const BinaryRange& range) {
 void TensorSelection::SerializeBitset(BinaryWriter& writer,
                                       const TensorIndicesBitset& bitset) {
   writer.Write<std::uint64_t>(static_cast<std::uint64_t>(bitset.size()));
-  const std::size_t num_blocks =
-      (bitset.size() + kBitsetBlockBits - 1) / kBitsetBlockBits;
-  std::vector<std::uint64_t> blocks;
-  blocks.reserve(num_blocks);
-  std::size_t bit_index = 0;
-  while (bit_index < bitset.size()) {
-    std::uint64_t block = 0;
-    for (std::size_t bit_offset = 0;
-         bit_offset < kBitsetBlockBits && bit_index < bitset.size();
-         ++bit_offset, ++bit_index) {
-      if (bitset.test(bit_index)) {
-        block |= (static_cast<std::uint64_t>(1) << bit_offset);
-      }
-    }
-    blocks.push_back(block);
-  }
+  std::vector<TensorIndicesBitset::block_type> blocks(bitset.num_blocks());
+  boost::to_block_range(bitset, blocks.begin());
   writer.Write(blocks);
 }
 
 TensorIndicesBitset TensorSelection::DeserializeBitset(BinaryReader& reader) {
   const auto bit_count = static_cast<std::size_t>(reader.Read<std::uint64_t>());
-  auto blocks = reader.Read<std::vector<std::uint64_t>>();
-  const std::size_t expected_blocks =
-      (bit_count + kBitsetBlockBits - 1) / kBitsetBlockBits;
-  ASSERT_VALID_ARGUMENTS(blocks.size() == expected_blocks,
-                         "Bitset block count mismatch: expected {}, got {}",
-                         expected_blocks, blocks.size());
+  auto blocks = reader.Read<std::vector<TensorIndicesBitset::block_type>>();
   TensorIndicesBitset bitset(bit_count);
-  std::size_t bit_index = 0;
-  for (std::size_t block_index = 0; block_index < blocks.size();
-       ++block_index) {
-    const std::uint64_t block = blocks[block_index];
-    for (std::size_t bit_offset = 0;
-         bit_offset < kBitsetBlockBits && bit_index < bit_count;
-         ++bit_offset, ++bit_index) {
-      if (block & (static_cast<std::uint64_t>(1) << bit_offset)) {
-        bitset.set(bit_index);
-      }
-    }
-  }
+  boost::from_block_range(blocks.begin(), blocks.end(), bitset);
   return bitset;
 }
 //==============================================================================

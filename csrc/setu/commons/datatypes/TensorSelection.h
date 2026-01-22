@@ -179,8 +179,6 @@ struct TensorSelection {
   const TensorName name;
 
  private:
-  static constexpr std::size_t kBitsetBlockBits = 64;
-
   static void SerializeBitset(BinaryWriter& writer,
                               const TensorIndicesBitset& bitset);
 
