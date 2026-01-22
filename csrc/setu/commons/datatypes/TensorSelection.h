@@ -27,8 +27,6 @@
 namespace setu::commons::datatypes {
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
 //==============================================================================
 // Forward declarations
 struct TensorSelection;
@@ -179,11 +177,6 @@ struct TensorSelection {
   const TensorName name;
 
  private:
-  static void SerializeBitset(BinaryWriter& writer,
-                              const TensorIndicesBitset& bitset);
-
-  static TensorIndicesBitset DeserializeBitset(BinaryReader& reader);
-
   static TensorIndicesMap BuildIndicesFromDims(TensorDimMap dims_param) {
     TensorIndicesMap result_indices;
     for (const auto& [dim_name, dim] : dims_param) {

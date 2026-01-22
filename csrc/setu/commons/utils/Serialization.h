@@ -16,6 +16,7 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
@@ -83,6 +84,11 @@ template <typename U>
 struct IsVariant : std::false_type {};
 template <typename... Types>
 struct IsVariant<std::variant<Types...>> : std::true_type {};
+
+template <typename U>
+struct IsDynamicBitset : std::false_type {};
+template <typename Block, typename Alloc>
+struct IsDynamicBitset<boost::dynamic_bitset<Block, Alloc>> : std::true_type {};
 
 //==============================================================================
 //  BinaryWriter – append‑only
@@ -155,6 +161,14 @@ class BinaryWriter {
         Write(k);
         Write(v);
       }
+
+    } else if constexpr (IsDynamicBitset<T>::value) {
+      // Boost dynamic_bitset: write bit count + blocks
+      using BlockType = typename T::block_type;
+      Write<std::uint64_t>(static_cast<std::uint64_t>(value.size()));
+      std::vector<BlockType> blocks(value.num_blocks());
+      boost::to_block_range(value, blocks.begin());
+      Write(blocks);
 
     } else if constexpr (Serializable<T>) {
       // Custom serializable types: delegate to object's method with size prefix
@@ -292,6 +306,15 @@ class BinaryReader {
         m.emplace(key, value);
       }
       return m;
+
+    } else if constexpr (IsDynamicBitset<T>::value) {
+      // Boost dynamic_bitset: read bit count + blocks
+      using BlockType = typename T::block_type;
+      const auto bit_count = static_cast<std::size_t>(Read<std::uint64_t>());
+      auto blocks = Read<std::vector<BlockType>>();
+      T bitset(bit_count);
+      boost::from_block_range(blocks.begin(), blocks.end(), bitset);
+      return bitset;
 
     } else if constexpr (Serializable<T>) {
       // Custom serializable types: read size prefix + delegate to object's
