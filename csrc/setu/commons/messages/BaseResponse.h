@@ -18,10 +18,12 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
+#include "commons/Types.h"
 #include "commons/enums/Enums.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::enums::ErrorCode;
 //==============================================================================
 
@@ -29,8 +31,12 @@ using setu::commons::enums::ErrorCode;
 /// All response types should inherit from this to ensure consistent error
 /// handling across the messaging system.
 struct BaseResponse {
-  explicit BaseResponse(ErrorCode error_code_param)
-      : error_code(error_code_param) {}
+  /// @brief Constructs a response with request ID and error code.
+  /// @param request_id_param The request ID this response corresponds to
+  /// @param error_code_param The error code indicating operation status
+  explicit BaseResponse(RequestId request_id_param,
+                        ErrorCode error_code_param = ErrorCode::kSuccess)
+      : request_id(request_id_param), error_code(error_code_param) {}
 
   /// @brief Check if the response indicates success.
   [[nodiscard]] bool IsSuccess() const {
@@ -41,6 +47,9 @@ struct BaseResponse {
   [[nodiscard]] bool IsError() const {
     return error_code != ErrorCode::kSuccess;
   }
+
+  /// @brief The request ID this response corresponds to.
+  const RequestId request_id;
 
   /// @brief The error code indicating the status of the operation.
   const ErrorCode error_code;

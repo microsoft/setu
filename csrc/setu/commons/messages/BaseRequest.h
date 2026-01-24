@@ -14,29 +14,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#pragma once
+//==============================================================================
+#include "commons/StdCommon.h"
+//==============================================================================
+#include "commons/Types.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
+using setu::commons::GenerateUUID;
+using setu::commons::RequestId;
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
-  BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, tensor_id, shard_id, device);
-}
+/// @brief Base struct for all request messages.
+/// All request types should inherit from this to ensure consistent
+/// request tracking across the messaging system.
+struct BaseRequest {
+  /// @brief Constructs a request with auto-generated request ID.
+  BaseRequest() : request_id(GenerateUUID()) {}
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
-    const BinaryRange& range) {
-  BinaryReader reader(range);
-  auto [request_id_val, tensor_id_val, shard_id_val, device_val] =
-      reader.ReadFields<RequestId, TensorName, ShardId, DeviceRank>();
-  return AllocateTensorRequest(request_id_val, tensor_id_val, shard_id_val,
-                               device_val);
-}
+  /// @brief Constructs a request with explicit request ID (for
+  /// deserialization).
+  /// @param request_id_param The request ID to use
+  explicit BaseRequest(RequestId request_id_param)
+      : request_id(request_id_param) {}
+
+  /// @brief Unique identifier for this request.
+  const RequestId request_id;
+
+ protected:
+  // Protected destructor to prevent slicing when used polymorphically
+  ~BaseRequest() = default;
+};
 
 //==============================================================================
 }  // namespace setu::commons::messages

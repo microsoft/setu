@@ -18,18 +18,22 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
+#include "commons/Types.h"
 #include "commons/messages/BaseResponse.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct AllocateTensorResponse : public BaseResponse {
-  explicit AllocateTensorResponse(ErrorCode error_code_param)
-      : BaseResponse(error_code_param) {}
+  explicit AllocateTensorResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess)
+      : BaseResponse(request_id_param, error_code_param) {}
 
   [[nodiscard]] std::string ToString() const {
     return std::format("AllocateTensorResponse(error_code={})", error_code);

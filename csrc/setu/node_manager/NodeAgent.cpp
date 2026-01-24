@@ -23,6 +23,7 @@ namespace setu::node_manager {
 //==============================================================================
 using setu::commons::DeviceRank;
 using setu::commons::LocalDeviceRank;
+using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
@@ -257,7 +258,7 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
 
   WaitForCopy(request.copy_operation_id);
 
-  WaitForCopyResponse response(ErrorCode::kSuccess);
+  WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 
   SetuCommHelper::SendWithIdentity<WaitForCopyResponse, true>(
       client_router_socket_, client_identity, response);
@@ -276,7 +277,7 @@ void NodeAgent::HandleCoordinatorRequest(
   auto it = pending_waits_.find(request.copy_operation_id);
   if (it != pending_waits_.end()) {
     for (const auto& client_id : it->second) {
-      WaitForCopyResponse response(ErrorCode::kSuccess);
+      WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
       SetuCommHelper::SendWithIdentity<WaitForCopyResponse, true>(
           client_router_socket_, client_id, response);
     }
@@ -329,7 +330,7 @@ void NodeAgent::ExecutorLoop() {
     LOG_DEBUG("All workers completed execution for copy_op_id: {}", copy_op_id);
 
     // Notify coordinator that execution is complete
-    ExecuteResponse response(ErrorCode::kSuccess);
+    ExecuteResponse response(RequestId{}, ErrorCode::kSuccess);
     SetuCommHelper::Send(coordinator_dealer_executor_socket_, response);
   }
 }

@@ -25,13 +25,15 @@
 namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::CopyOperationId;
+using setu::commons::RequestId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct SubmitCopyResponse : public BaseResponse {
-  explicit SubmitCopyResponse(ErrorCode error_code_param)
-      : BaseResponse(error_code_param) {}
+  explicit SubmitCopyResponse(RequestId request_id_param,
+                              ErrorCode error_code_param = ErrorCode::kSuccess)
+      : BaseResponse(request_id_param, error_code_param) {}
 
   [[nodiscard]] std::string ToString() const {
     return std::format("SubmitCopyResponse(error_code={})", error_code);

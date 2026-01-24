@@ -71,6 +71,8 @@ using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndicesBitset>;
 using ShardId = boost::uuids::uuid;
 /// @brief Unique identifier for a copy operation (UUID)
 using CopyOperationId = boost::uuids::uuid;
+/// @brief Unique identifier for a request (UUID)
+using RequestId = boost::uuids::uuid;
 
 // Binary serialization related types
 /// @brief Buffer for storing binary serialized data

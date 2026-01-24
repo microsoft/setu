@@ -21,6 +21,7 @@
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
@@ -168,7 +169,7 @@ void Coordinator::HandleNodeAgentRequest(
   LOG_INFO("Registered tensor shard: {} (stub implementation)",
            request.tensor_shard_spec.name);
 
-  RegisterTensorShardResponse response(ErrorCode::kSuccess, std::nullopt);
+  RegisterTensorShardResponse response(RequestId(), ErrorCode::kSuccess, std::nullopt);
   SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse, false>(
       node_agent_router_handler_socket_, node_agent_identity, response);
 }
@@ -183,7 +184,7 @@ void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,
   LOG_INFO("Submitted copy operation: {} -> {} (stub implementation)",
            request.copy_spec.src_name, request.copy_spec.dst_name);
 
-  SubmitCopyResponse response(ErrorCode::kSuccess);
+  SubmitCopyResponse response(RequestId(), ErrorCode::kSuccess);
   SetuCommHelper::SendWithIdentity<SubmitCopyResponse, false>(
       node_agent_router_handler_socket_, node_agent_identity, response);
 }
@@ -197,7 +198,7 @@ void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,
   // For now, just log and respond with success
   LOG_INFO("WaitForCopy: {} (stub implementation)", request.copy_operation_id);
 
-  WaitForCopyResponse response(ErrorCode::kSuccess);
+  WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
   SetuCommHelper::SendWithIdentity<WaitForCopyResponse, false>(
       node_agent_router_handler_socket_, node_agent_identity, response);
 }

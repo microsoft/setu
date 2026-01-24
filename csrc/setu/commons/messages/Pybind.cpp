@@ -19,10 +19,12 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
+#include "commons/Types.h"
 #include "commons/messages/Messages.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
 using setu::coordinator::datatypes::Program;
@@ -46,7 +48,9 @@ void InitRegisterTensorShardRequestPybind(py::module_& m) {
 void InitRegisterTensorShardResponsePybind(py::module_& m) {
   py::class_<RegisterTensorShardResponse>(m, "RegisterTensorShardResponse",
                                           py::module_local())
-      .def(py::init<ErrorCode>(), py::arg("error_code"))
+      .def(py::init<RequestId, ErrorCode>(), py::arg("request_id"),
+           py::arg("error_code") = ErrorCode::kSuccess)
+      .def_readonly("request_id", &RegisterTensorShardResponse::request_id)
       .def_readonly("error_code", &RegisterTensorShardResponse::error_code)
       .def("__str__", &RegisterTensorShardResponse::ToString)
       .def("__repr__", &RegisterTensorShardResponse::ToString);
@@ -67,8 +71,11 @@ void InitExecuteProgramRequestPybind(py::module_& m) {
 void InitExecuteProgramResponsePybind(py::module_& m) {
   py::class_<ExecuteProgramResponse>(m, "ExecuteProgramResponse",
                                      py::module_local())
-      .def(py::init<ErrorCode>(), py::arg("error_code"),
-           "Create an ExecuteProgramResponse with an error code")
+      .def(py::init<RequestId, ErrorCode>(), py::arg("request_id"),
+           py::arg("error_code") = ErrorCode::kSuccess,
+           "Create an ExecuteProgramResponse with request ID and error code")
+      .def_readonly("request_id", &ExecuteProgramResponse::request_id,
+                    "The request ID this response corresponds to")
       .def_readonly("error_code", &ExecuteProgramResponse::error_code,
                     "The error code of the response")
       .def("__str__", &ExecuteProgramResponse::ToString)

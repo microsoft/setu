@@ -25,17 +25,16 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 void CopyOperationFinishedRequest::Serialize(BinaryBuffer& buffer) const {
-  // Empty message - nothing to serialize
   BinaryWriter writer(buffer);
-  writer.WriteFields(copy_operation_id);
+  writer.WriteFields(request_id, copy_operation_id);
 }
 
 CopyOperationFinishedRequest CopyOperationFinishedRequest::Deserialize(
     const BinaryRange& range) {
-  // Empty message - nothing to deserialize
   BinaryReader reader(range);
-  auto [copy_operation_id_val] = reader.ReadFields<CopyOperationId>();
-  return CopyOperationFinishedRequest(copy_operation_id_val);
+  auto [request_id_val, copy_operation_id_val] =
+      reader.ReadFields<RequestId, CopyOperationId>();
+  return CopyOperationFinishedRequest(request_id_val, copy_operation_id_val);
 }
 
 //==============================================================================

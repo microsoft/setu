@@ -16,9 +16,11 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/utils/Serialization.h"
-#include "setu/coordinator/datatypes/Program.h"
+#include "commons/StdCommon.h"
+//==============================================================================
+#include "commons/messages/BaseRequest.h"
+#include "commons/utils/Serialization.h"
+#include "coordinator/datatypes/Program.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -29,28 +31,34 @@ using setu::commons::utils::BinaryWriter;
 using setu::coordinator::datatypes::Program;
 //==============================================================================
 
-struct ExecuteProgramRequest {
-  Program program;
-
-  ExecuteProgramRequest() = default;
+struct ExecuteProgramRequest : public BaseRequest {
+  /// @brief Constructs a request with auto-generated request ID.
   explicit ExecuteProgramRequest(Program program_param)
-      : program(std::move(program_param)) {}
+      : BaseRequest(), program(std::move(program_param)) {}
+
+  /// @brief Constructs a request with explicit request ID (for
+  /// deserialization).
+  ExecuteProgramRequest(RequestId request_id_param, Program program_param)
+      : BaseRequest(request_id_param), program(std::move(program_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("ExecuteProgramRequest(program={})", program.ToString());
+    return std::format("ExecuteProgramRequest(request_id={}, program={})",
+                       request_id, program.ToString());
   }
 
   void Serialize(BinaryBuffer& buffer) const {
     BinaryWriter writer(buffer);
-    writer.WriteFields(program);
+    writer.WriteFields(request_id, program);
   }
 
   static ExecuteProgramRequest Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    ExecuteProgramRequest request;
-    std::tie(request.program) = reader.ReadFields<Program>();
-    return request;
+    auto [request_id_val, program_val] =
+        reader.ReadFields<RequestId, Program>();
+    return ExecuteProgramRequest(request_id_val, std::move(program_val));
   }
+
+  const Program program;
 };
 using ExecuteProgramRequestPtr = std::shared_ptr<ExecuteProgramRequest>;
 

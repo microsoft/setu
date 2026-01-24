@@ -18,12 +18,14 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
+#include "commons/Types.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/messages/BaseResponse.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
@@ -31,9 +33,11 @@ using setu::commons::utils::BinaryRange;
 
 struct RegisterTensorShardResponse : public BaseResponse {
   RegisterTensorShardResponse(
-      ErrorCode error_code_param,
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess,
       std::optional<TensorShardRef> shard_ref_param = std::nullopt)
-      : BaseResponse(error_code_param), shard_ref(std::move(shard_ref_param)) {}
+      : BaseResponse(request_id_param, error_code_param),
+        shard_ref(std::move(shard_ref_param)) {}
 
   [[nodiscard]] std::string ToString() const {
     return std::format("RegisterTensorShardResponse(error_code={})",
