@@ -36,7 +36,7 @@ using setu::coordinator::datatypes::Instruction;
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
 Worker::Worker(Device device, std::size_t reply_port)
-    : device_(device), reply_port_(reply_port) {
+    : device_(device), reply_port_(reply_port), worker_running_(false) {
   InitZmqSockets();
 }
 
@@ -46,13 +46,16 @@ Worker::~Worker() {
 }
 
 void Worker::Start() {
-  LOG_DEBUG("Starting Worker");
   if (!worker_running_.load()) {
+    LOG_DEBUG("Starting Worker");
     StartExecutorLoop();
   }
 }
 
 void Worker::Stop() {
+  if (!worker_running_.load()) 
+    return;
+  
   LOG_DEBUG("Stopping Worker");
   StopExecutorLoop();
 }
@@ -80,6 +83,8 @@ void Worker::CloseZmqSockets() {
 void Worker::StartExecutorLoop() {
   LOG_DEBUG("Starting executor loop");
 
+  worker_running_ = true;
+
   executor_thread_ = std::thread(SETU_LAUNCH_THREAD(
       [this]() { this->ExecutorLoop(); }, "ExecutorLoopThread"));
 }
@@ -99,7 +104,8 @@ void Worker::StopExecutorLoop() {
 void Worker::ExecutorLoop() {
   LOG_DEBUG("Entering executor loop");
 
-  worker_running_ = true;
+  this->Setup();
+
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
     auto request = SetuCommHelper::Recv<ExecuteProgramRequest>(reply_socket_);
@@ -109,7 +115,7 @@ void Worker::ExecutorLoop() {
               program.instrs.size());
 
     // Execute each instruction in the program
-    Execute(program);
+    this->Execute(program);
 
     LOG_DEBUG("Worker completed executing all instructions");
 
@@ -119,7 +125,24 @@ void Worker::ExecutorLoop() {
   }
 }
 
-void Worker::Execute(const Program& program) {
+NCCLWorker::NCCLWorker(Device device, std::size_t reply_port)
+  : Worker(device, reply_port), stream_(nullptr), active_comm_key_("") 
+  { }
+
+NCCLWorker::~NCCLWorker() {
+  if (stream_ != nullptr) {
+      cudaStreamDestroy(stream_);
+  }
+}
+
+void NCCLWorker::Setup() {
+  // Set the local CUDA device 
+  cudaSetDevice(device_.local_device_rank);
+  cudaStreamCreate(&stream_);
+  LOG_DEBUG("NCCLWorker::Setup: device={}", device_);
+}
+
+void NCCLWorker::Execute(const Program& program) {
   LOG_DEBUG("Worker executing program with {} instructions",
             program.instrs.size());
 

@@ -26,6 +26,9 @@
 #include "commons/utils/ZmqHelper.h"
 #include "coordinator/datatypes/Instruction.h"
 #include "coordinator/datatypes/Program.h"
+
+#include <nccl.h>
+#include <cuda_runtime.h>
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -53,8 +56,6 @@ class Worker {
 
   [[nodiscard]] const Device& GetDevice() const { return device_; }
 
-  void Execute(const Program& program);
-
  private:
   void InitZmqSockets();
   void CloseZmqSockets();
@@ -62,20 +63,40 @@ class Worker {
   void StartExecutorLoop();
   void StopExecutorLoop();
 
+  virtual void Setup();
   void ExecutorLoop();
-  void ExecuteInstruction(const Instruction& instruction);
+  virtual void Execute(const Program& program);
 
-  Device device_;
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr reply_socket_;
-
+  
+  Device device_;
   std::size_t reply_port_;
-
-  std::atomic<bool> worker_running_{false};
-
+  std::atomic<bool> worker_running_;
   std::thread executor_thread_;
 };
+
+
+class NCCLWorker : public Worker {
+public:
+  NCCLWorker(Device device, std::size_t reply_port);
+  ~NCCLWorker();
+
+private:
+  void Setup() override;
+  void Execute(const Program& program) override;
+
+  struct CommCacheEntry {
+      ncclComm_t nccl_comm;
+      std::unordered_map<DeviceRank, int> device_to_rank;
+  };
+  std::unordered_map<std::string, CommCacheEntry> comm_cache_;
+  std::string active_comm_key_;
+
+  cudaStream_t stream_;
+};
+
 //==============================================================================
 }  // namespace setu::node_manager::worker
 //==============================================================================
