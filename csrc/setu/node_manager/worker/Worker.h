@@ -64,7 +64,8 @@ class Worker {
   void StopExecutorLoop();
 
   virtual void Setup();
-  void ExecutorLoop();
+  void WorkerLoop();
+  virtual void AllocateShardMemory(const TensorName& tensor_id, const ShardId shard_id, const std::size_t size, const Dtype dtype);
   virtual void Execute(const Program& program);
 
   // Zmq context and sockets
@@ -86,6 +87,7 @@ public:
 private:
   void Setup() override;
   void Execute(const Program& program) override;
+  void AllocateShardMemory(const TensorName& tensor_id, const ShardId shard_id, const std::size_t size, const Dtype dtype) override;
 
   struct CommCacheEntry {
       ncclComm_t nccl_comm;
@@ -94,6 +96,8 @@ private:
   std::unordered_map<std::string, CommCacheEntry> comm_cache_;
   std::string active_comm_key_;
 
+
+  std::unordered_map<TensorName, std::unordered_map<ShardId, std::pair<DevicePtr, Dtype>>> device_ptrs_lookup_; 
   cudaStream_t stream_;
 };
 

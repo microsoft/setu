@@ -48,7 +48,7 @@ Worker::~Worker() {
 void Worker::Start() {
   if (!worker_running_.load()) {
     LOG_DEBUG("Starting Worker");
-    StartExecutorLoop();
+    StartWorkerLoop();
   }
 }
 
@@ -57,7 +57,7 @@ void Worker::Stop() {
     return;
   
   LOG_DEBUG("Stopping Worker");
-  StopExecutorLoop();
+  StopWorkerLoop();
 }
 
 void Worker::InitZmqSockets() {
@@ -80,17 +80,17 @@ void Worker::CloseZmqSockets() {
   LOG_DEBUG("Closed ZMQ sockets successfully");
 }
 
-void Worker::StartExecutorLoop() {
-  LOG_DEBUG("Starting executor loop");
+void Worker::StartWorkerLoop() {
+  LOG_DEBUG("Starting worker loop");
 
   worker_running_ = true;
 
   executor_thread_ = std::thread(SETU_LAUNCH_THREAD(
-      [this]() { this->ExecutorLoop(); }, "ExecutorLoopThread"));
+      [this]() { this->WorkerLoop(); }, "WorkerLoopThread"));
 }
 
-void Worker::StopExecutorLoop() {
-  LOG_DEBUG("Stopping executor loop");
+void Worker::StopWorkerLoop() {
+  LOG_DEBUG("Stopping worker loop");
 
   worker_running_ = false;
 
@@ -98,16 +98,17 @@ void Worker::StopExecutorLoop() {
     executor_thread_.join();
   }
 
-  LOG_DEBUG("Executor loop stopped");
+  LOG_DEBUG("Worker loop stopped");
 }
 
-void Worker::ExecutorLoop() {
-  LOG_DEBUG("Entering executor loop");
+void Worker::WorkerLoop() {
+  LOG_DEBUG("Entering worker loop");
 
   this->Setup();
 
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
+    // Or allocate memory request from NodeAgent?
     auto request = SetuCommHelper::Recv<ExecuteProgramRequest>(reply_socket_);
     const auto& program = request.program;
 
