@@ -33,8 +33,6 @@
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
-using setu::commons::enums::DType;
-//==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
       .def(py::init<NodeRank, DeviceRank, torch::Device>(),
@@ -150,7 +148,8 @@ void InitTensorDimShardPybind(py::module_& m) {
 //==============================================================================
 void InitTensorShardPybind(py::module_& m) {
   py::class_<TensorShard, TensorShardPtr>(m, "TensorShard", py::module_local())
-      .def(py::init<TensorName, Device, DevicePtr, DType, TensorDimShardsMap>(),
+      .def(py::init<TensorName, Device, DevicePtr, torch::Dtype,
+                    TensorDimShardsMap>(),
            py::arg("name"), py::arg("device"), py::arg("device_ptr"),
            py::arg("dtype"), py::arg("dim_shards"))
       .def_readonly("id", &TensorShard::id, "Unique identifier for this shard")
@@ -178,7 +177,7 @@ void InitTensorShardPybind(py::module_& m) {
 //==============================================================================
 void InitTensorShardSpecPybind(py::module_& m) {
   py::class_<TensorShardSpec>(m, "TensorShardSpec", py::module_local())
-      .def(py::init<TensorName, std::vector<TensorDim>, DType, Device>(),
+      .def(py::init<TensorName, std::vector<TensorDim>, torch::Dtype, Device>(),
            py::arg("name"), py::arg("dims"), py::arg("dtype"),
            py::arg("device"))
       .def_readonly("name", &TensorShardSpec::name,

@@ -18,17 +18,16 @@
 //==============================================================================
 #include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
 #include "commons/datatypes/TensorDimShard.h"
-#include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
 // Type aliases for convenience
 using setu::commons::GenerateUUID;
-using setu::commons::enums::DType;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -57,7 +56,7 @@ struct TensorShard {
    * @throws std::invalid_argument if device_ptr is null or dim_shards is empty
    */
   TensorShard(TensorName name_param, Device device_param,
-              DevicePtr device_ptr_param, DType dtype_param,
+              DevicePtr device_ptr_param, torch::Dtype dtype_param,
               TensorDimShardsMap dim_shards_param)
       : id(GenerateUUID()),
         name(name_param),
@@ -85,7 +84,7 @@ struct TensorShard {
    * or shard ID is nil
    */
   TensorShard(ShardId id_param, TensorName name_param, Device device_param,
-              DevicePtr device_ptr_param, DType dtype_param,
+              DevicePtr device_ptr_param, torch::Dtype dtype_param,
               TensorDimShardsMap dim_shards_param)
       : id(id_param),
         name(name_param),
@@ -159,7 +158,7 @@ struct TensorShard {
   const TensorName name;       ///< Name of the tensor being sharded
   const Device device;         ///< Device where this shard resides
   const DevicePtr device_ptr;  ///< Pointer to device memory location
-  const DType dtype;           ///< Data type of tensor elements
+  const torch::Dtype dtype;    ///< Data type of tensor elements
   const TensorDimShardsMap
       dim_shards;                ///< Map of dimension names to shard info
   const std::size_t shard_size;  ///< Size of this specific shard

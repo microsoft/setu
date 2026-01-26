@@ -18,14 +18,13 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
 #include "commons/datatypes/TensorDim.h"
-#include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::datatypes {
-using setu::commons::enums::DType;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -55,7 +54,7 @@ struct TensorShardSpec {
    * @throws std::invalid_argument if dims is empty
    */
   TensorShardSpec(TensorName name_param, std::vector<TensorDim> dims_param,
-                  DType dtype_param, Device device_param)
+                  torch::Dtype dtype_param, Device device_param)
       : name(std::move(name_param)),
         dims(std::move(dims_param)),
         dtype(dtype_param),
@@ -105,7 +104,7 @@ struct TensorShardSpec {
 
   const TensorName name;              ///< Name/identifier for the tensor
   const std::vector<TensorDim> dims;  ///< Dimensions of the tensor
-  const DType dtype;                  ///< Data type of tensor elements
+  const torch::Dtype dtype;           ///< Data type of tensor elements
   const Device device;                ///< Device where tensor resides
 };
 //==============================================================================
