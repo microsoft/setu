@@ -24,6 +24,8 @@
 namespace setu::client {
 //==============================================================================
 using setu::commons::messages::ClientRequest;
+using setu::commons::messages::GetTensorHandleRequest;
+using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
@@ -133,6 +135,28 @@ void Client::WaitForCopy(CopyOperationId copy_op_id) {
   LOG_DEBUG(
       "Client finished waiting for copy operation ID: {} with error code: {}",
       copy_op_id, response.error_code);
+}
+
+TensorIPCSpec Client::GetTensorHandle(TensorName tensor_name) {
+  LOG_DEBUG("Client requesting tensor handle for: {}", tensor_name);
+
+  ClientRequest request = GetTensorHandleRequest(tensor_name);
+  SetuCommHelper::Send(request_socket_, request);
+
+  auto response =
+      SetuCommHelper::Recv<GetTensorHandleResponse>(request_socket_);
+
+  LOG_DEBUG(
+      "Client received tensor handle response for: {} with error code: {}",
+      tensor_name, response.error_code);
+
+  ASSERT_VALID_RUNTIME(response.error_code == ErrorCode::kSuccess,
+                       "Failed to get tensor handle for {}: {}", tensor_name,
+                       response.error_code);
+  ASSERT_VALID_RUNTIME(response.tensor_ipc_spec.has_value(),
+                       "Tensor IPC spec is missing for {}", tensor_name);
+
+  return response.tensor_ipc_spec.value();
 }
 //==============================================================================
 }  // namespace setu::client

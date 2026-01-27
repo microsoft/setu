@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,39 +14,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "Pybind.h"
+#pragma once
 //==============================================================================
-#include "commons/Logging.h"
 #include "commons/StdCommon.h"
-#include "commons/TorchCommon.h"
-#include "commons/enums/Enums.h"
 //==============================================================================
-namespace setu::commons::enums {
+#include "commons/Types.h"
+#include "commons/messages/BaseResponse.h"
+#include "commons/utils/Serialization.h"
+#include "commons/utils/TorchTensorIPC.h"
 //==============================================================================
-void InitDeviceKindPybind(py::module_& m) {
-  py::enum_<DeviceKind>(m, "DeviceKind", py::module_local())
-      .value("CUDA", DeviceKind::kCuda)
-      .value("CPU", DeviceKind::kCpu)
-      .value("NVME", DeviceKind::kNvme)
-      .export_values();
-}
+namespace setu::commons::messages {
 //==============================================================================
-void InitErrorCodePybind(py::module_& m) {
-  py::enum_<ErrorCode>(m, "ErrorCode", py::module_local())
-      .value("SUCCESS", ErrorCode::kSuccess)
-      .value("INVALID_ARGUMENTS", ErrorCode::kInvalidArguments)
-      .value("TIMEOUT", ErrorCode::kTimeout)
-      .value("INTERNAL_ERROR", ErrorCode::kInternalError)
-      .value("TENSOR_NOT_FOUND", ErrorCode::kTensorNotFound)
-      .export_values();
-}
+using setu::commons::RequestId;
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::TensorIPCSpec;
 //==============================================================================
-void InitEnumsPybindSubmodule(py::module_& pm) {
-  auto m = pm.def_submodule("enums", "Enums submodule");
 
-  InitDeviceKindPybind(m);
-  InitErrorCodePybind(m);
-}
+struct GetTensorHandleResponse : public BaseResponse {
+  GetTensorHandleResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess,
+      std::optional<TensorIPCSpec> tensor_ipc_spec_param = std::nullopt)
+      : BaseResponse(request_id_param, error_code_param),
+        tensor_ipc_spec(std::move(tensor_ipc_spec_param)) {}
+
+  [[nodiscard]] std::string ToString() const {
+    return std::format("GetTensorHandleResponse(request_id={}, error_code={})",
+                       request_id, error_code);
+  }
+
+  void Serialize(BinaryBuffer& buffer) const;
+
+  static GetTensorHandleResponse Deserialize(const BinaryRange& range);
+
+  const std::optional<TensorIPCSpec> tensor_ipc_spec;
+};
+using GetTensorHandleResponsePtr = std::shared_ptr<GetTensorHandleResponse>;
+
 //==============================================================================
-}  // namespace setu::commons::enums
+}  // namespace setu::commons::messages
 //==============================================================================

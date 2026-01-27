@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
@@ -48,6 +49,8 @@ using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::CoordinatorResponse;
 using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
+using setu::commons::messages::GetTensorHandleRequest;
+using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
@@ -73,8 +76,7 @@ class NodeAgent {
 
   void WaitForCopy(CopyOperationId copy_op_id);
 
-  void AllocateTensor(const TensorName& tensor_id, ShardId shard_id,
-                      DeviceRank device);
+  void AllocateTensor(const TensorShardSpec& tensor_shard_spec);
 
   void CopyOperationFinished(CopyOperationId copy_op_id);
 
@@ -101,6 +103,9 @@ class NodeAgent {
 
   void HandleClientRequest(const Identity& client_identity,
                            const WaitForCopyRequest& request);
+
+  void HandleClientRequest(const Identity& client_identity,
+                           const GetTensorHandleRequest& request);
 
   void HandleCoordinatorResponse(const CoordinatorResponse& response);
 
@@ -148,6 +153,7 @@ class NodeAgent {
   Queue<std::pair<CopyOperationId, Plan>> executor_queue_;
 
   std::unordered_map<TensorName, TensorShardSpec> tensor_name_to_spec_;
+  std::unordered_map<TensorName, torch::Tensor> tensor_name_to_tensor_;
 };
 //==============================================================================
 }  // namespace setu::node_manager

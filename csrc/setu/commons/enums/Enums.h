@@ -27,7 +27,8 @@ enum class ErrorCode : std::uint32_t {
   kSuccess = 0,
   kInvalidArguments = 1,
   kTimeout = 2,
-  kInternalError = 3
+  kInternalError = 3,
+  kTensorNotFound = 4
 };
 //==============================================================================
 }  // namespace setu::commons::enums
@@ -74,6 +75,9 @@ struct std::formatter<setu::commons::enums::ErrorCode>
         break;
       case setu::commons::enums::ErrorCode::kInternalError:
         name = "INTERNAL_ERROR";
+        break;
+      case setu::commons::enums::ErrorCode::kTensorNotFound:
+        name = "TENSOR_NOT_FOUND";
         break;
     }
     return std::formatter<std::string_view>::format(name, ctx);

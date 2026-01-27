@@ -21,11 +21,17 @@
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
+using setu::commons::GenerateUUID;
 using setu::commons::RequestId;
+using setu::commons::ShardId;
+using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorShardRef;
 using setu::commons::enums::ErrorCode;
-using setu::commons::messages::ClientRequest;
+using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::CoordinatorMessage;
+using setu::commons::messages::CoordinatorRequest;
 using setu::commons::messages::CoordinatorResponse;
+using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
@@ -150,7 +156,7 @@ void Coordinator::HandlerLoop() {
   handler_running_ = true;
   while (handler_running_) {
     auto [node_agent_identity, request] =
-        SetuCommHelper::RecvWithIdentity<ClientRequest, false>(
+        SetuCommHelper::RecvWithIdentity<NodeAgentRequest, false>(
             node_agent_router_handler_socket_);
     std::visit(
         [&](const auto& req) {
@@ -166,16 +172,33 @@ void Coordinator::HandleNodeAgentRequest(
   LOG_INFO("Coordinator received RegisterTensorShardRequest for tensor: {}",
            request.tensor_shard_spec.name);
 
-  // TODO: Actually register the tensor shard
-  // For now, just log and respond with success
-  LOG_INFO("Registered tensor shard: {} (stub implementation)",
-           request.tensor_shard_spec.name);
+  // Generate a shard ID
+  ShardId shard_id = GenerateUUID();
 
+  // Build TensorDimMap from the spec's dims
+  TensorDimMap dim_map;
+  for (const auto& dim : request.tensor_shard_spec.dims) {
+    dim_map.emplace(dim.name, dim);
+  }
+
+  // Create TensorShardRef
+  TensorShardRef shard_ref(request.tensor_shard_spec.name, shard_id, dim_map);
+
+  // Send response to client
   RegisterTensorShardResponse response(request.request_id, ErrorCode::kSuccess,
-                                       std::nullopt);
-  CoordinatorMessage message = CoordinatorResponse(response);
+                                       shard_ref);
+  CoordinatorMessage response_message = CoordinatorResponse(response);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
-      node_agent_router_handler_socket_, node_agent_identity, message);
+      node_agent_router_handler_socket_, node_agent_identity, response_message);
+
+  // Send AllocateTensorRequest to NodeAgent to allocate the tensor
+  AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);
+  CoordinatorMessage allocate_message = CoordinatorRequest(allocate_request);
+  SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
+      node_agent_router_handler_socket_, node_agent_identity, allocate_message);
+
+  LOG_INFO("Sent AllocateTensorRequest for tensor: {}",
+           request.tensor_shard_spec.name);
 }
 
 void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,

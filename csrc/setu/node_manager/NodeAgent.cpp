@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/SetuCommHelper.h"
+#include "commons/utils/TorchTensorIPC.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -36,9 +37,12 @@ using setu::commons::messages::CoordinatorResponse;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::messages::ExecuteResponse;
+using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
+using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
 using setu::coordinator::datatypes::Instruction;
@@ -102,11 +106,29 @@ void NodeAgent::WaitForCopy(CopyOperationId copy_op_id) {
   // TODO: Implement wait for copy
 }
 
-void NodeAgent::AllocateTensor(const TensorName& tensor_id, ShardId shard_id,
-                               DeviceRank device) {
-  LOG_DEBUG("Allocating tensor shard: tensor_id={}, shard_id={}, device={}",
-            tensor_id, boost::uuids::to_string(shard_id), device);
-  // TODO: Implement allocation on device
+void NodeAgent::AllocateTensor(const TensorShardSpec& tensor_shard_spec) {
+  LOG_DEBUG("Allocating tensor shard: tensor_shard_spec={}", tensor_shard_spec);
+
+  // Build the shape from dims
+  std::vector<std::int64_t> shape;
+  shape.reserve(tensor_shard_spec.dims.size());
+  for (const auto& dim : tensor_shard_spec.dims) {
+    shape.push_back(static_cast<std::int64_t>(dim.size));
+  }
+
+  // Create tensor options with dtype and device from spec
+  auto options = torch::TensorOptions()
+                     .dtype(tensor_shard_spec.dtype)
+                     .device(tensor_shard_spec.device.torch_device);
+
+  torch::Tensor tensor = torch::empty(shape, options);
+
+  // Store the tensor
+  tensor_name_to_tensor_[tensor_shard_spec.name] = std::move(tensor);
+
+  LOG_DEBUG("Successfully allocated tensor '{}' with shape {} on device {}",
+            tensor_shard_spec.name, shape,
+            tensor_shard_spec.device.torch_device.str());
 }
 
 void NodeAgent::CopyOperationFinished(CopyOperationId copy_op_id) {
@@ -241,8 +263,13 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
 
   request_to_client_[request.request_id] = client_identity;
 
-  SetuCommHelper::Send<ClientRequest>(coordinator_dealer_handler_socket_,
-                                      request);
+  // Store the spec so we can allocate the tensor when Coordinator sends
+  // AllocateTensorRequest
+  tensor_name_to_spec_.emplace(request.tensor_shard_spec.name,
+                               request.tensor_shard_spec);
+
+  SetuCommHelper::Send<NodeAgentRequest>(coordinator_dealer_handler_socket_,
+                                         request);
 }
 
 void NodeAgent::HandleClientRequest(const Identity& client_identity,
@@ -252,8 +279,8 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
 
   request_to_client_[request.request_id] = client_identity;
 
-  SetuCommHelper::Send<ClientRequest>(coordinator_dealer_handler_socket_,
-                                      request);
+  SetuCommHelper::Send<NodeAgentRequest>(coordinator_dealer_handler_socket_,
+                                         request);
 }
 
 void NodeAgent::HandleClientRequest(const Identity& client_identity,
@@ -266,9 +293,33 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
   WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 }
 
+void NodeAgent::HandleClientRequest(const Identity& client_identity,
+                                    const GetTensorHandleRequest& request) {
+  LOG_DEBUG("Handling GetTensorHandleRequest for tensor: {}",
+            request.tensor_name);
+
+  auto it = tensor_name_to_tensor_.find(request.tensor_name);
+  if (it == tensor_name_to_tensor_.end()) {
+    LOG_ERROR("Tensor not found: {}", request.tensor_name);
+    GetTensorHandleResponse response(request.request_id,
+                                     ErrorCode::kTensorNotFound);
+    SetuCommHelper::SendWithIdentity<GetTensorHandleResponse, true>(
+        client_router_socket_, client_identity, response);
+    return;
+  }
+
+  auto tensor_ipc_spec = PrepareTensorIPCSpec(it->second);
+  GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
+                                   std::move(tensor_ipc_spec));
+  SetuCommHelper::SendWithIdentity<GetTensorHandleResponse, true>(
+      client_router_socket_, client_identity, response);
+
+  LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
+}
+
 void NodeAgent::HandleCoordinatorRequest(const AllocateTensorRequest& request) {
   LOG_DEBUG("Handling AllocateTensorRequest for request: {}", request);
-  AllocateTensor(request.tensor_id, request.shard_id, request.device);
+  AllocateTensor(tensor_name_to_spec_.at(request.tensor_name));
 }
 
 void NodeAgent::HandleCoordinatorRequest(

@@ -28,6 +28,8 @@
 #include "commons/messages/ExecuteProgramResponse.h"
 #include "commons/messages/ExecuteRequest.h"
 #include "commons/messages/ExecuteResponse.h"
+#include "commons/messages/GetTensorHandleRequest.h"
+#include "commons/messages/GetTensorHandleResponse.h"
 #include "commons/messages/RegisterTensorShardRequest.h"
 #include "commons/messages/RegisterTensorShardResponse.h"
 #include "commons/messages/SubmitCopyRequest.h"
@@ -36,8 +38,15 @@
 #include "commons/messages/WaitForCopyResponse.h"
 //==============================================================================
 namespace setu::commons::messages {
-using ClientRequest = std::variant<RegisterTensorShardRequest,
-                                   SubmitCopyRequest, WaitForCopyRequest>;
+/// @brief Requests from Client to NodeAgent.
+using ClientRequest =
+    std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
+                 WaitForCopyRequest, GetTensorHandleRequest>;
+
+/// @brief Requests from NodeAgent to Coordinator (subset of ClientRequest that
+/// gets forwarded).
+using NodeAgentRequest = std::variant<RegisterTensorShardRequest,
+                                      SubmitCopyRequest, WaitForCopyRequest>;
 
 using CoordinatorRequest =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
@@ -51,11 +60,13 @@ using CoordinatorMessage =
     std::variant<CoordinatorRequest, CoordinatorResponse>;
 
 using Request = std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
-                             WaitForCopyRequest, AllocateTensorRequest,
+                             WaitForCopyRequest, GetTensorHandleRequest,
+                             AllocateTensorRequest,
                              CopyOperationFinishedRequest, ExecuteRequest>;
 
 using Response = std::variant<RegisterTensorShardResponse, SubmitCopyResponse,
-                              WaitForCopyResponse, AllocateTensorResponse,
+                              WaitForCopyResponse, GetTensorHandleResponse,
+                              AllocateTensorResponse,
                               CopyOperationFinishedResponse, ExecuteResponse>;
 //==============================================================================
 }  // namespace setu::commons::messages

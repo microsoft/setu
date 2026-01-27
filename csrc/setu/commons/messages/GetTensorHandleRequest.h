@@ -24,35 +24,40 @@
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::TensorName;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-struct AllocateTensorRequest : public BaseRequest {
+struct GetTensorHandleRequest : public BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(TensorName tensor_name_param)
-      : BaseRequest(), tensor_name(std::move(tensor_name_param)) {}
+  explicit GetTensorHandleRequest(TensorName tensor_name_param)
+      : BaseRequest(), tensor_name(std::move(tensor_name_param)) {
+    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  }
 
   /// @brief Constructs a request with explicit request ID (for
   /// deserialization).
-  AllocateTensorRequest(RequestId request_id_param,
-                        TensorName tensor_name_param)
+  GetTensorHandleRequest(RequestId request_id_param,
+                         TensorName tensor_name_param)
       : BaseRequest(request_id_param),
-        tensor_name(std::move(tensor_name_param)) {}
+        tensor_name(std::move(tensor_name_param)) {
+    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  }
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, tensor_name={})",
+    return std::format("GetTensorHandleRequest(request_id={}, tensor_name={})",
                        request_id, tensor_name);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static AllocateTensorRequest Deserialize(const BinaryRange& range);
+  static GetTensorHandleRequest Deserialize(const BinaryRange& range);
 
   const TensorName tensor_name;
 };
-using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
+using GetTensorHandleRequestPtr = std::shared_ptr<GetTensorHandleRequest>;
 
 //==============================================================================
 }  // namespace setu::commons::messages
