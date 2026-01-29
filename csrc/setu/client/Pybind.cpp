@@ -88,74 +88,6 @@ void InitTensorShardRefPybindClass(py::module_& m) {
       .def("__str__", &TensorShardRef::ToString)
       .def("__repr__", &TensorShardRef::ToString);
 }
-//==============================================================================
-void InitTensorIPCSpecPybindClass(py::module_& m) {
-  py::class_<TensorIPCSpec, TensorIPCSpecPtr>(m, "TensorIPCSpec",
-                                              py::module_local())
-      .def_readonly("tensor_size", &TensorIPCSpec::tensor_size,
-                    "Tensor size (shape)")
-      .def_readonly("tensor_stride", &TensorIPCSpec::tensor_stride,
-                    "Tensor stride")
-      .def_readonly("tensor_offset", &TensorIPCSpec::tensor_offset,
-                    "Tensor storage offset")
-      .def_readonly("dtype", &TensorIPCSpec::dtype, "Tensor data type")
-      .def_readonly("requires_grad", &TensorIPCSpec::requires_grad,
-                    "Whether tensor requires gradient")
-      .def_readonly("storage_device", &TensorIPCSpec::storage_device,
-                    "Storage device (e.g., cuda:0)")
-      .def_property_readonly(
-          "storage_handle",
-          [](const TensorIPCSpec& spec) {
-            return py::bytes(spec.storage_handle);
-          },
-          "CUDA IPC memory handle (as bytes)")
-      .def_readonly("storage_size_bytes", &TensorIPCSpec::storage_size_bytes,
-                    "Storage size in bytes")
-      .def_readonly("storage_offset_bytes",
-                    &TensorIPCSpec::storage_offset_bytes,
-                    "Storage offset in bytes")
-      .def_property_readonly(
-          "ref_counter_handle",
-          [](const TensorIPCSpec& spec) {
-            return py::bytes(spec.ref_counter_handle);
-          },
-          "Reference counter IPC handle (as bytes)")
-      .def_readonly("ref_counter_offset", &TensorIPCSpec::ref_counter_offset,
-                    "Reference counter offset")
-      .def_property_readonly(
-          "event_handle",
-          [](const TensorIPCSpec& spec) {
-            return py::bytes(reinterpret_cast<const char*>(&spec.event_handle),
-                             CUDA_IPC_HANDLE_SIZE);
-          },
-          "CUDA IPC event handle (as bytes)")
-      .def_readonly("event_sync_required", &TensorIPCSpec::event_sync_required,
-                    "Whether event synchronization is required")
-      .def(
-          "to_dict",
-          [](const TensorIPCSpec& spec) {
-            py::dict d;
-            d["tensor_size"] = spec.tensor_size;
-            d["tensor_stride"] = spec.tensor_stride;
-            d["tensor_offset"] = spec.tensor_offset;
-            d["dtype"] = spec.dtype;
-            d["requires_grad"] = spec.requires_grad;
-            d["storage_device"] = spec.storage_device;
-            d["storage_handle"] = py::bytes(spec.storage_handle);
-            d["storage_size_bytes"] = spec.storage_size_bytes;
-            d["storage_offset_bytes"] = spec.storage_offset_bytes;
-            d["ref_counter_handle"] = py::bytes(spec.ref_counter_handle);
-            d["ref_counter_offset"] = spec.ref_counter_offset;
-            d["event_handle"] =
-                py::bytes(reinterpret_cast<const char*>(&spec.event_handle),
-                          CUDA_IPC_HANDLE_SIZE);
-            d["event_sync_required"] = spec.event_sync_required;
-            return d;
-          },
-          "Convert TensorIPCSpec to a dictionary for splatting into function "
-          "arguments");
-}
-//==============================================================================
 }  // namespace setu::client
 //==============================================================================
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -163,7 +95,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
   setu::client::InitEnumsPybindClass(m);
   setu::client::InitTensorShardRefPybindClass(m);
-  setu::client::InitTensorIPCSpecPybindClass(m);
   setu::client::InitClientPybindClass(m);
 }
 //==============================================================================

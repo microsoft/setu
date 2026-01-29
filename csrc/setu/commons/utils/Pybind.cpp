@@ -57,8 +57,7 @@ void InitZmqHelperPybindClass(py::module_& m) {
 }
 //==============================================================================
 void InitTorchTensorIPCPybindClass(py::module_& m) {
-  py::class_<TensorIPCSpec, TensorIPCSpecPtr>(m, "TensorIPCSpec",
-                                              py::module_local())
+  py::class_<TensorIPCSpec, TensorIPCSpecPtr>(m, "TensorIPCSpec")
       .def(py::init<torch::IntArrayRef, torch::IntArrayRef, std::int64_t,
                     torch::Dtype, bool, std::int32_t, std::string,
                     std::uint64_t, std::uint64_t, std::string, std::uint64_t,
