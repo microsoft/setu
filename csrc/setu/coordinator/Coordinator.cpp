@@ -29,8 +29,6 @@ using setu::commons::datatypes::TensorShardRef;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::CoordinatorMessage;
-using setu::commons::messages::CoordinatorRequest;
-using setu::commons::messages::CoordinatorResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
@@ -187,15 +185,13 @@ void Coordinator::HandleNodeAgentRequest(
   // Send response to client
   RegisterTensorShardResponse response(request.request_id, ErrorCode::kSuccess,
                                        shard_ref);
-  CoordinatorMessage response_message = CoordinatorResponse(response);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
-      node_agent_router_handler_socket_, node_agent_identity, response_message);
+      node_agent_router_handler_socket_, node_agent_identity, response);
 
   // Send AllocateTensorRequest to NodeAgent to allocate the tensor
   AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);
-  CoordinatorMessage allocate_message = CoordinatorRequest(allocate_request);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
-      node_agent_router_handler_socket_, node_agent_identity, allocate_message);
+      node_agent_router_handler_socket_, node_agent_identity, allocate_request);
 
   LOG_INFO("Sent AllocateTensorRequest for tensor: {}",
            request.tensor_shard_spec.name);
@@ -212,9 +208,8 @@ void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,
            request.copy_spec.src_name, request.copy_spec.dst_name);
 
   SubmitCopyResponse response(RequestId(), ErrorCode::kSuccess);
-  CoordinatorMessage message = CoordinatorResponse(response);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
-      node_agent_router_handler_socket_, node_agent_identity, message);
+      node_agent_router_handler_socket_, node_agent_identity, response);
 }
 
 void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,
@@ -227,9 +222,8 @@ void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,
   LOG_INFO("WaitForCopy: {} (stub implementation)", request.copy_operation_id);
 
   WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
-  CoordinatorMessage message = CoordinatorResponse(response);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
-      node_agent_router_handler_socket_, node_agent_identity, message);
+      node_agent_router_handler_socket_, node_agent_identity, response);
 }
 
 void Coordinator::ExecutorLoop() {

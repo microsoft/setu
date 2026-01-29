@@ -30,17 +30,22 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
+using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::CoordinatorMessage;
-using setu::commons::messages::CoordinatorRequest;
-using setu::commons::messages::CoordinatorResponse;
+using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
+using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
+using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::NodeAgentRequest;
+using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
+using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::SetuCommHelper;
@@ -235,29 +240,57 @@ void NodeAgent::HandlerLoop() {
       if (socket == client_router_socket_) {
         auto [identity, request] =
             SetuCommHelper::RecvWithIdentity<ClientRequest>(socket);
-        std::visit([&](const auto& req) { HandleClientRequest(identity, req); },
-                   request);
+        HandleClientMessage(identity, request);
       } else if (socket == coordinator_dealer_handler_socket_) {
         auto message = SetuCommHelper::Recv<CoordinatorMessage>(socket);
-        std::visit(
-            [&](const auto& msg) {
-              using T = std::decay_t<decltype(msg)>;
-              if constexpr (std::is_same_v<T, CoordinatorRequest>) {
-                std::visit(
-                    [&](const auto& req) { HandleCoordinatorRequest(req); },
-                    msg);
-              } else if constexpr (std::is_same_v<T, CoordinatorResponse>) {
-                HandleCoordinatorResponse(msg);
-              }
-            },
-            message);
+        HandleCoordinatorMessage(message);
       }
     }
   }
 }
 
-void NodeAgent::HandleClientRequest(const Identity& client_identity,
-                                    const RegisterTensorShardRequest& request) {
+void NodeAgent::HandleClientMessage(const Identity& client_identity,
+                                    const ClientRequest& request) {
+  std::visit(
+      [&](const auto& msg) {
+        using T = std::decay_t<decltype(msg)>;
+        if constexpr (std::is_same_v<T, RegisterTensorShardRequest>) {
+          HandleRegisterTensorShardRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
+          HandleSubmitCopyRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, WaitForCopyRequest>) {
+          HandleWaitForCopyRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, GetTensorHandleRequest>) {
+          HandleGetTensorHandleRequest(client_identity, msg);
+        }
+      },
+      request);
+}
+
+void NodeAgent::HandleCoordinatorMessage(const CoordinatorMessage& message) {
+  std::visit(
+      [&](const auto& msg) {
+        using T = std::decay_t<decltype(msg)>;
+        if constexpr (std::is_same_v<T, AllocateTensorRequest>) {
+          HandleAllocateTensorRequest(msg);
+        } else if constexpr (std::is_same_v<T, CopyOperationFinishedRequest>) {
+          HandleCopyOperationFinishedRequest(msg);
+        } else if constexpr (std::is_same_v<T, ExecuteRequest>) {
+          HandleExecuteRequest(msg);
+        } else if constexpr (std::is_same_v<T, RegisterTensorShardResponse>) {
+          HandleRegisterTensorShardResponse(msg);
+        } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
+          HandleSubmitCopyResponse(msg);
+        } else if constexpr (std::is_same_v<T, WaitForCopyResponse>) {
+          HandleWaitForCopyResponse(msg);
+        }
+      },
+      message);
+}
+
+void NodeAgent::HandleRegisterTensorShardRequest(
+    const Identity& client_identity,
+    const RegisterTensorShardRequest& request) {
   LOG_DEBUG("Handling RegisterTensorShardRequest for tensor: {}",
             request.tensor_shard_spec.name);
 
@@ -272,8 +305,8 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
                                          request);
 }
 
-void NodeAgent::HandleClientRequest(const Identity& client_identity,
-                                    const SubmitCopyRequest& request) {
+void NodeAgent::HandleSubmitCopyRequest(const Identity& client_identity,
+                                        const SubmitCopyRequest& request) {
   LOG_DEBUG("Handling SubmitCopyRequest from {} to {}",
             request.copy_spec.src_name, request.copy_spec.dst_name);
 
@@ -283,8 +316,8 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
                                          request);
 }
 
-void NodeAgent::HandleClientRequest(const Identity& client_identity,
-                                    const WaitForCopyRequest& request) {
+void NodeAgent::HandleWaitForCopyRequest(const Identity& client_identity,
+                                         const WaitForCopyRequest& request) {
   LOG_DEBUG("Handling WaitForCopyRequest for copy operation ID: {}",
             request.copy_operation_id);
 
@@ -293,8 +326,8 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
   WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 }
 
-void NodeAgent::HandleClientRequest(const Identity& client_identity,
-                                    const GetTensorHandleRequest& request) {
+void NodeAgent::HandleGetTensorHandleRequest(
+    const Identity& client_identity, const GetTensorHandleRequest& request) {
   LOG_DEBUG("Handling GetTensorHandleRequest for tensor: {}",
             request.tensor_name);
 
@@ -317,12 +350,13 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
   LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
 }
 
-void NodeAgent::HandleCoordinatorRequest(const AllocateTensorRequest& request) {
+void NodeAgent::HandleAllocateTensorRequest(
+    const AllocateTensorRequest& request) {
   LOG_DEBUG("Handling AllocateTensorRequest for request: {}", request);
   AllocateTensor(tensor_name_to_spec_.at(request.tensor_name));
 }
 
-void NodeAgent::HandleCoordinatorRequest(
+void NodeAgent::HandleCopyOperationFinishedRequest(
     const CopyOperationFinishedRequest& request) {
   LOG_DEBUG("Handling CopyOperationFinishedRequest for request: {}", request);
 
@@ -340,38 +374,61 @@ void NodeAgent::HandleCoordinatorRequest(
   }
 }
 
-void NodeAgent::HandleCoordinatorRequest(const ExecuteRequest& request) {
+void NodeAgent::HandleExecuteRequest(const ExecuteRequest& request) {
   LOG_DEBUG("Handling ExecuteRequest for request: {}", request);
 
   // Put (copy_op_id, node_plan) into executor queue
   executor_queue_.push(std::make_pair(request.copy_op_id, request.node_plan));
 }
 
-void NodeAgent::HandleCoordinatorResponse(const CoordinatorResponse& response) {
-  std::visit(
-      [&](const auto& response) {
-        using T = std::decay_t<decltype(response)>;
-        auto it = request_to_client_.find(response.request_id);
-        if (it == request_to_client_.end()) {
-          LOG_WARNING(
-              "Received response for unknown request_id: {}, ignoring",
-              response.request_id);
-          return;
-        }
-        const auto& client_identity = it->second;
+void NodeAgent::HandleRegisterTensorShardResponse(
+    const RegisterTensorShardResponse& response) {
+  auto it = request_to_client_.find(response.request_id);
+  if (it == request_to_client_.end()) {
+    LOG_WARNING(
+        "Received RegisterTensorShardResponse for unknown request_id: "
+        "{}, ignoring",
+        response.request_id);
+    return;
+  }
+  const auto& client_identity = it->second;
 
-        if constexpr (std::is_same_v<T, RegisterTensorShardResponse>) {
-          SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse>(
-              client_router_socket_, client_identity, response);
-        } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
-          SetuCommHelper::SendWithIdentity<SubmitCopyResponse>(
-              client_router_socket_, client_identity, response);
-        }
+  SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse>(
+      client_router_socket_, client_identity, response);
 
-        // Clean up the request-to-client mapping after forwarding the response
-        request_to_client_.erase(it);
-      },
-      response);
+  request_to_client_.erase(it);
+}
+
+void NodeAgent::HandleSubmitCopyResponse(const SubmitCopyResponse& response) {
+  auto it = request_to_client_.find(response.request_id);
+  if (it == request_to_client_.end()) {
+    LOG_WARNING(
+        "Received SubmitCopyResponse for unknown request_id: {}, ignoring",
+        response.request_id);
+    return;
+  }
+  const auto& client_identity = it->second;
+
+  SetuCommHelper::SendWithIdentity<SubmitCopyResponse>(
+      client_router_socket_, client_identity, response);
+
+  request_to_client_.erase(it);
+}
+
+void NodeAgent::HandleWaitForCopyResponse(const WaitForCopyResponse& response) {
+  auto it = request_to_client_.find(response.request_id);
+  if (it == request_to_client_.end()) {
+    LOG_WARNING(
+        "Received WaitForCopyResponse for unknown request_id: {}, ignoring",
+        response.request_id);
+    return;
+  }
+  const auto& client_identity = it->second;
+
+  SetuCommHelper::SendWithIdentity<WaitForCopyResponse>(
+      client_router_socket_, client_identity, response);
+
+  request_to_client_.erase(it);
 }
 
 void NodeAgent::ExecutorLoop() {

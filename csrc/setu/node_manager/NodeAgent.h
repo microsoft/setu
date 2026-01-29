@@ -46,7 +46,8 @@ using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::AllocateTensorRequest;
-using setu::commons::messages::CoordinatorResponse;
+using setu::commons::messages::ClientRequest;
+using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::GetTensorHandleRequest;
@@ -95,23 +96,31 @@ class NodeAgent {
   void HandlerLoop();
   void ExecutorLoop();
 
-  void HandleClientRequest(const Identity& client_identity,
-                           const RegisterTensorShardRequest& request);
+  // Unified message dispatch methods
+  void HandleClientMessage(const Identity& client_identity,
+                           const ClientRequest& request);
+  void HandleCoordinatorMessage(const CoordinatorMessage& message);
 
-  void HandleClientRequest(const Identity& client_identity,
-                           const SubmitCopyRequest& request);
+  // Client message handlers
+  void HandleRegisterTensorShardRequest(
+      const Identity& client_identity,
+      const RegisterTensorShardRequest& request);
+  void HandleSubmitCopyRequest(const Identity& client_identity,
+                               const SubmitCopyRequest& request);
+  void HandleWaitForCopyRequest(const Identity& client_identity,
+                                const WaitForCopyRequest& request);
+  void HandleGetTensorHandleRequest(const Identity& client_identity,
+                                    const GetTensorHandleRequest& request);
 
-  void HandleClientRequest(const Identity& client_identity,
-                           const WaitForCopyRequest& request);
-
-  void HandleClientRequest(const Identity& client_identity,
-                           const GetTensorHandleRequest& request);
-
-  void HandleCoordinatorResponse(const CoordinatorResponse& response);
-
-  void HandleCoordinatorRequest(const AllocateTensorRequest& request);
-  void HandleCoordinatorRequest(const CopyOperationFinishedRequest& request);
-  void HandleCoordinatorRequest(const ExecuteRequest& request);
+  // Coordinator message handlers
+  void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
+  void HandleCopyOperationFinishedRequest(
+      const CopyOperationFinishedRequest& request);
+  void HandleExecuteRequest(const ExecuteRequest& request);
+  void HandleRegisterTensorShardResponse(
+      const RegisterTensorShardResponse& response);
+  void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
+  void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
 
   void InitZmqSockets();
   void CloseZmqSockets();

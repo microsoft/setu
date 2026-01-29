@@ -38,25 +38,23 @@
 #include "commons/messages/WaitForCopyResponse.h"
 //==============================================================================
 namespace setu::commons::messages {
+//==============================================================================
 /// @brief Requests from Client to NodeAgent.
 using ClientRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                  WaitForCopyRequest, GetTensorHandleRequest>;
 
-/// @brief Requests from NodeAgent to Coordinator
+/// @brief Requests from NodeAgent to Coordinator.
 using NodeAgentRequest = std::variant<RegisterTensorShardRequest,
                                       SubmitCopyRequest, WaitForCopyRequest>;
 
-using CoordinatorRequest =
-    std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
-                 ExecuteRequest>;
-
-using CoordinatorResponse =
-    std::variant<RegisterTensorShardResponse, SubmitCopyResponse,
-                 WaitForCopyResponse>;
-
+/// @brief All messages from Coordinator to NodeAgent (flattened).
+/// This unified type enables a single, flat dispatch loop instead of
+/// nested request/response handling.
 using CoordinatorMessage =
-    std::variant<CoordinatorRequest, CoordinatorResponse>;
+    std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
+                 ExecuteRequest, RegisterTensorShardResponse,
+                 SubmitCopyResponse, WaitForCopyResponse>;
 
 using Request = std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                              WaitForCopyRequest, GetTensorHandleRequest,
