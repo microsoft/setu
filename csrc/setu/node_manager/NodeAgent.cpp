@@ -234,7 +234,7 @@ void NodeAgent::HandlerLoop() {
     for (const auto& socket : ready) {
       if (socket == client_router_socket_) {
         auto [identity, request] =
-            SetuCommHelper::RecvWithIdentity<ClientRequest, true>(socket);
+            SetuCommHelper::RecvWithIdentity<ClientRequest>(socket);
         std::visit([&](const auto& req) { HandleClientRequest(identity, req); },
                    request);
       } else if (socket == coordinator_dealer_handler_socket_) {
@@ -303,7 +303,7 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
     LOG_ERROR("Tensor not found: {}", request.tensor_name);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound);
-    SetuCommHelper::SendWithIdentity<GetTensorHandleResponse, true>(
+    SetuCommHelper::SendWithIdentity<GetTensorHandleResponse>(
         client_router_socket_, client_identity, response);
     return;
   }
@@ -311,7 +311,7 @@ void NodeAgent::HandleClientRequest(const Identity& client_identity,
   auto tensor_ipc_spec = PrepareTensorIPCSpec(it->second);
   GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
                                    std::move(tensor_ipc_spec));
-  SetuCommHelper::SendWithIdentity<GetTensorHandleResponse, true>(
+  SetuCommHelper::SendWithIdentity<GetTensorHandleResponse>(
       client_router_socket_, client_identity, response);
 
   LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
@@ -333,7 +333,7 @@ void NodeAgent::HandleCoordinatorRequest(
       WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 
       // unblock waiting clients
-      SetuCommHelper::SendWithIdentity<WaitForCopyResponse, true>(
+      SetuCommHelper::SendWithIdentity<WaitForCopyResponse>(
           client_router_socket_, client_id, response);
     }
     pending_waits_.erase(it);
@@ -361,10 +361,10 @@ void NodeAgent::HandleCoordinatorResponse(const CoordinatorResponse& response) {
         const auto& client_identity = it->second;
 
         if constexpr (std::is_same_v<T, RegisterTensorShardResponse>) {
-          SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse, true>(
+          SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse>(
               client_router_socket_, client_identity, response);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
-          SetuCommHelper::SendWithIdentity<SubmitCopyResponse, true>(
+          SetuCommHelper::SendWithIdentity<SubmitCopyResponse>(
               client_router_socket_, client_identity, response);
         }
 
