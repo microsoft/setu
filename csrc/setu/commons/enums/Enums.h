@@ -23,13 +23,12 @@ namespace setu::commons::enums {
 // Device abstraction
 enum class DeviceKind : std::uint8_t { kCuda = 0, kCpu = 1, kNvme = 2 };
 //==============================================================================
-enum class DType : std::uint8_t { kFloat16 = 0, kBFloat16 = 1, kFloat32 = 2 };
-//==============================================================================
 enum class ErrorCode : std::uint32_t {
   kSuccess = 0,
   kInvalidArguments = 1,
   kTimeout = 2,
-  kInternalError = 3
+  kInternalError = 3,
+  kTensorNotFound = 4
 };
 //==============================================================================
 }  // namespace setu::commons::enums
@@ -77,26 +76,8 @@ struct std::formatter<setu::commons::enums::ErrorCode>
       case setu::commons::enums::ErrorCode::kInternalError:
         name = "INTERNAL_ERROR";
         break;
-    }
-    return std::formatter<std::string_view>::format(name, ctx);
-  }
-};
-//==============================================================================
-template <>
-struct std::formatter<setu::commons::enums::DType>
-    : std::formatter<std::string_view> {
-  template <typename FormatContext>
-  auto format(setu::commons::enums::DType type, FormatContext& ctx) const {
-    std::string_view name = "UNKNOWN";
-    switch (type) {
-      case setu::commons::enums::DType::kFloat16:
-        name = "FLOAT16";
-        break;
-      case setu::commons::enums::DType::kBFloat16:
-        name = "BFLOAT16";
-        break;
-      case setu::commons::enums::DType::kFloat32:
-        name = "FLOAT32";
+      case setu::commons::enums::ErrorCode::kTensorNotFound:
+        name = "TENSOR_NOT_FOUND";
         break;
     }
     return std::formatter<std::string_view>::format(name, ctx);

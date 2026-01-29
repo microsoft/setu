@@ -8,13 +8,13 @@ using setu::commons::utils::BinaryWriter;
 
 void WaitForCopyResponse::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(error_code);
+  writer.WriteFields(request_id, error_code);
 }
 
 WaitForCopyResponse WaitForCopyResponse::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [error_code_val] = reader.ReadFields<ErrorCode>();
-
-  return WaitForCopyResponse(error_code_val);
+  auto [request_id_val, error_code_val] =
+      reader.ReadFields<RequestId, ErrorCode>();
+  return WaitForCopyResponse(request_id_val, error_code_val);
 }
 }  // namespace setu::commons::messages

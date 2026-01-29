@@ -16,43 +16,54 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/TorchCommon.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
+//==============================================================================
+#include "commons/Types.h"
 //==============================================================================
 // To allow using CUDA IPC types and functions from torch
 #define USE_CUDA
 //==============================================================================
 namespace setu::commons::utils {
 //==============================================================================
+using setu::commons::BinaryBuffer;
+using setu::commons::BinaryRange;
+//==============================================================================
 struct TensorIPCSpec final {
-    torch::IntArrayRef tensor_size;
-    torch::IntArrayRef tensor_stride;
-    std::int64_t tensor_offset;
-    torch::Dtype dtype;
-    bool requires_grad;
-    std::int32_t storage_device;
-    std::string storage_handle;
-    std::uint64_t storage_size_bytes;
-    std::uint64_t storage_offset_bytes;
-    std::string ref_counter_handle;
-    std::uint64_t ref_counter_offset;
-    cudaIpcEventHandle_t event_handle;
-    bool event_sync_required;
+  // Constructor accepting IntArrayRef (copies data into vectors)
+  TensorIPCSpec(torch::IntArrayRef tensor_size_param,
+                torch::IntArrayRef tensor_stride_param,
+                std::int64_t tensor_offset_param, torch::Dtype dtype_param,
+                bool requires_grad_param, std::int32_t storage_device_param,
+                std::string storage_handle_param,
+                std::uint64_t storage_size_bytes_param,
+                std::uint64_t storage_offset_bytes_param,
+                std::string ref_counter_handle_param,
+                std::uint64_t ref_counter_offset_param,
+                cudaIpcEventHandle_t event_handle_param,
+                bool event_sync_required_param);
 
-    TensorIPCSpec(
-        torch::IntArrayRef tensor_size_param,
-        torch::IntArrayRef tensor_stride_param,
-        std::int64_t tensor_offset_param,
-        torch::Dtype dtype_param,
-        bool requires_grad_param,
-        std::int32_t storage_device_param,
-        std::string storage_handle_param,
-        std::uint64_t storage_size_bytes,
-        std::uint64_t storage_offset_bytes_param,
-        std::string ref_counter_handle_param,
-        std::uint64_t ref_counter_offset_param,
-        cudaIpcEventHandle_t event_handle_param,
-        bool event_sync_required_param);
+  // Accessors returning IntArrayRef views (for compatibility with torch APIs)
+  [[nodiscard]] torch::IntArrayRef GetTensorSize() const;
+  [[nodiscard]] torch::IntArrayRef GetTensorStride() const;
+
+  // Serialization methods
+  void Serialize(BinaryBuffer& buffer) const;
+  static TensorIPCSpec Deserialize(const BinaryRange& range);
+
+  const std::vector<std::int64_t> tensor_size;
+  const std::vector<std::int64_t> tensor_stride;
+  const std::int64_t tensor_offset;
+  const torch::Dtype dtype;
+  const bool requires_grad;
+  const std::int32_t storage_device;
+  const std::string storage_handle;
+  const std::uint64_t storage_size_bytes;
+  const std::uint64_t storage_offset_bytes;
+  const std::string ref_counter_handle;
+  const std::uint64_t ref_counter_offset;
+  const cudaIpcEventHandle_t event_handle;
+  const bool event_sync_required;
 };
 using TensorIPCSpecPtr = std::shared_ptr<TensorIPCSpec>;
 //==============================================================================

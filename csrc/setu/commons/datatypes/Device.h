@@ -18,13 +18,12 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
-#include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
-using setu::commons::enums::DeviceKind;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -34,8 +33,8 @@ using setu::commons::utils::BinaryWriter;
  * @brief Represents a physical compute device in the distributed system
  *
  * Device encapsulates information about a physical compute device including
- * its type (CPU, GPU, etc.) and its position within the distributed system
- * hierarchy (node rank, global device rank, and local device rank).
+ * its type (CPU, GPU, etc.) via torch::Device, and its position within the
+ * distributed system hierarchy (node rank and global device rank).
  */
 struct Device {
   /**
@@ -46,37 +45,33 @@ struct Device {
   /**
    * @brief Constructs a device with all identifying information
    *
-   * @param kind_param Type of device (CPU, GPU, etc.)
    * @param node_rank_param Rank of the node containing this device
    * @param device_rank_param Global rank of this device across all nodes
-   * @param local_device_rank_param Local rank of this device within its node
+   * @param torch_device_param PyTorch device (type + local index, e.g., cuda:0)
    */
-  Device(DeviceKind kind_param, NodeRank node_rank_param,
-         DeviceRank device_rank_param, LocalDeviceRank local_device_rank_param)
-      : kind(kind_param),
-        node_rank(node_rank_param),
+  Device(NodeRank node_rank_param, DeviceRank device_rank_param,
+         torch::Device torch_device_param)
+      : node_rank(node_rank_param),
         device_rank(device_rank_param),
-        local_device_rank(local_device_rank_param) {}
+        torch_device(torch_device_param) {}
 
   /**
    * @brief Returns a string representation of the device
    *
-   * @return String containing device kind and all rank information
+   * @return String containing node rank, device rank, and torch device info
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format(
-        "Device(kind={}, node_rank={}, device_rank={}, local_device_rank={})",
-        kind, node_rank, device_rank, local_device_rank);
+    return std::format("Device(node_rank={}, device_rank={}, torch_device={})",
+                       node_rank, device_rank, torch_device.str());
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
   static Device Deserialize(const BinaryRange& range);
 
-  const DeviceKind kind;         ///< Type of device (CPU, GPU, etc.)
   const NodeRank node_rank;      ///< Rank of the node containing this device
   const DeviceRank device_rank;  ///< Global rank across all devices
-  const LocalDeviceRank local_device_rank;  ///< Local rank within the node
+  const torch::Device torch_device;  ///< PyTorch device (type + local index)
 };
 //==============================================================================
 }  // namespace setu::commons::datatypes

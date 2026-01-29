@@ -17,18 +17,23 @@
 #pragma once
 //==============================================================================
 #include "setu/commons/StdCommon.h"
+//==============================================================================
+#include "setu/commons/Types.h"
 #include "setu/commons/messages/BaseResponse.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::RequestId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct ExecuteProgramResponse : public BaseResponse {
-  explicit ExecuteProgramResponse(ErrorCode error_code_param)
-      : BaseResponse(error_code_param) {}
+  explicit ExecuteProgramResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess)
+      : BaseResponse(request_id_param, error_code_param) {}
 
   [[nodiscard]] std::string ToString() const {
     return std::format("ExecuteProgramResponse(error_code={})", error_code);

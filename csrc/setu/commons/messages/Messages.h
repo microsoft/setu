@@ -28,6 +28,8 @@
 #include "commons/messages/ExecuteProgramResponse.h"
 #include "commons/messages/ExecuteRequest.h"
 #include "commons/messages/ExecuteResponse.h"
+#include "commons/messages/GetTensorHandleRequest.h"
+#include "commons/messages/GetTensorHandleResponse.h"
 #include "commons/messages/RegisterTensorShardRequest.h"
 #include "commons/messages/RegisterTensorShardResponse.h"
 #include "commons/messages/SubmitCopyRequest.h"
@@ -37,35 +39,32 @@
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-// Request variants by source
-//==============================================================================
-// Requests from clients to NodeAgent
-using ClientRequest = std::variant<RegisterTensorShardRequest,
-                                   SubmitCopyRequest, WaitForCopyRequest>;
+/// @brief Requests from Client to NodeAgent.
+using ClientRequest =
+    std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
+                 WaitForCopyRequest, GetTensorHandleRequest>;
 
-// Requests from coordinator to NodeAgent
-using CoordinatorRequest =
+/// @brief Requests from NodeAgent to Coordinator.
+using NodeAgentRequest = std::variant<RegisterTensorShardRequest,
+                                      SubmitCopyRequest, WaitForCopyRequest>;
+
+/// @brief All messages from Coordinator to NodeAgent (flattened).
+/// This unified type enables a single, flat dispatch loop instead of
+/// nested request/response handling.
+using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
-                 ExecuteRequest>;
+                 ExecuteRequest, RegisterTensorShardResponse,
+                 SubmitCopyResponse, WaitForCopyResponse>;
 
 using Request = std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
-                             WaitForCopyRequest, AllocateTensorRequest,
+                             WaitForCopyRequest, GetTensorHandleRequest,
+                             AllocateTensorRequest,
                              CopyOperationFinishedRequest, ExecuteRequest>;
-//==============================================================================
-// AnyResponse - Variant of all response types
-//==============================================================================
+
 using Response = std::variant<RegisterTensorShardResponse, SubmitCopyResponse,
-                              WaitForCopyResponse, AllocateTensorResponse,
+                              WaitForCopyResponse, GetTensorHandleResponse,
+                              AllocateTensorResponse,
                               CopyOperationFinishedResponse, ExecuteResponse>;
-//==============================================================================
-// Helper for std::visit with lambdas
-//==============================================================================
-template <class... Ts>
-struct Overloaded : Ts... {
-  using Ts::operator()...;
-};
-template <class... Ts>
-Overloaded(Ts...) -> Overloaded<Ts...>;
 //==============================================================================
 }  // namespace setu::commons::messages
 //==============================================================================

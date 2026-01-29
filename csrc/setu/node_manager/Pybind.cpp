@@ -53,10 +53,12 @@ void InitWorkerPybindClass(py::module_& m) {
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
-      .def(py::init<NodeRank, std::size_t, std::size_t, std::size_t>(),
+      .def(py::init<NodeRank, std::size_t, std::size_t, std::size_t,
+                    const std::vector<Device>&>(),
            py::arg("node_rank") = NodeRank{0}, py::arg("router_port"),
            py::arg("dealer_executor_port"), py::arg("dealer_handler_port"),
-           "Create a NodeAgent with specified ports for communication")
+           py::arg("devices"),
+           "Create a NodeAgent with specified ports and devices")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
       .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop")
       .def("register_tensor_shard", &NodeAgent::RegisterTensorShard,
@@ -66,9 +68,8 @@ void InitNodeAgentPybindClass(py::module_& m) {
            "Submit a copy operation and return an operation ID")
       .def("wait_for_copy", &NodeAgent::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
-      .def("allocate_tensor", &NodeAgent::AllocateTensor, py::arg("tensor_id"),
-           py::arg("shard_id"), py::arg("device"),
-           "Allocate a tensor shard on a device")
+      .def("allocate_tensor", &NodeAgent::AllocateTensor,
+           py::arg("tensor_shars_spec"), "Allocate a tensor shard on a device")
       .def("copy_operation_finished", &NodeAgent::CopyOperationFinished,
            py::arg("copy_op_id"), "Notify that a copy operation has completed")
       .def("execute", &NodeAgent::Execute, py::arg("plan"),

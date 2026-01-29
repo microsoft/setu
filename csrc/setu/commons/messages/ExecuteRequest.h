@@ -20,6 +20,7 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/Types.h"
+#include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
 #include "coordinator/datatypes/Plan.h"
 //==============================================================================
@@ -31,23 +32,33 @@ using setu::commons::utils::BinaryRange;
 using setu::coordinator::datatypes::Plan;
 //==============================================================================
 
-struct ExecuteRequest {
-  CopyOperationId copy_op_id;
-  Plan node_plan;
-
-  ExecuteRequest() = default;
+struct ExecuteRequest : public BaseRequest {
+  /// @brief Constructs a request with auto-generated request ID.
   ExecuteRequest(CopyOperationId copy_op_id_param, Plan node_plan_param)
-      : copy_op_id(copy_op_id_param), node_plan(std::move(node_plan_param)) {}
+      : BaseRequest(),
+        copy_op_id(copy_op_id_param),
+        node_plan(std::move(node_plan_param)) {}
+
+  /// @brief Constructs a request with explicit request ID (for
+  /// deserialization).
+  ExecuteRequest(RequestId request_id_param, CopyOperationId copy_op_id_param,
+                 Plan node_plan_param)
+      : BaseRequest(request_id_param),
+        copy_op_id(copy_op_id_param),
+        node_plan(std::move(node_plan_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("ExecuteRequest(copy_op_id={}, node_plan={})",
-                       boost::uuids::to_string(copy_op_id),
-                       node_plan.ToString());
+    return std::format(
+        "ExecuteRequest(request_id={}, copy_op_id={}, node_plan={})",
+        request_id, boost::uuids::to_string(copy_op_id), node_plan.ToString());
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
   static ExecuteRequest Deserialize(const BinaryRange& range);
+
+  const CopyOperationId copy_op_id;
+  const Plan node_plan;
 };
 using ExecuteRequestPtr = std::shared_ptr<ExecuteRequest>;
 

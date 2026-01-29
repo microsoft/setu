@@ -18,39 +18,34 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "commons/messages/BaseRequest.h"
-#include "commons/utils/Serialization.h"
+#include "commons/Types.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::datatypes::CopySpec;
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
+using setu::commons::GenerateUUID;
+using setu::commons::RequestId;
 //==============================================================================
 
-struct SubmitCopyRequest : public BaseRequest {
+/// @brief Base struct for all request messages.
+/// All request types should inherit from this to ensure consistent
+/// request tracking across the messaging system.
+struct BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
-  explicit SubmitCopyRequest(CopySpec copy_spec_param)
-      : BaseRequest(), copy_spec(std::move(copy_spec_param)) {}
+  BaseRequest() : request_id(GenerateUUID()) {}
 
   /// @brief Constructs a request with explicit request ID (for
   /// deserialization).
-  SubmitCopyRequest(RequestId request_id_param, CopySpec copy_spec_param)
-      : BaseRequest(request_id_param), copy_spec(std::move(copy_spec_param)) {}
+  /// @param request_id_param The request ID to use
+  explicit BaseRequest(RequestId request_id_param)
+      : request_id(request_id_param) {}
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("SubmitCopyRequest(request_id={}, copy_spec={})",
-                       request_id, copy_spec);
-  }
+  /// @brief Unique identifier for this request.
+  const RequestId request_id;
 
-  void Serialize(BinaryBuffer& buffer) const;
-
-  static SubmitCopyRequest Deserialize(const BinaryRange& range);
-
-  const CopySpec copy_spec;
+ protected:
+  // Protected destructor to prevent slicing when used polymorphically
+  ~BaseRequest() = default;
 };
-using SubmitCopyRequestPtr = std::shared_ptr<SubmitCopyRequest>;
 
 //==============================================================================
 }  // namespace setu::commons::messages

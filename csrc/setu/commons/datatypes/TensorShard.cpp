@@ -15,6 +15,8 @@
 // limitations under the License.
 //==============================================================================
 #include "commons/datatypes/TensorShard.h"
+
+#include "commons/TorchCommon.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
@@ -34,8 +36,8 @@ TensorShard TensorShard::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [id_val, name_val, device_val, device_ptr_value, dtype_val,
         dim_shards_val] =
-      reader.ReadFields<ShardId, TensorName, Device, std::uintptr_t, DType,
-                        TensorDimShardsMap>();
+      reader.ReadFields<ShardId, TensorName, Device, std::uintptr_t,
+                        torch::Dtype, TensorDimShardsMap>();
   auto device_ptr_val = reinterpret_cast<DevicePtr>(device_ptr_value);
   return TensorShard(id_val, name_val, device_val, device_ptr_val, dtype_val,
                      dim_shards_val);

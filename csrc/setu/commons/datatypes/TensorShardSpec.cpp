@@ -31,7 +31,8 @@ void TensorShardSpec::Serialize(BinaryBuffer& buffer) const {
 TensorShardSpec TensorShardSpec::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [name_val, dims_val, dtype_val, device_val] =
-      reader.ReadFields<TensorName, std::vector<TensorDim>, DType, Device>();
+      reader.ReadFields<TensorName, std::vector<TensorDim>, torch::Dtype,
+                        Device>();
   return TensorShardSpec(name_val, dims_val, dtype_val, device_val);
 }
 //==============================================================================

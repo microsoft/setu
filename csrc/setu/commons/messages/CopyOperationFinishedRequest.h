@@ -19,6 +19,7 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/Types.h"
+#include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
@@ -28,12 +29,22 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-struct CopyOperationFinishedRequest {
-  CopyOperationFinishedRequest(CopyOperationId copy_operation_id_param)
-      : copy_operation_id(std::move(copy_operation_id_param)) {};
+struct CopyOperationFinishedRequest : public BaseRequest {
+  /// @brief Constructs a request with auto-generated request ID.
+  explicit CopyOperationFinishedRequest(CopyOperationId copy_operation_id_param)
+      : BaseRequest(), copy_operation_id(std::move(copy_operation_id_param)) {}
+
+  /// @brief Constructs a request with explicit request ID (for
+  /// deserialization).
+  CopyOperationFinishedRequest(RequestId request_id_param,
+                               CopyOperationId copy_operation_id_param)
+      : BaseRequest(request_id_param),
+        copy_operation_id(std::move(copy_operation_id_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return "CopyOperationFinishedRequest()";
+    return std::format(
+        "CopyOperationFinishedRequest(request_id={}, copy_operation_id={})",
+        request_id, copy_operation_id);
   }
 
   void Serialize(BinaryBuffer& buffer) const;

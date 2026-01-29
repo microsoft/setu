@@ -26,14 +26,15 @@ using setu::commons::utils::BinaryWriter;
 
 void AllocateTensorResponse::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(error_code);
+  writer.WriteFields(request_id, error_code);
 }
 
 AllocateTensorResponse AllocateTensorResponse::Deserialize(
     const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [error_code_val] = reader.ReadFields<ErrorCode>();
-  return AllocateTensorResponse(error_code_val);
+  auto [request_id_val, error_code_val] =
+      reader.ReadFields<RequestId, ErrorCode>();
+  return AllocateTensorResponse(request_id_val, error_code_val);
 }
 
 //==============================================================================

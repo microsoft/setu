@@ -25,15 +25,19 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 void Device::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(kind, node_rank, device_rank, local_device_rank);
+  // Serialize torch::Device as device_type (int8) + device_index (int16)
+  auto device_type = static_cast<std::int8_t>(torch_device.type());
+  auto device_index = static_cast<std::int16_t>(torch_device.index());
+  writer.WriteFields(node_rank, device_rank, device_type, device_index);
 }
 
 Device Device::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [kind_val, node_rank_val, device_rank_val, local_device_rank_val] =
-      reader.ReadFields<DeviceKind, NodeRank, DeviceRank, LocalDeviceRank>();
-  return Device(kind_val, node_rank_val, device_rank_val,
-                local_device_rank_val);
+  auto [node_rank_val, device_rank_val, device_type_val, device_index_val] =
+      reader.ReadFields<NodeRank, DeviceRank, std::int8_t, std::int16_t>();
+  auto torch_device = torch::Device(
+      static_cast<c10::DeviceType>(device_type_val), device_index_val);
+  return Device(node_rank_val, device_rank_val, torch_device);
 }
 //==============================================================================
 }  // namespace setu::commons::datatypes

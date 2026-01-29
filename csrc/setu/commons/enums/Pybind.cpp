@@ -31,20 +31,13 @@ void InitDeviceKindPybind(py::module_& m) {
       .export_values();
 }
 //==============================================================================
-void InitDTypePybind(py::module_& m) {
-  py::enum_<DType>(m, "DType", py::module_local())
-      .value("FLOAT16", DType::kFloat16)
-      .value("BFLOAT16", DType::kBFloat16)
-      .value("FLOAT32", DType::kFloat32)
-      .export_values();
-}
-//==============================================================================
 void InitErrorCodePybind(py::module_& m) {
   py::enum_<ErrorCode>(m, "ErrorCode", py::module_local())
       .value("SUCCESS", ErrorCode::kSuccess)
       .value("INVALID_ARGUMENTS", ErrorCode::kInvalidArguments)
       .value("TIMEOUT", ErrorCode::kTimeout)
       .value("INTERNAL_ERROR", ErrorCode::kInternalError)
+      .value("TENSOR_NOT_FOUND", ErrorCode::kTensorNotFound)
       .export_values();
 }
 //==============================================================================
@@ -52,7 +45,6 @@ void InitEnumsPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("enums", "Enums submodule");
 
   InitDeviceKindPybind(m);
-  InitDTypePybind(m);
   InitErrorCodePybind(m);
 }
 //==============================================================================

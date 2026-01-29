@@ -24,14 +24,15 @@ using setu::commons::utils::BinaryWriter;
 
 void ExecuteProgramResponse::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(error_code);
+  writer.WriteFields(request_id, error_code);
 }
 
 ExecuteProgramResponse ExecuteProgramResponse::Deserialize(
     const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [error_code] = reader.ReadFields<ErrorCode>();
-  return ExecuteProgramResponse(error_code);
+  auto [request_id_val, error_code_val] =
+      reader.ReadFields<RequestId, ErrorCode>();
+  return ExecuteProgramResponse(request_id_val, error_code_val);
 }
 
 //==============================================================================

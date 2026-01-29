@@ -26,15 +26,16 @@ using setu::commons::utils::BinaryWriter;
 
 void ExecuteRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(copy_op_id);
+  writer.WriteFields(request_id, copy_op_id);
   // TODO: Serialize node_plan
 }
 
 ExecuteRequest ExecuteRequest::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [copy_op_id_val] = reader.ReadFields<CopyOperationId>();
+  auto [request_id_val, copy_op_id_val] =
+      reader.ReadFields<RequestId, CopyOperationId>();
   // TODO: Deserialize node_plan
-  return ExecuteRequest(copy_op_id_val, Plan());
+  return ExecuteRequest(request_id_val, copy_op_id_val, Plan());
 }
 
 //==============================================================================

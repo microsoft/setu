@@ -18,39 +18,46 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
+#include "commons/Types.h"
 #include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::datatypes::CopySpec;
+using setu::commons::RequestId;
+using setu::commons::TensorName;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-struct SubmitCopyRequest : public BaseRequest {
+struct GetTensorHandleRequest : public BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
-  explicit SubmitCopyRequest(CopySpec copy_spec_param)
-      : BaseRequest(), copy_spec(std::move(copy_spec_param)) {}
+  explicit GetTensorHandleRequest(TensorName tensor_name_param)
+      : BaseRequest(), tensor_name(std::move(tensor_name_param)) {
+    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  }
 
   /// @brief Constructs a request with explicit request ID (for
   /// deserialization).
-  SubmitCopyRequest(RequestId request_id_param, CopySpec copy_spec_param)
-      : BaseRequest(request_id_param), copy_spec(std::move(copy_spec_param)) {}
+  GetTensorHandleRequest(RequestId request_id_param,
+                         TensorName tensor_name_param)
+      : BaseRequest(request_id_param),
+        tensor_name(std::move(tensor_name_param)) {
+    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  }
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("SubmitCopyRequest(request_id={}, copy_spec={})",
-                       request_id, copy_spec);
+    return std::format("GetTensorHandleRequest(request_id={}, tensor_name={})",
+                       request_id, tensor_name);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static SubmitCopyRequest Deserialize(const BinaryRange& range);
+  static GetTensorHandleRequest Deserialize(const BinaryRange& range);
 
-  const CopySpec copy_spec;
+  const TensorName tensor_name;
 };
-using SubmitCopyRequestPtr = std::shared_ptr<SubmitCopyRequest>;
+using GetTensorHandleRequestPtr = std::shared_ptr<GetTensorHandleRequest>;
 
 //==============================================================================
 }  // namespace setu::commons::messages
