@@ -60,8 +60,8 @@ class Worker {
   [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
   [[nodiscard]] const Device& GetDevice() const { return device_; }
 
-  virtual void Execute(const Program& program);
-  virtual void Setup(); 
+  virtual void Execute(const Program& program) = 0;
+  virtual void Setup() = 0; 
 
  protected:
   void InitZmqSockets();

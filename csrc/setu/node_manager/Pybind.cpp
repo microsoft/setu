@@ -35,16 +35,14 @@ using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::coordinator::datatypes::Program;
+using setu::node_manager::worker::Worker;
 using setu::node_manager::worker::NCCLWorker;
 //==============================================================================
 // NCCLWorker is exposed for testing instruction execution (setup + execute
 // without starting the socket loop).
 
 void InitWorkerPybindClass(py::module_& m) {
-     py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
-      .def(py::init<Device, std::size_t>(), py::arg("device"),
-           py::arg("reply_port"),
-           "Create a worker bound to a device and reply port");
+     py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker");
 
      py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
           .def(py::init<Device, std::size_t>(), py::arg("device"), py::arg("reply_port"),

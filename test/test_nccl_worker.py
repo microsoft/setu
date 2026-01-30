@@ -43,7 +43,8 @@ def test_nccl_worker_copy_instruction():
         make_shard_id,
     ) = _get_extensions()
 
-    device = Device(DeviceKind.CUDA, 0, 0, 0)
+    torch_device = torch.device("cuda:0")
+    device = Device(DeviceKind.CUDA, 0, torch_device)
     worker = NCCLWorker(device, reply_port=0)
     worker.setup()
 
@@ -95,7 +96,8 @@ def test_nccl_worker_copy_instruction_with_offset():
         make_shard_id,
     ) = _get_extensions()
 
-    device = Device(DeviceKind.CUDA, 0, 0, 0)
+    torch_device = torch.device("cuda:0")
+    device = Device(DeviceKind.CUDA, 0, torch_device)
     worker = NCCLWorker(device, reply_port=0)
     worker.setup()
 
@@ -155,7 +157,8 @@ def test_nccl_worker_empty_program():
         make_shard_id,
     ) = _get_extensions()
 
-    device = Device(DeviceKind.CUDA, 0, 0, 0)
+    torch_device = torch.device("cuda:0")
+    device = Device(DeviceKind.CUDA, 0, torch_device)
     worker = NCCLWorker(device, reply_port=0)
     worker.setup()
 
