@@ -35,9 +35,7 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
-Client::Client(ClientRank client_rank) : client_rank_(client_rank) {
-  zmq_context_ = std::make_shared<zmq::context_t>();
-}
+Client::Client() { zmq_context_ = std::make_shared<zmq::context_t>(); }
 
 Client::~Client() {
   if (is_connected_) {

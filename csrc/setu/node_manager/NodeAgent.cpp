@@ -23,7 +23,6 @@
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::DeviceRank;
-using setu::commons::LocalDeviceRank;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
@@ -50,16 +49,15 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
-using setu::coordinator::datatypes::Instruction;
-using setu::coordinator::datatypes::Program;
+using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
-NodeAgent::NodeAgent(NodeRank node_rank, std::size_t router_port,
+NodeAgent::NodeAgent(NodeId node_id, std::size_t router_port,
                      std::size_t dealer_executor_port,
                      std::size_t dealer_handler_port,
                      const std::vector<Device>& devices)
-    : node_rank_(node_rank),
+    : node_id_(node_id),
       router_port_(router_port),
       dealer_executor_port_(dealer_executor_port),
       dealer_handler_port_(dealer_handler_port) {
@@ -140,7 +138,9 @@ void NodeAgent::CopyOperationFinished(CopyOperationId copy_op_id) {
   LOG_DEBUG("Marking copy operation ID: {} as finished", copy_op_id);
 }
 
-void NodeAgent::Execute(Plan plan) { LOG_DEBUG("Executing Plan {}", plan); }
+void NodeAgent::Execute(Plan plan) {
+  LOG_DEBUG("Executing Plan {}", plan.ToString());
+}
 
 void NodeAgent::InitZmqSockets() {
   LOG_DEBUG("Initializing ZMQ sockets");
@@ -444,16 +444,16 @@ void NodeAgent::ExecutorLoop() {
     LOG_DEBUG("Executor received plan for copy_op_id: {}", copy_op_id);
 
     // For each worker program in the plan, send it to the corresponding worker
-    for (const auto& [device_rank, program] : plan.worker_programs) {
+    for (const auto& [participant, program] : plan.program) {
       // Ensure worker is ready before sending
-
+      auto device_rank = participant.device_rank;
       auto it = workers_req_sockets_.find(device_rank);
       ASSERT_VALID_RUNTIME(it != workers_req_sockets_.end(),
                            "No socket found for device_rank: {}", device_rank);
 
       // Send ExecuteProgramRequest to worker
       LOG_DEBUG("Sending program with {} instructions to worker {}",
-                program.instrs.size(), device_rank);
+                program.size(), device_rank);
       ExecuteProgramRequest request(program);
       SetuCommHelper::Send(it->second, request);
 

@@ -22,14 +22,14 @@
 #include "commons/Types.h"
 #include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
-#include "coordinator/datatypes/Plan.h"
+#include "planner/Planner.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::CopyOperationId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
-using setu::coordinator::datatypes::Plan;
+using setu::planner::Plan;
 //==============================================================================
 
 struct ExecuteRequest : public BaseRequest {

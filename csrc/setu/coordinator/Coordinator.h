@@ -17,6 +17,7 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/BoostCommon.h"
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
@@ -26,14 +27,15 @@
 #include "commons/messages/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Plan.h"
+#include "planner/Planner.h"
+#include "coordinator/datatypes/CopyOperation.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
 using setu::commons::CopyOperationId;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
-using setu::commons::NodeRank;
+using setu::commons::NodeId;
 using setu::commons::Queue;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
@@ -44,12 +46,15 @@ using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::Plan;
+using setu::planner::Plan;
+using setu::planner::backends::nccl;
+using setu::coordinator::datatypes::CopyOperationPtr;
 //==============================================================================
 class Coordinator {
  public:
   Coordinator(std::size_t router_executor_port,
-              std::size_t router_handler_port);
+              std::size_t router_handler_port,
+              Planner planner);
 
   ~Coordinator();
 
@@ -95,6 +100,11 @@ class Coordinator {
 
   std::atomic<bool> handler_running_{false};
   std::atomic<bool> executor_running_{false};
+
+  Queue<CopyOperationPtr> executor_queue_;
+  std::unordered_map<NodeId, Identity> node_agent_addrs_;
+
+  Planner planner_;
 };
 //==============================================================================
 }  // namespace setu::coordinator

@@ -23,3 +23,7 @@ set(ZMQ_BUILD_DRAFT_API
     CACHE BOOL "Build ZeroMQ draft API" FORCE)
 
 FetchContent_MakeAvailable(googletest Boost zmq cppzmq)
+
+# NCCL
+find_path(NCCL_INCLUDE_DIR NAMES "nccl.h")
+find_library(NCCL_LIBRARY NAMES "nccl")

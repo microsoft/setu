@@ -22,19 +22,18 @@
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "coordinator/datatypes/Program.h"
+#include "commons/utils/Pybind.h"
 #include "node_manager/NodeAgent.h"
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::CopyOperationId;
-using setu::commons::NodeRank;
+using setu::commons::NodeId;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
-using setu::coordinator::datatypes::Program;
 using setu::node_manager::worker::Worker;
 //==============================================================================
 void InitWorkerPybindClass(py::module_& m) {
@@ -53,9 +52,9 @@ void InitWorkerPybindClass(py::module_& m) {
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
-      .def(py::init<NodeRank, std::size_t, std::size_t, std::size_t,
+      .def(py::init<NodeId, std::size_t, std::size_t, std::size_t,
                     const std::vector<Device>&>(),
-           py::arg("node_rank") = NodeRank{0}, py::arg("router_port"),
+           py::arg("node_id"), py::arg("router_port"),
            py::arg("dealer_executor_port"), py::arg("dealer_handler_port"),
            py::arg("devices"),
            "Create a NodeAgent with specified ports and devices")

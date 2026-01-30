@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/SetuCommHelper.h"
+#include "commons/QueueUtils.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -40,9 +41,11 @@ using setu::commons::utils::ZmqHelper;
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
 Coordinator::Coordinator(std::size_t router_executor_port,
-                         std::size_t router_handler_port)
+                         std::size_t router_handler_port,
+                         Planner planner)
     : router_executor_port_(router_executor_port),
-      router_handler_port_(router_handler_port) {
+      router_handler_port_(router_handler_port),
+      planner_(planner) {
   InitZmqSockets();
 }
 
@@ -157,7 +160,7 @@ void Coordinator::HandlerLoop() {
     auto [node_agent_identity, request] =
         SetuCommHelper::RecvWithIdentity<NodeAgentRequest, false>(
             node_agent_router_handler_socket_);
-    std::visit(
+  std::visit(
         [&](const auto& req) {
           HandleNodeAgentRequest(node_agent_identity, req);
         },
@@ -233,8 +236,15 @@ void Coordinator::ExecutorLoop() {
 
   executor_running_ = true;
   while (executor_running_) {
-    // TODO: Implement executor loop to dispatch plans to NodeAgents
-    std::this_thread::sleep_for(kHandleLoopSleepMs);
+    auto op = TryPullFromQueue(executor_queue_);
+    auto plan = planner_.Compile(*op.spec, metastore_);
+    for (auto [node_id, fragment]: plan.Fragments()) {
+      auto id = node_agent_addrs_.at(node_id);
+      ExecuteRequest request(op.id, fragment);
+      SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
+        node_agent_router_handler_socket_, id, request
+      );
+    }
   }
 }
 //==============================================================================

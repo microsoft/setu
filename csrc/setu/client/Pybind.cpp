@@ -27,7 +27,6 @@
 //==============================================================================
 namespace setu::client {
 //==============================================================================
-using setu::commons::ClientRank;
 using setu::commons::CopyOperationId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
@@ -42,8 +41,7 @@ using setu::commons::utils::TensorIPCSpecPtr;
 //==============================================================================
 void InitClientPybindClass(py::module_& m) {
   py::class_<Client, std::shared_ptr<Client>>(m, "Client")
-      .def(py::init<ClientRank>(), py::arg("client_rank") = ClientRank{0},
-           "Create a new client instance")
+      .def(py::init<>(), "Create a new client instance")
       .def("connect", &Client::Connect, py::arg("endpoint"),
            "Connect to a NodeAgent at the specified endpoint")
       .def("disconnect", &Client::Disconnect,

@@ -32,7 +32,7 @@ using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
-using setu::coordinator::datatypes::Instruction;
+using setu::ir::Instruction;
 //==============================================================================
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
@@ -106,8 +106,7 @@ void Worker::ExecutorLoop() {
     auto request = SetuCommHelper::Recv<ExecuteProgramRequest>(reply_socket_);
     const auto& program = request.program;
 
-    LOG_DEBUG("Worker received program with {} instructions",
-              program.instrs.size());
+    LOG_DEBUG("Worker received program with {} instructions", program.size());
 
     // Execute each instruction in the program
     Execute(program);
@@ -121,10 +120,9 @@ void Worker::ExecutorLoop() {
 }
 
 void Worker::Execute(const Program& program) {
-  LOG_DEBUG("Worker executing program with {} instructions",
-            program.instrs.size());
+  LOG_DEBUG("Worker executing program with {} instructions", program.size());
 
-  for (const auto& instruction : program.instrs) {
+  for (const auto& instruction : program) {
     ExecuteInstruction(instruction);
   }
 
@@ -132,7 +130,7 @@ void Worker::Execute(const Program& program) {
 }
 
 void Worker::ExecuteInstruction(const Instruction& instruction) {
-  LOG_DEBUG("Executing instruction: {}", instruction.ToString());
+  LOG_DEBUG("Executing instruction (type index: {})", instruction.index());
   // TODO: Implement instruction execution logic
 }
 //==============================================================================

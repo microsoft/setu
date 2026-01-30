@@ -28,15 +28,15 @@
 #include "commons/messages/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Plan.h"
 #include "node_manager/worker/Worker.h"
+#include "planner/Planner.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::CopyOperationId;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
-using setu::commons::NodeRank;
+using setu::commons::NodeId;
 using setu::commons::Queue;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
@@ -60,12 +60,12 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::Plan;
 using setu::node_manager::worker::Worker;
+using setu::planner::Plan;
 //==============================================================================
 class NodeAgent {
  public:
-  NodeAgent(NodeRank node_rank, std::size_t router_port,
+  NodeAgent(NodeId node_id, std::size_t router_port,
             std::size_t dealer_executor_port, std::size_t dealer_handler_port,
             const std::vector<Device>& devices);
   ~NodeAgent();
@@ -131,7 +131,7 @@ class NodeAgent {
 
   Device CreateDeviceForRank(DeviceRank device_rank) const;
 
-  NodeRank node_rank_;
+  NodeId node_id_;
 
   std::shared_ptr<zmq::context_t> zmq_context_;
   ZmqSocketPtr client_router_socket_;

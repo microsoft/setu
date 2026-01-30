@@ -21,13 +21,14 @@
 #include "commons/TorchCommon.h"
 #include "commons/Types.h"
 #include "commons/messages/Messages.h"
+#include "ir/Instruction.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::RequestId;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
-using setu::coordinator::datatypes::Program;
+using setu::ir::Program;
 //==============================================================================
 void InitRegisterTensorShardRequestPybind(py::module_& m) {
   py::class_<RegisterTensorShardRequest>(m, "RegisterTensorShardRequest",

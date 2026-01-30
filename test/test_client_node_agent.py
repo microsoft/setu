@@ -6,6 +6,7 @@ Tests the communication flow between Client and NodeAgent components.
 
 import time
 import traceback
+import uuid
 
 import pytest
 import torch
@@ -42,16 +43,17 @@ def _run_node_agent(
     from setu._commons.datatypes import Device
     from setu._node_manager import NodeAgent
 
+    node_id = uuid.uuid4()
     devices = [
         Device(
-            node_rank=0,
+            node_id=node_id,
             device_rank=0,
             torch_device=torch.device("cuda:0"),
         )
     ]
 
     node_agent = NodeAgent(
-        node_rank=0,
+        node_id=node_id,
         router_port=router_port,
         dealer_executor_port=dealer_executor_port,
         dealer_handler_port=dealer_handler_port,
@@ -72,11 +74,11 @@ def _run_client_register_tensor(endpoint: str, tensor_name: str, result_queue):
         from setu._client import Client
         from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
 
-        client = Client(client_rank=0)
+        client = Client()
         client.connect(endpoint)
 
         device = Device(
-            node_rank=0,
+            node_id=uuid.uuid4(),
             device_rank=0,
             torch_device=torch.device("cuda:0"),
         )
@@ -113,11 +115,11 @@ def _run_client_get_handle(endpoint: str, tensor_name: str, result_queue):
         from setu._client import Client
         from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
 
-        client = Client(client_rank=0)
+        client = Client()
         client.connect(endpoint)
 
         device = Device(
-            node_rank=0,
+            node_id=uuid.uuid4(),
             device_rank=0,
             torch_device=torch.device("cuda:0"),
         )

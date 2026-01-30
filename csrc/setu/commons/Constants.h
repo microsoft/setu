@@ -20,10 +20,6 @@
 #include "commons/Types.h"
 //==============================================================================
 namespace setu::commons {
-//==============================================================================
-// MPI/Rank Constants
-constexpr NodeRank kRootRank = 0;
-//==============================================================================
 // Display Constants
 constexpr std::size_t kMaxTokenPreviewCount = 5;
 constexpr const char* kNullString = "null";

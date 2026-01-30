@@ -29,6 +29,7 @@
 #include <boost/uuid/detail/md5.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_hash.hpp>
 #include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 namespace setu::commons {
