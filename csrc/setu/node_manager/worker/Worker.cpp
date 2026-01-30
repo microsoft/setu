@@ -64,6 +64,10 @@ void Worker::Stop() {
   }
 }
 
+void Worker::Setup() {
+  // Base implementation is a no-op; NCCLWorker overrides for CUDA/stream setup.
+}
+
 void Worker::InitZmqSockets() {
   zmq_context_ = std::make_shared<zmq::context_t>();
   reply_socket_ = ZmqHelper::CreateAndBindSocket(

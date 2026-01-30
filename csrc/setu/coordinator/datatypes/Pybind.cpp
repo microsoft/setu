@@ -28,9 +28,11 @@
 #include "coordinator/datatypes/Program.h"
 #include "coordinator/datatypes/TensorMetadata.h"
 #include "coordinator/datatypes/TensorOwnershipMap.h"
+#include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
+using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
@@ -153,6 +155,21 @@ void InitInstructionPybind(py::module_& m) {
            "Create instruction from InitCommInstruction")
       .def(py::init<UseCommInstruction>(), py::arg("use_comm_instruction"),
            "Create instruction from UseCommInstruction")
+      .def(
+          "embellish",
+          [](Instruction& self, py::function py_resolver) {
+            self.Embellish(
+                [&py_resolver](const TensorName& name, const ShardId& shard_id) {
+                  py::object result = py_resolver(
+                      py::cast(name), py::cast(boost::uuids::to_string(shard_id)));
+                  auto ptr =
+                      reinterpret_cast<DevicePtr>(result.cast<intptr_t>());
+                  return ptr;
+                });
+          },
+          py::arg("resolver"),
+          "Resolve (tensor_name, shard_id) to device pointer. Resolver must "
+          "return int (e.g. tensor.data_ptr()).")
       .def("__str__", &Instruction::ToString)
       .def("__repr__", &Instruction::ToString);
 }

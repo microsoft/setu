@@ -96,6 +96,10 @@ void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
         } else if constexpr (std::is_same_v<T, UseCommInstruction>) {
           ExecuteUseComm(inst);
         } else if constexpr (std::is_same_v<T, CopyInstruction>) {
+          if (!group_started) {
+            NCCL_CHECK(ncclGroupStart());
+            group_started = true;
+          }
           ExecuteCopy(inst);
         } else if constexpr (std::is_same_v<T, SendInstruction>) {
           if (!group_started) {

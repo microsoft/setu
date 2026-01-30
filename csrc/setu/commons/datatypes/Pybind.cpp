@@ -30,11 +30,15 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
 #include "commons/enums/Enums.h"
+#include "commons/Types.h"
+#include <boost/uuid/string_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::DType;
+using setu::commons::ShardId;
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
@@ -239,8 +243,24 @@ void InitTensorShardWriteHandlePybind(py::module_& m) {
            "Get the tensor shard being accessed");
 }
 //==============================================================================
+void InitUuidPybind(py::module_& m) {
+     py::class_<boost::uuids::uuid>(m, "ShardId", py::module_local())
+    .def("__str__", [](const boost::uuids::uuid& id) {
+        return boost::uuids::to_string(id);
+    });
+}
+//==============================================================================
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Datatypes submodule");
+  InitUuidPybind(m);
+  m.def(
+      "make_shard_id",
+      [](const std::string& uuid_str) {
+        boost::uuids::string_generator gen;
+        return gen(uuid_str);
+      },
+      py::arg("uuid_str"),
+      "Create a ShardId from a UUID string (e.g. '00000000-0000-0000-0000-000000000001').");
 
   InitDevicePybind(m);
   InitTensorSlicePybind(m);
