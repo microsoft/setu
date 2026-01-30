@@ -25,7 +25,6 @@
 #include "coordinator/datatypes/Program.h"
 #include "node_manager/NodeAgent.h"
 #include "node_manager/worker/NCCLWorker.h"
-#include "node_manager/worker/Worker.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -37,27 +36,28 @@ using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::coordinator::datatypes::Program;
 using setu::node_manager::worker::NCCLWorker;
-using setu::node_manager::worker::Worker;
 //==============================================================================
+// NCCLWorker is exposed for testing instruction execution (setup + execute
+// without starting the socket loop).
+
 void InitWorkerPybindClass(py::module_& m) {
-  // Worker is not directly constructible from Python - it's created internally
-  // by NodeAgent. Only expose read-only properties for inspection.
-  py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
+     py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
+      .def(py::init<Device, std::size_t>(), py::arg("device"),
+           py::arg("reply_port"),
+           "Create a worker bound to a device and reply port")
       .def("start", &Worker::Start, "Start the worker executor loop")
       .def("stop", &Worker::Stop, "Stop the worker executor loop")
       .def("is_running", &Worker::IsRunning, "Check if worker is running")
       .def_property_readonly("device", &Worker::GetDevice,
                              "Get the device this worker is bound to");
 
-  // NCCLWorker is exposed for testing instruction execution (setup + execute
-  // without starting the socket loop).
-  py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
-      .def(py::init<Device, std::size_t>(), py::arg("device"), py::arg("reply_port"),
-           "Create an NCCL worker for the given device and reply port")
-      .def("setup", &NCCLWorker::Setup,
-           "Initialize CUDA device and stream (call before execute)")
-      .def("execute", &NCCLWorker::Execute, py::arg("program"),
-           "Execute a program (instructions must be embellished with device pointers)");
+     py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
+          .def(py::init<Device, std::size_t>(), py::arg("device"), py::arg("reply_port"),
+               "Create an NCCL worker for the given device and reply port")
+          .def("setup", &NCCLWorker::Setup,
+               "Initialize CUDA device and stream (call before execute)")
+          .def("execute", &NCCLWorker::Execute, py::arg("program"),
+               "Execute a program (instructions must be embellished with device pointers)");
 }
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {

@@ -320,12 +320,9 @@ void NodeAgent::ExecutorLoop() {
       LOG_DEBUG("Sending program with {} instructions to worker {}",
                 program.instrs.size(), device_rank);
       
+      // Populate device ptrs for instructions
       EmbellishProgram(program);
 
-      ExecuteProgramRequest request(program);
-      SetuCommHelper::Send(it->second, request);
-
-      // Wait for acknowledgment from worker
       auto response = SetuCommHelper::Recv<ExecuteProgramResponse>(it->second);
       LOG_DEBUG("Received acknowledgment from worker {}: {}", device_rank,
                 response);

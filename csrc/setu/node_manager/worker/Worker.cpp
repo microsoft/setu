@@ -26,17 +26,15 @@ namespace setu::node_manager::worker {
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
+using setu::commons::messages::RegisterTensorShardResponse;
+using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
+using setu::coordinator::datatypes::Instruction;
 //==============================================================================
-// Worker
-//==============================================================================
-
-Worker::Worker(Device device,
-               std::size_t reply_port)
-    : device_(device),
-      reply_port_(reply_port),
-      worker_running_(false) {
+Worker::Worker(Device device, std::size_t reply_port)
+    : device_(device), reply_port_(reply_port), worker_running_{false} {
   InitZmqSockets();
 }
 
@@ -46,12 +44,15 @@ Worker::~Worker() {
 }
 
 void Worker::Start() {
-  if (worker_running_) {
+  if (worker_running_)
     return;
-  }
-  worker_running_ = true;
-  executor_thread_ =
+
+  LOG_DEBUG("Starting Worker");
+  if (!worker_running_.load()) {
+    worker_running_ = true;
+    worker_thread_ =
       std::thread(SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
+  }
 }
 
 void Worker::Stop() {
@@ -59,39 +60,49 @@ void Worker::Stop() {
     return;
   }
   worker_running_ = false;
-  if (executor_thread_.joinable()) {
-    executor_thread_.join();
+  if (worker_thread_.joinable()) {
+    worker_thread_.join();
   }
-}
-
-void Worker::Setup() {
-  // Base implementation is a no-op; NCCLWorker overrides for CUDA/stream setup.
 }
 
 void Worker::InitZmqSockets() {
+  LOG_DEBUG("Initializing ZMQ sockets");
+
   zmq_context_ = std::make_shared<zmq::context_t>();
+
   reply_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::rep, reply_port_);
+
+  LOG_DEBUG("Initialized ZMQ sockets successfully");
 }
 
 void Worker::CloseZmqSockets() {
-  if (reply_socket_) {
-    reply_socket_->close();
-  }
-  if (zmq_context_) {
-    zmq_context_->close();
-  }
+  LOG_DEBUG("Closing ZMQ sockets");
+
+  if (reply_socket_) reply_socket_->close();
+  if (zmq_context_) zmq_context_->close();
+
+  LOG_DEBUG("Closed ZMQ sockets successfully");
 }
 
 void Worker::WorkerLoop() {
   LOG_DEBUG("WorkerLoop started on device {}", device_);
 
   this->Setup();
-
   while (worker_running_) {
+    // Receive ExecuteProgramRequest from NodeAgent
     auto request = SetuCommHelper::Recv<ExecuteProgramRequest>(reply_socket_);
-    this->Execute(request.program);
+    const auto& program = request.program;
 
+    LOG_DEBUG("Worker received program with {} instructions",
+              program.instrs.size());
+
+    // Execute each instruction in the program
+    this->Execute(program);
+
+    LOG_DEBUG("Worker completed executing all instructions");
+
+    // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(ErrorCode::kSuccess);
     SetuCommHelper::Send(reply_socket_, response);
   }

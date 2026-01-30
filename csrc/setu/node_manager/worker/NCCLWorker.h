@@ -51,7 +51,7 @@ class NCCLWorker : public Worker {
  public:
   NCCLWorker(Device device,
              std::size_t reply_port);
-  ~NCCLWorker() override;
+  ~NCCLWorker();
 
   void Execute(const Program& program) override;
   void Setup() override;

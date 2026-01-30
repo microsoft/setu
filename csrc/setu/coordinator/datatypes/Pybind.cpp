@@ -174,6 +174,15 @@ void InitInstructionPybind(py::module_& m) {
       .def("__repr__", &Instruction::ToString);
 }
 //==============================================================================
+void InitPlanPybind(py::module_& m) {
+  py::class_<Plan>(m, "Plan")
+      .def(py::init<>(), "Create an empty plan")
+      .def_readwrite("worker_programs", &Plan::worker_programs,
+                     "Mapping of device ranks to worker programs")
+      .def("__str__", &Plan::ToString)
+      .def("__repr__", &Plan::ToString);
+}
+//==============================================================================
 void InitProgramPybind(py::module_& m) {
   py::class_<Program>(m, "Program")
       .def(py::init<>(), "Create an empty program")
@@ -183,15 +192,6 @@ void InitProgramPybind(py::module_& m) {
                      "Instructions to execute in order")
       .def("__str__", &Program::ToString)
       .def("__repr__", &Program::ToString);
-}
-//==============================================================================
-void InitPlanPybind(py::module_& m) {
-  py::class_<Plan>(m, "Plan")
-      .def(py::init<>(), "Create an empty plan")
-      .def_readwrite("worker_programs", &Plan::worker_programs,
-                     "Mapping of device ranks to worker programs")
-      .def("__str__", &Plan::ToString)
-      .def("__repr__", &Plan::ToString);
 }
 //==============================================================================
 void InitTensorMetadataPybind(py::module_& m) {
@@ -239,7 +239,6 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitInitCommInstructionPybind(m);
   InitUseCommInstructionPybind(m);
   InitInstructionPybind(m);
-
   InitProgramPybind(m);
   InitPlanPybind(m);
   InitTensorMetadataPybind(m);
