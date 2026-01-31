@@ -35,17 +35,22 @@ def _run_node_agent(
     coordinator_endpoint: str,
     ready_event,
     stop_event,
+    node_id=None,
+    device_rank: int = 0,
+    device_index: int = 0,
 ):
     """Run the NodeAgent in a separate process."""
     from setu._commons.datatypes import Device
     from setu._node_manager import NodeAgent
 
-    node_id = uuid.uuid4()
+    if node_id is None:
+        node_id = uuid.uuid4()
+
     devices = [
         Device(
             node_id=node_id,
-            device_rank=0,
-            torch_device=torch.device("cuda:0"),
+            device_rank=device_rank,
+            torch_device=torch.device(f"cuda:{device_index}"),
         )
     ]
 
@@ -64,7 +69,14 @@ def _run_node_agent(
     node_agent.stop()
 
 
-def _register_tensor(endpoint: str, tensor_name: str, dims_spec=None):
+def _register_tensor(
+    endpoint: str,
+    tensor_name: str,
+    dims_spec=None,
+    node_id=None,
+    device_rank: int = 0,
+    device_index: int = 0,
+):
     """Register a tensor shard and return the shard ref."""
     from setu._client import Client
     from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
@@ -75,13 +87,16 @@ def _register_tensor(endpoint: str, tensor_name: str, dims_spec=None):
             TensorDimSpec("dim_1", 64, 0, 64),
         ]
 
+    if node_id is None:
+        node_id = uuid.uuid4()
+
     client = Client()
     client.connect(endpoint)
 
     device = Device(
-        node_id=uuid.uuid4(),
-        device_rank=0,
-        torch_device=torch.device("cuda:0"),
+        node_id=node_id,
+        device_rank=device_rank,
+        torch_device=torch.device(f"cuda:{device_index}"),
     )
     shard_spec = TensorShardSpec(
         name=tensor_name,
@@ -243,6 +258,148 @@ def test_multiple_tensor_registrations(infrastructure):
         shard_ref = _register_tensor(client_endpoint, f"tensor_{i}")
         assert shard_ref is not None, f"Failed to register tensor_{i}"
         assert shard_ref.name == f"tensor_{i}"
+
+
+@pytest.fixture(scope="function")
+def multi_node_infrastructure():
+    """Start Coordinator and two NodeAgents for distributed tensor tests."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    coordinator_port = 29200
+    node_agent_0_port = 29201
+    node_agent_1_port = 29202
+    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
+
+    node_id_0 = uuid.uuid4()
+    node_id_1 = uuid.uuid4()
+
+    ctx = mp.get_context("spawn")
+    coordinator_ready = ctx.Event()
+    node_agent_0_ready = ctx.Event()
+    node_agent_1_ready = ctx.Event()
+    stop_event = ctx.Event()
+
+    # Start Coordinator
+    coordinator_proc = ctx.Process(
+        target=_run_coordinator,
+        args=(coordinator_port, coordinator_ready, stop_event),
+    )
+    coordinator_proc.start()
+    assert coordinator_ready.wait(timeout=10), "Coordinator failed to start"
+
+    # Start NodeAgent 0 (GPU 0)
+    node_agent_0_proc = ctx.Process(
+        target=_run_node_agent,
+        args=(
+            node_agent_0_port,
+            coordinator_endpoint,
+            node_agent_0_ready,
+            stop_event,
+            node_id_0,
+            0,
+            0,
+        ),
+    )
+    node_agent_0_proc.start()
+    assert node_agent_0_ready.wait(timeout=10), "NodeAgent 0 failed to start"
+
+    # Start NodeAgent 1 (GPU 1)
+    node_agent_1_proc = ctx.Process(
+        target=_run_node_agent,
+        args=(
+            node_agent_1_port,
+            coordinator_endpoint,
+            node_agent_1_ready,
+            stop_event,
+            node_id_1,
+            1,
+            1,
+        ),
+    )
+    node_agent_1_proc.start()
+    assert node_agent_1_ready.wait(timeout=10), "NodeAgent 1 failed to start"
+
+    time.sleep(0.2)
+
+    yield {
+        "client_endpoint_0": f"tcp://localhost:{node_agent_0_port}",
+        "client_endpoint_1": f"tcp://localhost:{node_agent_1_port}",
+        "node_id_0": node_id_0,
+        "node_id_1": node_id_1,
+    }
+
+    stop_event.set()
+    time.sleep(0.1)
+    for proc in [node_agent_0_proc, node_agent_1_proc, coordinator_proc]:
+        proc.join(timeout=3)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=1)
+
+
+@pytest.mark.gpu
+def test_distributed_tensor_allocation(multi_node_infrastructure):
+    """
+    Test that AllocateTensorRequest is broadcast to ALL NodeAgents
+    when a tensor is distributed across multiple nodes.
+    """
+    from setu._client import Client
+    from setu._commons.datatypes import TensorDimSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "distributed_tensor"
+    total_rows = 1024
+
+    # Node 0 owns rows [0, 512)
+    dims_0 = [
+        TensorDimSpec("rows", total_rows, 0, 512),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_0 = _register_tensor(
+        infra["client_endpoint_0"],
+        tensor_name,
+        dims_0,
+        infra["node_id_0"],
+        0,
+        0,
+    )
+    assert shard_ref_0 is not None
+
+    # Node 1 owns rows [512, 1024)
+    dims_1 = [
+        TensorDimSpec("rows", total_rows, 512, 1024),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_1 = _register_tensor(
+        infra["client_endpoint_1"],
+        tensor_name,
+        dims_1,
+        infra["node_id_1"],
+        1,
+        1,
+    )
+    assert shard_ref_1 is not None
+
+    # Wait for AllocateTensorRequest to be processed
+    time.sleep(0.5)
+
+    # Verify both NodeAgents allocated the tensor by getting handles
+    client_0 = Client()
+    client_0.connect(infra["client_endpoint_0"])
+    handle_0 = client_0.get_tensor_handle(tensor_name)
+    client_0.disconnect()
+
+    client_1 = Client()
+    client_1.connect(infra["client_endpoint_1"])
+    handle_1 = client_1.get_tensor_handle(tensor_name)
+    client_1.disconnect()
+
+    assert handle_0 is not None, "NodeAgent 0 should have allocated tensor"
+    assert handle_1 is not None, "NodeAgent 1 should have allocated tensor"
+
+    assert handle_0.to_dict()["tensor_size"] == [512, 768]
+    assert handle_1.to_dict()["tensor_size"] == [512, 768]
 
 
 if __name__ == "__main__":
