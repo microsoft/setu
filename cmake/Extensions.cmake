@@ -97,9 +97,14 @@ define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects" 
 define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objects"
                    "_kernels_common")
 
+file(GLOB_RECURSE METASTORE_SRC "csrc/setu/metastore/*.cpp")
+define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" "")
+
 file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
-define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects" "${NCCL_LIBRARY}")
-define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects" "${NCCL_LIBRARY}")
+define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects"
+                      "${NCCL_LIBRARY};_metastore_static")
+define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects"
+                   "${NCCL_LIBRARY};_metastore_static")
 target_include_directories(_coordinator PRIVATE ${NCCL_INCLUDE_DIR})
 target_include_directories(_coordinator_static PRIVATE ${NCCL_INCLUDE_DIR})
 

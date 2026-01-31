@@ -45,8 +45,8 @@ using ClientRequest =
                  WaitForCopyRequest, GetTensorHandleRequest>;
 
 /// @brief Requests from NodeAgent to Coordinator.
-using NodeAgentRequest = std::variant<RegisterTensorShardRequest,
-                                      SubmitCopyRequest, WaitForCopyRequest>;
+using NodeAgentRequest =
+    std::variant<RegisterTensorShardRequest, SubmitCopyRequest>;
 
 /// @brief All messages from Coordinator to NodeAgent (flattened).
 /// This unified type enables a single, flat dispatch loop instead of

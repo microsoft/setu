@@ -65,9 +65,8 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       zmq_context_(std::make_shared<zmq::context_t>()) {
   handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
                                        coordinator_endpoint_, executor_queue_);
-  executor_ = std::make_unique<Executor>(node_id_, zmq_context_,
-                                         coordinator_endpoint_, devices_,
-                                         executor_queue_);
+  executor_ = std::make_unique<Executor>(
+      node_id_, zmq_context_, coordinator_endpoint_, devices_, executor_queue_);
 }
 
 NodeAgent::~NodeAgent() {

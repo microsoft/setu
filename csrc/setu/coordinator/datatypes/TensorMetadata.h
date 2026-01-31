@@ -19,19 +19,23 @@
 #include "commons/ClassTraits.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
+#include "commons/Types.h"
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorSelection.h"
-#include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardSpec.h"
 #include "coordinator/datatypes/TensorOwnershipMap.h"
 #include "coordinator/datatypes/TensorShardUtils.h"
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
 // Type aliases for convenience
+using setu::commons::NodeId;
+using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelectionPtr;
-using setu::commons::datatypes::TensorShardsMap;
+using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::datatypes::TensorShardSpecPtr;
 //==============================================================================
 /**
  * @brief Complete metadata for a tensor including dimensions, data type, and
@@ -50,21 +54,27 @@ struct TensorMetadata {
    * @param dims_param Map of dimension names to TensorDim objects describing
    * the tensor shape
    * @param dtype_param Data type of the tensor elements
-   * @param shards_param Map of node IDs to tensor shards distributed across
+   * @param shards_param Map of shard IDs to tensor shards distributed across
    * devices
+   * @param shard_owners_param Map of shard IDs to NodeIds that own them
    *
    * @throws std::invalid_argument if dims or shards are null, empty, or if
    * shards don't fully cover the tensor
    */
   TensorMetadata(TensorName name_param, TensorDimMap dims_param,
-                 torch::Dtype dtype_param, TensorShardsMap shards_param)
+                 torch::Dtype dtype_param,
+                 std::unordered_map<ShardId, TensorShardSpecPtr> shards_param,
+                 std::unordered_map<ShardId, NodeId> shard_owners_param)
       : name(name_param),
         dims(dims_param),
         dtype(dtype_param),
         shards(shards_param),
+        shard_owners(shard_owners_param),
         size(GetSize()) {
     ASSERT_VALID_ARGUMENTS(dims_param.size() > 0, "Dims must be non-empty");
     ASSERT_VALID_ARGUMENTS(shards_param.size() > 0, "Shards must be non-empty");
+    ASSERT_VALID_ARGUMENTS(shards_param.size() == shard_owners_param.size(),
+                           "Shards and shard_owners must have same size");
 
     ValidateShards();
   }
@@ -120,11 +130,27 @@ struct TensorMetadata {
                        name, dims, dtype, shards);
   }
 
+  /**
+   * @brief Returns all unique NodeIds that own shards of this tensor
+   *
+   * @return Set of NodeIds that own at least one shard
+   */
+  [[nodiscard]] std::set<NodeId> GetOwnerNodeIds() const {
+    std::set<NodeId> node_ids;
+    for (const auto& [shard_id, node_id] : shard_owners) {
+      node_ids.insert(node_id);
+    }
+    return node_ids;
+  }
+
   const TensorName name;     ///< Name of the tensor
   const TensorDimMap dims;   ///< Map of dimension names to TensorDim objects
   const torch::Dtype dtype;  ///< Data type of tensor elements
-  const TensorShardsMap shards;  ///< Map of node IDs to tensor shards
-  const std::size_t size;        ///< Total number of elements in the tensor
+  const std::unordered_map<ShardId, TensorShardSpecPtr>
+      shards;  ///< Map of shard IDs to tensor shards
+  const std::unordered_map<ShardId, NodeId>
+      shard_owners;        ///< Map of shard IDs to owning NodeIds
+  const std::size_t size;  ///< Total number of elements in the tensor
 
  private:
   /**
@@ -140,7 +166,7 @@ struct TensorMetadata {
     std::size_t total_shard_size = 0;
 
     for (const auto& [_, shard] : shards) {
-      total_shard_size += shard->shard_size;
+      total_shard_size += shard->GetNumElements();
     }
 
     ASSERT_VALID_ARGUMENTS(total_shard_size == size,

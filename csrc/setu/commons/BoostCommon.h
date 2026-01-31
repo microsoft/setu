@@ -27,8 +27,8 @@
 #include <boost/thread/concurrent_queues/sync_priority_queue.hpp>
 #include <boost/thread/concurrent_queues/sync_queue.hpp>
 #include <boost/uuid/detail/md5.hpp>
-#include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_hash.hpp>
 #include <boost/uuid/uuid_io.hpp>
 //==============================================================================
@@ -50,6 +50,19 @@ using PriorityQueue = ::boost::concurrent::sync_priority_queue<Args...>;
 [[nodiscard]] inline boost::uuids::uuid GenerateUUID() {
   static boost::uuids::random_generator generator;
   return generator();
+}
+//==============================================================================
+/**
+ * @brief Parse a UUID from its string representation
+ *
+ * Converts a string (e.g., "550e8400-e29b-41d4-a716-446655440000") to a UUID.
+ *
+ * @param str The string representation of the UUID
+ * @return The parsed UUID
+ */
+[[nodiscard]] inline boost::uuids::uuid StringToUUID(const std::string& str) {
+  boost::uuids::string_generator gen;
+  return gen(str);
 }
 //==============================================================================
 template <typename T>

@@ -31,12 +31,16 @@ using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct SubmitCopyResponse : public BaseResponse {
-  explicit SubmitCopyResponse(RequestId request_id_param,
-                              ErrorCode error_code_param = ErrorCode::kSuccess)
-      : BaseResponse(request_id_param, error_code_param) {}
+  SubmitCopyResponse(RequestId request_id_param,
+                     CopyOperationId copy_operation_id_param,
+                     ErrorCode error_code_param = ErrorCode::kSuccess)
+      : BaseResponse(request_id_param, error_code_param),
+        copy_operation_id(copy_operation_id_param) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("SubmitCopyResponse(error_code={})", error_code);
+    return std::format(
+        "SubmitCopyResponse(copy_operation_id={}, error_code={})",
+        copy_operation_id, error_code);
   }
 
   void Serialize(BinaryBuffer& buffer) const;

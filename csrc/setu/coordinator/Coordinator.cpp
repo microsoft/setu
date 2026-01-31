@@ -23,8 +23,10 @@
 namespace setu::coordinator {
 //==============================================================================
 using setu::commons::GenerateUUID;
+using setu::commons::NodeId;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
+using setu::commons::StringToUUID;
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShardRef;
@@ -34,7 +36,6 @@ using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
-using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
@@ -47,7 +48,8 @@ Coordinator::Coordinator(std::size_t port)
     : port_(port), zmq_context_(std::make_shared<zmq::context_t>()) {
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
-  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_);
+  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
+                                       planner_queue_);
   executor_ = std::make_unique<Executor>(outbox_queue_);
 }
 
@@ -196,8 +198,13 @@ void Coordinator::Gateway::Loop() {
 // Handler Implementation
 //==============================================================================
 Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
-                              Queue<OutboxMessage>& outbox_queue)
-    : inbox_queue_(inbox_queue), outbox_queue_(outbox_queue) {}
+                              Queue<OutboxMessage>& outbox_queue,
+                              MetaStore& metastore,
+                              Queue<CopySpec>& planner_queue)
+    : inbox_queue_(inbox_queue),
+      outbox_queue_(outbox_queue),
+      metastore_(metastore),
+      planner_queue_(planner_queue) {}
 
 void Coordinator::Handler::Start() {
   if (running_.load()) {
@@ -226,8 +233,14 @@ void Coordinator::Handler::Loop() {
     try {
       InboxMessage inbox_msg = inbox_queue_.pull();
       std::visit(
-          [&](const auto& req) {
-            HandleNodeAgentRequest(inbox_msg.node_agent_identity, req);
+          [&](const auto& msg) {
+            using T = std::decay_t<decltype(msg)>;
+            if constexpr (std::is_same_v<T, RegisterTensorShardRequest>) {
+              HandleRegisterTensorShardRequest(inbox_msg.node_agent_identity,
+                                               msg);
+            } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
+              HandleSubmitCopyRequest(inbox_msg.node_agent_identity, msg);
+            }
           },
           inbox_msg.request);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
@@ -237,63 +250,117 @@ void Coordinator::Handler::Loop() {
   }
 }
 
-void Coordinator::Handler::HandleNodeAgentRequest(
+void Coordinator::Handler::HandleRegisterTensorShardRequest(
     const Identity& node_agent_identity,
     const RegisterTensorShardRequest& request) {
   LOG_INFO("Coordinator received RegisterTensorShardRequest for tensor: {}",
            request.tensor_shard_spec.name);
 
-  // Generate a shard ID
-  ShardId shard_id = GenerateUUID();
+  // Parse NodeId from the identity (NodeAgent uses to_string(node_id) as
+  // identity)
+  NodeId owner_node_id = StringToUUID(node_agent_identity);
 
-  // Build TensorDimMap from the spec's dims (using owned size for shard ref)
-  TensorDimMap dim_map;
-  for (const auto& dim_spec : request.tensor_shard_spec.dims) {
-    dim_map.emplace(dim_spec.name,
-                    TensorDim(dim_spec.name, dim_spec.GetOwnedSize()));
-  }
+  // Register the tensor shard in the metastore with owner information
+  TensorShardRef shard_ref =
+      metastore_.RegisterTensorShard(request.tensor_shard_spec, owner_node_id);
 
-  // Create TensorShardRef
-  TensorShardRef shard_ref(request.tensor_shard_spec.name, shard_id, dim_map);
-
-  // Send response to client via outbox
+  // Send response
   RegisterTensorShardResponse response(request.request_id, ErrorCode::kSuccess,
                                        shard_ref);
   outbox_queue_.push(OutboxMessage{node_agent_identity, response});
 
-  // Send AllocateTensorRequest to NodeAgent to allocate the tensor
-  AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);
-  outbox_queue_.push(OutboxMessage{node_agent_identity, allocate_request});
+  // Check if all shards for this tensor are registered
+  if (metastore_.AllShardsRegistered(request.tensor_shard_spec.name)) {
+    LOG_INFO(
+        "All shards registered for tensor: {}, sending AllocateTensorRequest "
+        "to all owners",
+        request.tensor_shard_spec.name);
 
-  LOG_INFO("Queued AllocateTensorRequest for tensor: {}",
-           request.tensor_shard_spec.name);
+    // Get tensor metadata to find all owner NodeIds
+    auto metadata =
+        metastore_.GetTensorMetadata(request.tensor_shard_spec.name);
+    ASSERT_VALID_RUNTIME(metadata.has_value(),
+                         "Metadata should exist for fully registered tensor");
+
+    // Send AllocateTensorRequest to all NodeAgents that own shards
+    AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);
+    for (const NodeId& owner_id : metadata->GetOwnerNodeIds()) {
+      Identity owner_identity = to_string(owner_id);
+      outbox_queue_.push(OutboxMessage{owner_identity, allocate_request});
+    }
+  }
 }
 
-void Coordinator::Handler::HandleNodeAgentRequest(
+void Coordinator::Handler::HandleSubmitCopyRequest(
     const Identity& node_agent_identity, const SubmitCopyRequest& request) {
   LOG_INFO("Coordinator received SubmitCopyRequest from {} to {}",
            request.copy_spec.src_name, request.copy_spec.dst_name);
 
-  // TODO: Actually submit the copy operation
-  // For now, just log and respond with success
-  LOG_INFO("Submitted copy operation: {} -> {} (stub implementation)",
-           request.copy_spec.src_name, request.copy_spec.dst_name);
+  CopyKey copy_key{request.copy_spec.src_name, request.copy_spec.dst_name};
 
-  SubmitCopyResponse response(RequestId(), ErrorCode::kSuccess);
-  outbox_queue_.push(OutboxMessage{node_agent_identity, response});
-}
+  // Check if this is the first request for this (src, dst) pair
+  auto pending_it = pending_copy_specs_.find(copy_key);
+  if (pending_it == pending_copy_specs_.end()) {
+    // First request - store the CopySpec for validation
+    pending_copy_specs_.emplace(copy_key, request.copy_spec);
+    copies_received_[copy_key] = 1;
+  } else {
+    // Subsequent request - verify TensorSelections match
+    const CopySpec& first_spec = pending_it->second;
 
-void Coordinator::Handler::HandleNodeAgentRequest(
-    const Identity& node_agent_identity, const WaitForCopyRequest& request) {
-  LOG_INFO("Coordinator received WaitForCopyRequest for copy operation ID: {}",
-           request.copy_operation_id);
+    ASSERT_VALID_RUNTIME(
+        *request.copy_spec.src_selection == *first_spec.src_selection,
+        "SubmitCopy {} -> {}: source selection mismatch",
+        request.copy_spec.src_name, request.copy_spec.dst_name);
 
-  // TODO: Actually wait for the copy operation
-  // For now, just log and respond with success
-  LOG_INFO("WaitForCopy: {} (stub implementation)", request.copy_operation_id);
+    ASSERT_VALID_RUNTIME(
+        *request.copy_spec.dst_selection == *first_spec.dst_selection,
+        "SubmitCopy {} -> {}: destination selection mismatch",
+        request.copy_spec.src_name, request.copy_spec.dst_name);
 
-  WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
-  outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    copies_received_[copy_key]++;
+  }
+
+  // Track this node agent for later response
+  pending_node_agents_[copy_key].push_back(
+      PendingNodeAgent{node_agent_identity, request.request_id});
+
+  // Get the expected number of clients (number of shards for source tensor)
+  std::size_t expected_clients =
+      metastore_.GetNumShardsForTensor(request.copy_spec.src_name);
+
+  LOG_DEBUG("SubmitCopy {} -> {}: received {}/{} requests",
+            request.copy_spec.src_name, request.copy_spec.dst_name,
+            copies_received_[copy_key], expected_clients);
+
+  // Check if all clients have sent the request
+  if (copies_received_[copy_key] == expected_clients) {
+    // Generate CopyOperationId
+    CopyOperationId copy_op_id = GenerateUUID();
+
+    LOG_INFO(
+        "All clients submitted copy request {} -> {}, "
+        "copy_op_id={}, adding to planner queue",
+        request.copy_spec.src_name, request.copy_spec.dst_name, copy_op_id);
+
+    // Store the mapping
+    copy_operations_.emplace(copy_op_id, request.copy_spec);
+
+    // Add to planner queue
+    planner_queue_.push(request.copy_spec);
+
+    // Send responses to all waiting clients with copy_op_id
+    for (const auto& client : pending_node_agents_[copy_key]) {
+      SubmitCopyResponse response(client.request_id, copy_op_id,
+                                  ErrorCode::kSuccess);
+      outbox_queue_.push(OutboxMessage{client.identity, response});
+    }
+
+    // Clean up maps
+    copies_received_.erase(copy_key);
+    pending_copy_specs_.erase(copy_key);
+    pending_node_agents_.erase(copy_key);
+  }
 }
 
 //==============================================================================

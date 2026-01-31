@@ -28,6 +28,7 @@
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
 #include "coordinator/datatypes/CopyOperation.h"
+#include "metastore/MetaStore.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -36,6 +37,7 @@ using setu::commons::DeviceRank;
 using setu::commons::Identity;
 using setu::commons::NodeId;
 using setu::commons::Queue;
+using setu::commons::RequestId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::TensorShardRef;
@@ -46,6 +48,7 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::coordinator::datatypes::CopyOperationPtr;
+using setu::metastore::MetaStore;
 //==============================================================================
 class Coordinator {
  public:
@@ -64,6 +67,7 @@ class Coordinator {
   void Stop();
 
  private:
+  MetaStore metastore_;
   //============================================================================
   // Architecture: Gateway + Queues
   //
@@ -134,7 +138,8 @@ class Coordinator {
   //============================================================================
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
-            Queue<OutboxMessage>& outbox_queue);
+            Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
+            Queue<CopySpec>& planner_queue);
 
     void Start();
     void Stop();
@@ -142,15 +147,46 @@ class Coordinator {
    private:
     void Loop();
 
-    void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                                const RegisterTensorShardRequest& request);
-    void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                                const SubmitCopyRequest& request);
-    void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                                const WaitForCopyRequest& request);
+    void HandleRegisterTensorShardRequest(
+        const Identity& node_agent_identity,
+        const RegisterTensorShardRequest& request);
+    void HandleSubmitCopyRequest(const Identity& node_agent_identity,
+                                 const SubmitCopyRequest& request);
+
+    /// Key for tracking copy operations by (src, dst) tensor pair
+    struct CopyKey {
+      TensorName src_name;
+      TensorName dst_name;
+
+      bool operator<(const CopyKey& other) const {
+        if (src_name != other.src_name) return src_name < other.src_name;
+        return dst_name < other.dst_name;
+      }
+    };
+
+    /// NodeAgent waiting for a copy response
+    struct PendingNodeAgent {
+      Identity identity;
+      RequestId request_id;
+    };
 
     Queue<InboxMessage>& inbox_queue_;
     Queue<OutboxMessage>& outbox_queue_;
+    MetaStore& metastore_;
+    Queue<CopySpec>& planner_queue_;
+
+    /// Tracks number of SubmitCopyRequests received per (src, dst) pair
+    std::map<CopyKey, std::size_t> copies_received_;
+
+    /// Stores the first CopySpec received for each (src, dst) pair for
+    /// validation
+    std::map<CopyKey, CopySpec> pending_copy_specs_;
+
+    /// Tracks NodeAgents waiting for SubmitCopy response
+    std::map<CopyKey, std::vector<PendingNodeAgent>> pending_node_agents_;
+
+    /// Maps CopyOperationId to CopySpec
+    std::map<CopyOperationId, CopySpec> copy_operations_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
@@ -181,6 +217,9 @@ class Coordinator {
   // Internal message queues
   Queue<InboxMessage> inbox_queue_;
   Queue<OutboxMessage> outbox_queue_;
+
+  /// Queue of CopySpecs for the Planner to process
+  Queue<CopySpec> planner_queue_;
 
   std::unique_ptr<Gateway> gateway_;
   std::unique_ptr<Handler> handler_;
