@@ -51,9 +51,10 @@ using setu::coordinator::datatypes::ReceiveInstruction;
 using setu::coordinator::datatypes::SendInstruction;
 //==============================================================================
 void InitCopyInstructionPybind(py::module_& m) {
+  using setu::commons::datatypes::TensorShardIdentifier;
   py::class_<CopyInstruction>(m, "CopyInstruction")
-      .def(py::init<std::pair<TensorName, ShardId>, std::size_t,
-                    std::pair<TensorName, ShardId>, std::size_t, torch::Dtype,
+      .def(py::init<TensorShardIdentifier, std::size_t,
+                    TensorShardIdentifier, std::size_t, torch::Dtype,
                     std::size_t>(),
            py::arg("src_tensor"), py::arg("src_memory_offset_bytes"),
            py::arg("dst_tensor"), py::arg("dst_memory_offset_bytes"),
@@ -77,8 +78,9 @@ void InitCopyInstructionPybind(py::module_& m) {
 }
 //==============================================================================
 void InitSendInstructionPybind(py::module_& m) {
+  using setu::commons::datatypes::TensorShardIdentifier;
   py::class_<SendInstruction>(m, "SendInstruction")
-      .def(py::init<DeviceRank, std::pair<TensorName, ShardId>, torch::Dtype,
+      .def(py::init<DeviceRank, TensorShardIdentifier, torch::Dtype,
                     std::size_t, std::size_t>(),
            py::arg("dst_device_id"), py::arg("src_tensor"), py::arg("dtype"),
            py::arg("memory_offset_bytes"), py::arg("num_elements"),
@@ -97,8 +99,9 @@ void InitSendInstructionPybind(py::module_& m) {
 }
 //==============================================================================
 void InitReceiveInstructionPybind(py::module_& m) {
+  using setu::commons::datatypes::TensorShardIdentifier;
   py::class_<ReceiveInstruction>(m, "ReceiveInstruction")
-      .def(py::init<DeviceRank, std::pair<TensorName, ShardId>, torch::Dtype,
+      .def(py::init<DeviceRank, TensorShardIdentifier, torch::Dtype,
                     std::size_t, std::size_t>(),
            py::arg("src_device_id"), py::arg("dst_tensor"), py::arg("dtype"),
            py::arg("memory_offset_bytes"), py::arg("num_elements"),

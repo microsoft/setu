@@ -13,7 +13,7 @@ def _get_extensions():
     """Import setu extensions; skip if not built or CUDA unavailable."""
     try:
         # Load setu package first so torch is in process (required for extension symbols)
-        from setu._commons.datatypes import Device, make_shard_id
+        from setu._commons.datatypes import Device, make_shard_id, TensorShardIdentifier
         from setu._commons.enums import DeviceKind
         from setu._coordinator.datatypes import (
             CopyInstruction,
@@ -21,7 +21,7 @@ def _get_extensions():
             Program,
         )
         from setu._node_manager import NCCLWorker
-        return NCCLWorker, Device, DeviceKind, Program, Instruction, CopyInstruction, make_shard_id
+        return NCCLWorker, Device, DeviceKind, Program, Instruction, CopyInstruction, make_shard_id, TensorShardIdentifier
     except ImportError as e:
         print(f"setu extensions not available: {e}")
         pytest.skip(f"setu extensions not available: {e}")
@@ -41,6 +41,7 @@ def test_nccl_worker_copy_instruction():
         Instruction,
         CopyInstruction,
         make_shard_id,
+        TensorShardIdentifier,
     ) = _get_extensions()
 
     torch_device = torch.device("cuda:0")
@@ -56,9 +57,9 @@ def test_nccl_worker_copy_instruction():
     shard_id_dst = make_shard_id("00000000-0000-0000-0000-000000000002")
 
     copy_instr = CopyInstruction(
-        ("src", shard_id_src),
+        TensorShardIdentifier("src", shard_id_src),
         0,
-        ("dst", shard_id_dst),
+        TensorShardIdentifier("dst", shard_id_dst),
         0,
         torch.float32,
         num_elements,
@@ -94,6 +95,7 @@ def test_nccl_worker_copy_instruction_with_offset():
         Instruction,
         CopyInstruction,
         make_shard_id,
+        TensorShardIdentifier,
     ) = _get_extensions()
 
     torch_device = torch.device("cuda:0")
@@ -115,9 +117,9 @@ def test_nccl_worker_copy_instruction_with_offset():
     num_elements = 8
 
     copy_instr = CopyInstruction(
-        ("src", shard_id_src),
+        TensorShardIdentifier("src", shard_id_src),
         offset_bytes,
-        ("dst", shard_id_dst),
+        TensorShardIdentifier("dst", shard_id_dst),
         offset_bytes,
         torch.float32,
         num_elements,
@@ -155,6 +157,7 @@ def test_nccl_worker_empty_program():
         Instruction,
         CopyInstruction,
         make_shard_id,
+        TensorShardIdentifier,
     ) = _get_extensions()
 
     torch_device = torch.device("cuda:0")

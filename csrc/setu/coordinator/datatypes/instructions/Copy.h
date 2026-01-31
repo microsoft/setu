@@ -18,6 +18,7 @@
 //==============================================================================
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/Types.h"
+#include "setu/commons/datatypes/TensorShardIdentifier.h"
 #include "setu/commons/enums/Enums.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
@@ -27,16 +28,17 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
-using setu::commons::TensorName;
-using setu::commons::ShardId;
 using setu::commons::DevicePtr;
+using setu::commons::ShardId;
+using setu::commons::TensorName;
+using setu::commons::datatypes::TensorShardIdentifier;
 //==============================================================================
 
 // TODO: Move method definitions to cpp
 struct CopyInstruction {
-  CopyInstruction(std::pair<TensorName, ShardId> src_tensor,
+  CopyInstruction(TensorShardIdentifier src_tensor,
                   std::size_t src_memory_offset_bytes,
-                  std::pair<TensorName, ShardId> dst_tensor,
+                  TensorShardIdentifier dst_tensor,
                   std::size_t dst_memory_offset_bytes,
                   torch::Dtype dtype,
                   std::size_t num_elements,
@@ -61,8 +63,8 @@ struct CopyInstruction {
     return std::format(
         "CopyInstruction(src_tensor=({}, {}), src_offset={}, dst_tensor=({}, "
         "{}), dst_offset={}, dtype={}, num_elements={}, src_ptr={}, dst_ptr={})",
-        src_tensor.first, src_tensor.second, src_memory_offset_bytes,
-        dst_tensor.first, dst_tensor.second, dst_memory_offset_bytes,
+        src_tensor.tensor_name, src_tensor.shard_id, src_memory_offset_bytes,
+        dst_tensor.tensor_name, dst_tensor.shard_id, dst_memory_offset_bytes,
         static_cast<int>(dtype), num_elements, src_ptr, dst_ptr);
   }
 
@@ -70,40 +72,40 @@ struct CopyInstruction {
     BinaryWriter writer(buffer);
     const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
     const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-    writer.WriteFields(src_tensor.first, src_tensor.second,
-                       src_memory_offset_bytes, dst_tensor.first,
-                       dst_tensor.second, dst_memory_offset_bytes, dtype,
+    writer.WriteFields(src_tensor, src_memory_offset_bytes,
+                       dst_tensor, dst_memory_offset_bytes, dtype,
                        num_elements, src_ptr_value, dst_ptr_value);
   }
 
   static CopyInstruction Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    auto [src_tensor_name, src_shard_id, src_memory_offset_bytes,
-          dst_tensor_name, dst_shard_id, dst_memory_offset_bytes, dtype,
+    auto [src_tensor, src_memory_offset_bytes,
+          dst_tensor, dst_memory_offset_bytes, dtype,
           num_elements, src_ptr_val, dst_ptr_val] =
-        reader.ReadFields<TensorName, ShardId, std::size_t, TensorName, ShardId,
+        reader.ReadFields<TensorShardIdentifier, std::size_t, TensorShardIdentifier,
                           std::size_t, torch::Dtype, std::size_t, std::uintptr_t, std::uintptr_t>();
 
     auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
     auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_val);
-    return CopyInstruction({std::move(src_tensor_name), std::move(src_shard_id)},
+    return CopyInstruction(std::move(src_tensor),
                            src_memory_offset_bytes,
-                           {std::move(dst_tensor_name), std::move(dst_shard_id)},
+                           std::move(dst_tensor),
                            dst_memory_offset_bytes, dtype, num_elements, src_ptr, dst_ptr);
   }
 
   /**
    * @brief Populates the device pointers by looking up the base address
-   * * @param resolver A callable that takes (TensorName, ShardId) and returns the base DevicePtr.
+   * @param resolver A callable that takes (TensorName, ShardId) and returns the base DevicePtr.
    */
-  void Embellish(const std::function<DevicePtr(const TensorName, ShardId)> resolver) {
-    src_ptr = resolver(src_tensor.first, src_tensor.second);
-    dst_ptr = resolver(dst_tensor.first, dst_tensor.second);
+  void Embellish(
+      const std::function<DevicePtr(const TensorName&, const ShardId&)>& resolver) {
+    src_ptr = resolver(src_tensor.tensor_name, src_tensor.shard_id);
+    dst_ptr = resolver(dst_tensor.tensor_name, dst_tensor.shard_id);
   }
 
-  std::pair<TensorName, ShardId> src_tensor;
+  TensorShardIdentifier src_tensor;
   std::size_t src_memory_offset_bytes;
-  std::pair<TensorName, ShardId> dst_tensor;
+  TensorShardIdentifier dst_tensor;
   std::size_t dst_memory_offset_bytes;
   torch::Dtype dtype;
   std::size_t num_elements;

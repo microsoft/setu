@@ -28,6 +28,7 @@ using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -472,15 +473,16 @@ void NodeAgent::ExecutorLoop() {
   }
 }
 
-void NodeAgent::EmbellishProgram(Program& program)
-{
-  auto const DevicePtrLookup = [this](const TensorName& name, const ShardId& shard_id) -> DevicePtr {
-    try {
-      return this->device_ptrs_lookup_.at(name).at(shard_id);
-    } catch (const std::out_of_range&) {
-      RAISE_RUNTIME_ERROR("Embellish failed: Tensor {} (Shard {}) not found in NodeAgent registry.", 
-                          name, shard_id);
-    }
+void NodeAgent::EmbellishProgram(Program& program) {
+  auto const DevicePtrLookup = [this](const TensorName& tensor_name,
+                                      const ShardId& shard_id) -> DevicePtr {
+    TensorShardIdentifier id(tensor_name, shard_id);
+    auto it = this->device_ptrs_lookup_.find(id);
+    ASSERT_VALID_RUNTIME(
+        it != this->device_ptrs_lookup_.end(),
+        "Embellish failed: Tensor {} (Shard {}) not found in NodeAgent registry.",
+        tensor_name, shard_id);
+    return it->second;
   };
 
   for (auto& instr : program.instrs) {

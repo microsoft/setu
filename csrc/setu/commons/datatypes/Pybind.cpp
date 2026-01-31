@@ -27,6 +27,7 @@
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardHandle.h"
+#include "commons/datatypes/TensorShardIdentifier.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
@@ -39,6 +40,7 @@ namespace setu::commons::datatypes {
 //==============================================================================
 using setu::commons::enums::DeviceKind;
 using setu::commons::ShardId;
+using setu::commons::datatypes::TensorShardIdentifier;
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
@@ -270,6 +272,21 @@ void InitUuidPybind(py::module_& m) {
     });
 }
 //==============================================================================
+void InitTensorShardIdentifierPybind(py::module_& m) {
+  py::class_<TensorShardIdentifier>(m, "TensorShardIdentifier", py::module_local())
+      .def(py::init<TensorName, ShardId>(), py::arg("tensor_name"),
+           py::arg("shard_id"))
+      .def_readonly("tensor_name", &TensorShardIdentifier::tensor_name,
+                    "Logical name of the parent tensor")
+      .def_readonly("shard_id", &TensorShardIdentifier::shard_id,
+                    "Unique UUID for the shard")
+      .def("__str__", &TensorShardIdentifier::ToString)
+      .def("__repr__", &TensorShardIdentifier::ToString)
+      .def("__eq__", [](const TensorShardIdentifier& self, const TensorShardIdentifier& other) {
+          return self == other;
+      }, py::is_operator());
+}
+//==============================================================================
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Datatypes submodule");
   InitUuidPybind(m);
@@ -294,6 +311,7 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitTensorShardRefPybind(m);
   InitTensorShardReadHandlePybind(m);
   InitTensorShardWriteHandlePybind(m);
+  InitTensorShardIdentifierPybind(m);
 }
 //==============================================================================
 }  // namespace setu::commons::datatypes

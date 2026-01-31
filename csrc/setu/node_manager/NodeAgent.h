@@ -23,6 +23,7 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardIdentifier.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/messages/Messages.h"
@@ -44,6 +45,7 @@ using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::AllocateTensorRequest;
@@ -159,9 +161,7 @@ class NodeAgent {
   std::unordered_map<DeviceRank, std::unique_ptr<Worker>> workers_;
 
   /// @brief Lookup table mapping (TensorName, ShardId) -> DevicePtr
-  using ShardDevicePtrsLookup =
-    std::unordered_map<TensorName, std::unordered_map<ShardId, DevicePtr>>;
-  ShardDevicePtrsLookup device_ptrs_lookup_;
+  std::unordered_map<TensorShardIdentifier, DevicePtr> device_ptrs_lookup_;
 
   /// @brief Pending client waits: maps copy_op_id to list of client identities
   std::unordered_map<CopyOperationId, std::vector<Identity>, boost::hash<CopyOperationId>> pending_waits_;
