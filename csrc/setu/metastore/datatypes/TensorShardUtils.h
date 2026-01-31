@@ -23,7 +23,7 @@
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardSpec.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 using setu::commons::TensorIndex;
 using setu::commons::TensorIndicesBitset;
@@ -85,5 +85,5 @@ inline TensorSelectionPtr CreateSelectionFromShard(
   return std::make_shared<TensorSelection>(shard_spec->name, result_indices);
 }
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

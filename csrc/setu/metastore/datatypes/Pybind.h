@@ -19,9 +19,9 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 void InitDatatypesPybindSubmodule(py::module_& pm);
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

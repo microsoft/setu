@@ -21,7 +21,7 @@
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShardSpec.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 using setu::commons::ShardId;
 using setu::commons::datatypes::TensorSelectionPtr;
@@ -102,5 +102,5 @@ struct TensorOwnershipMap {
 /// @brief Shared pointer to a TensorOwnershipMap object
 using TensorOwnershipMapPtr = std::shared_ptr<TensorOwnershipMap>;
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

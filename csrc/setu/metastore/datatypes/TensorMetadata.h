@@ -23,10 +23,10 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "coordinator/datatypes/TensorOwnershipMap.h"
-#include "coordinator/datatypes/TensorShardUtils.h"
+#include "metastore/datatypes/TensorOwnershipMap.h"
+#include "metastore/datatypes/TensorShardUtils.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 // Type aliases for convenience
 using setu::commons::NodeId;
@@ -180,9 +180,9 @@ struct TensorMetadata {
 
         // Create selections from each shard
         TensorSelectionPtr selection1 =
-            setu::coordinator::datatypes::CreateSelectionFromShard(shard1);
+            setu::metastore::datatypes::CreateSelectionFromShard(shard1);
         TensorSelectionPtr selection2 =
-            setu::coordinator::datatypes::CreateSelectionFromShard(shard2);
+            setu::metastore::datatypes::CreateSelectionFromShard(shard2);
 
         // Check if they intersect
         TensorSelectionPtr intersection =
@@ -197,5 +197,5 @@ struct TensorMetadata {
   }
 };
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

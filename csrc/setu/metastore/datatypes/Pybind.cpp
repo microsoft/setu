@@ -22,10 +22,10 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "coordinator/datatypes/TensorMetadata.h"
-#include "coordinator/datatypes/TensorOwnershipMap.h"
+#include "metastore/datatypes/TensorMetadata.h"
+#include "metastore/datatypes/TensorOwnershipMap.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 using setu::commons::NodeId;
 using setu::commons::ShardId;
@@ -33,10 +33,6 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::datatypes::TensorShardSpecPtr;
-using setu::coordinator::datatypes::TensorMetadata;
-using setu::coordinator::datatypes::TensorOwnershipMap;
-using setu::coordinator::datatypes::TensorOwnershipMapPtr;
-
 using TensorShardSpecMap = std::unordered_map<ShardId, TensorShardSpecPtr>;
 using ShardOwnerMap = std::unordered_map<ShardId, NodeId>;
 //==============================================================================
@@ -87,5 +83,5 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitTensorOwnershipMapPybind(m);
 }
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

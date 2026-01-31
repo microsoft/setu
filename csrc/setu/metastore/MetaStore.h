@@ -25,7 +25,7 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "coordinator/datatypes/TensorMetadata.h"
+#include "metastore/datatypes/TensorMetadata.h"
 //==============================================================================
 namespace setu::metastore {
 //==============================================================================
@@ -36,7 +36,7 @@ using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::datatypes::TensorShardSpecPtr;
-using setu::coordinator::datatypes::TensorMetadata;
+using setu::metastore::datatypes::TensorMetadata;
 //==============================================================================
 /**
  * @brief Metadata store for managing tensor shard registrations
