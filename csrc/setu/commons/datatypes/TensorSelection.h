@@ -109,6 +109,19 @@ struct TensorSelection {
   }
 
   /**
+   * @brief Get the index bitset for a specific dimension
+   *
+   * @param dim_name The name of the dimension
+   * @return const reference to the TensorIndicesBitset for the dimension
+   */
+  [[nodiscard]] const TensorIndicesBitset& GetDimIndices(
+      const TensorDimName& dim_name) const {
+    ASSERT_VALID_ARGUMENTS(indices.find(dim_name) != indices.end(),
+                           "Dimension {} not found in selection", dim_name);
+    return indices.at(dim_name);
+  }
+
+  /**
    * @brief Create a new TensorSelection with specified indices for a dimension
    *
    * @param dim_name The name of the dimension to select from
