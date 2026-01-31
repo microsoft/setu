@@ -16,6 +16,7 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 //==============================================================================
@@ -26,14 +27,14 @@
 #include "commons/messages/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Plan.h"
+#include "coordinator/datatypes/CopyOperation.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
 using setu::commons::CopyOperationId;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
-using setu::commons::NodeRank;
+using setu::commons::NodeId;
 using setu::commons::Queue;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
@@ -44,12 +45,11 @@ using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::Plan;
+using setu::coordinator::datatypes::CopyOperationPtr;
 //==============================================================================
 class Coordinator {
  public:
-  Coordinator(std::size_t router_executor_port,
-              std::size_t router_handler_port);
+  Coordinator(std::size_t port);
 
   ~Coordinator();
 
@@ -83,15 +83,12 @@ class Coordinator {
   void InitZmqSockets();
   void CloseZmqSockets();
 
+  std::size_t port_;
   std::shared_ptr<zmq::context_t> zmq_context_;
-  ZmqSocketPtr node_agent_router_executor_socket_;
-  ZmqSocketPtr node_agent_router_handler_socket_;
+  ZmqSocketPtr node_agent_socket_;
 
   std::thread handler_thread_;
   std::thread executor_thread_;
-
-  std::size_t router_executor_port_;
-  std::size_t router_handler_port_;
 
   std::atomic<bool> handler_running_{false};
   std::atomic<bool> executor_running_{false};

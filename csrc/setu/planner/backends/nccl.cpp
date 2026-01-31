@@ -14,26 +14,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/backends/nccl.h"
 //==============================================================================
-#include "commons/StdCommon.h"
-#include "commons/Types.h"
+namespace setu::planner::backends::nccl {
 //==============================================================================
-namespace setu::commons {
-// Display Constants
-constexpr std::size_t kMaxTokenPreviewCount = 5;
-constexpr const char* kNullString = "null";
-constexpr const char* kNoneString = "none";
-constexpr const char* kEllipsis = "...";
+
+Plan NCCLPlanner::Compile(CopySpec& copy_spec, const MetaStore& metastore) {}
+
 //==============================================================================
-// Sampling Constants
-constexpr float kSamplingEps = 1e-5f;
-//==============================================================================
-// Multiplier Constants
-constexpr double kThousand = 1000.0;
-constexpr double kMillion = 1000000.0;
-constexpr double kBillion = 1000000000.0;
-constexpr double kTrillion = 1000000000000.0;
-//==============================================================================
-}  // namespace setu::commons
+}  // namespace setu::planner::backends::nccl
 //==============================================================================

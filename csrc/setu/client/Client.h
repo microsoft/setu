@@ -26,7 +26,6 @@
 #include "commons/utils/ZmqHelper.h"
 
 namespace setu::client {
-using setu::commons::ClientRank;
 using setu::commons::CopyOperationId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
@@ -39,7 +38,7 @@ using setu::commons::utils::ZmqSocketPtr;
 
 class Client {
  public:
-  Client(ClientRank client_rank);
+  Client();
   ~Client();
 
   void Connect(const std::string& endpoint);
@@ -60,7 +59,6 @@ class Client {
   TensorIPCSpec GetTensorHandle(TensorName tensor_name);
 
  private:
-  ClientRank client_rank_;
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr request_socket_;

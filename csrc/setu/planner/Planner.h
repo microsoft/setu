@@ -16,37 +16,46 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/utils/Serialization.h"
+#include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+#include "commons/datatypes/CopySpec.h"
+#include "commons/datatypes/Device.h"
+#include "ir/Instruction.h"
+#include "metastore/MetaStore.h"
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
+namespace setu::planner {
 //==============================================================================
 
-struct Instruction {
-  Instruction() = default;
-  ~Instruction() = default;
+using setu::commons::NodeId;
+using setu::commons::datatypes::CopySpec;
+using setu::commons::datatypes::Device;
+using setu::ir::Program;
+using setu::metastore::MetaStore;
+
+using NodeAgentId = std::size_t;
+using DeviceId = std::size_t;
+
+using Participant = Device;
+using Participants = std::vector<Device>;
+
+struct Plan {
+  std::unordered_map<NodeId, Plan> Fragments();
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("Instruction()");
+    return std::format("Plan(participants={}, programs={})",
+                       participants.size(), program.size());
   }
 
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    // Empty for now - add fields as needed
-  }
-
-  static Instruction Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    // Empty for now - add fields as needed
-    return Instruction();
-  }
+  Participants participants;
+  std::unordered_map<Participant, Program> program;
 };
 
+class Planner {
+ public:
+  virtual ~Planner() = default;
+  virtual Plan Compile(CopySpec& spec, MetaStore& metastore) = 0;
+};
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::planner
 //==============================================================================

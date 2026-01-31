@@ -98,8 +98,10 @@ define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objec
                    "_kernels_common")
 
 file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
-define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects" "")
-define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects" "")
+define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects" "${NCCL_LIBRARY}")
+define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects" "${NCCL_LIBRARY}")
+target_include_directories(_coordinator PRIVATE ${NCCL_INCLUDE_DIR})
+target_include_directories(_coordinator_static PRIVATE ${NCCL_INCLUDE_DIR})
 
 # OPTIMIZATION: Enhanced build graph and parallel compilation
 set_target_properties(setu_common_objects PROPERTIES INTERPROCEDURAL_OPTIMIZATION

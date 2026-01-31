@@ -16,44 +16,20 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/Types.h"
-#include "setu/commons/utils/Serialization.h"
-#include "setu/coordinator/datatypes/Program.h"
+#include "commons/StdCommon.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
-//==============================================================================
-using setu::commons::DeviceRank;
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
+namespace setu::ir {
 //==============================================================================
 
-struct Plan {
-  Plan() = default;
-  ~Plan() = default;
+struct SendInstr {};
+struct RecvInstr {};
+struct CopyInstr {};
+struct InitCommInstr {};
+struct UseCommInstr {};
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("Plan(worker_programs={})", worker_programs.size());
-  }
-
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.WriteFields(worker_programs);
-  }
-
-  static Plan Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    Plan plan;
-    std::tie(plan.worker_programs) =
-        reader.ReadFields<std::unordered_map<DeviceRank, Program>>();
-    return plan;
-  }
-
-  std::unordered_map<DeviceRank, Program> worker_programs;
-};
-
+using Instruction =
+    std::variant<SendInstr, RecvInstr, CopyInstr, InitCommInstr, UseCommInstr>;
+using Program = std::vector<Instruction>;
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::ir
 //==============================================================================

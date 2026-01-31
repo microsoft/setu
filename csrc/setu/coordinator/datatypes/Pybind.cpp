@@ -22,9 +22,6 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
-#include "coordinator/datatypes/Instruction.h"
-#include "coordinator/datatypes/Plan.h"
-#include "coordinator/datatypes/Program.h"
 #include "coordinator/datatypes/TensorMetadata.h"
 #include "coordinator/datatypes/TensorOwnershipMap.h"
 //==============================================================================
@@ -34,39 +31,9 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::datatypes::TensorShardsMap;
-using setu::coordinator::datatypes::Instruction;
-using setu::coordinator::datatypes::Plan;
-using setu::coordinator::datatypes::Program;
 using setu::coordinator::datatypes::TensorMetadata;
 using setu::coordinator::datatypes::TensorOwnershipMap;
 using setu::coordinator::datatypes::TensorOwnershipMapPtr;
-//==============================================================================
-void InitInstructionPybind(py::module_& m) {
-  py::class_<Instruction>(m, "Instruction")
-      .def(py::init<>(), "Create an empty instruction")
-      .def("__str__", &Instruction::ToString)
-      .def("__repr__", &Instruction::ToString);
-}
-//==============================================================================
-void InitProgramPybind(py::module_& m) {
-  py::class_<Program>(m, "Program")
-      .def(py::init<>(), "Create an empty program")
-      .def_readwrite("participating_workers", &Program::participating_workers,
-                     "Participating worker device ranks")
-      .def_readwrite("instrs", &Program::instrs,
-                     "Instructions to execute in order")
-      .def("__str__", &Program::ToString)
-      .def("__repr__", &Program::ToString);
-}
-//==============================================================================
-void InitPlanPybind(py::module_& m) {
-  py::class_<Plan>(m, "Plan")
-      .def(py::init<>(), "Create an empty plan")
-      .def_readwrite("worker_programs", &Plan::worker_programs,
-                     "Mapping of device ranks to worker programs")
-      .def("__str__", &Plan::ToString)
-      .def("__repr__", &Plan::ToString);
-}
 //==============================================================================
 void InitTensorMetadataPybind(py::module_& m) {
   py::class_<TensorMetadata>(m, "TensorMetadata", py::module_local())
@@ -106,9 +73,6 @@ void InitTensorOwnershipMapPybind(py::module_& m) {
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Coordinator datatypes submodule");
 
-  InitInstructionPybind(m);
-  InitProgramPybind(m);
-  InitPlanPybind(m);
   InitTensorMetadataPybind(m);
   InitTensorOwnershipMapPybind(m);
 }

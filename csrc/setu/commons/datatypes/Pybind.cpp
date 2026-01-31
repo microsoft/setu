@@ -31,16 +31,16 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
 #include "commons/enums/Enums.h"
+#include "commons/utils/Pybind.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
-      .def(py::init<NodeRank, DeviceRank, torch::Device>(),
-           py::arg("node_rank"), py::arg("device_rank"),
-           py::arg("torch_device"))
-      .def_readonly("node_rank", &Device::node_rank,
-                    "Rank of the node containing this device")
+      .def(py::init<NodeId, DeviceRank, torch::Device>(), py::arg("node_id"),
+           py::arg("device_rank"), py::arg("torch_device"))
+      .def_readonly("node_id", &Device::node_id,
+                    "ID of the node containing this device")
       .def_readonly("device_rank", &Device::device_rank,
                     "Global rank across all devices")
       .def_readonly("torch_device", &Device::torch_device,

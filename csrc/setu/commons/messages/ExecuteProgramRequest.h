@@ -20,7 +20,7 @@
 //==============================================================================
 #include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
-#include "coordinator/datatypes/Program.h"
+#include "ir/Instruction.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -28,7 +28,7 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
-using setu::coordinator::datatypes::Program;
+using setu::ir::Program;
 //==============================================================================
 
 struct ExecuteProgramRequest : public BaseRequest {
@@ -42,8 +42,8 @@ struct ExecuteProgramRequest : public BaseRequest {
       : BaseRequest(request_id_param), program(std::move(program_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("ExecuteProgramRequest(request_id={}, program={})",
-                       request_id, program.ToString());
+    return std::format("ExecuteProgramRequest(request_id={}, program_size={})",
+                       request_id, program.size());
   }
 
   void Serialize(BinaryBuffer& buffer) const {

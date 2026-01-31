@@ -37,13 +37,9 @@ using TimeS = double;
 
 // Identifier types for distributed system components
 /// @brief Unique identifier for a node in the distributed system
-using NodeRank = std::size_t;
-/// @brief Unique identifier for a client connection
-using ClientRank = std::size_t;
-/// @brief Global identifier for a device across all nodes
+using NodeId = boost::uuids::uuid;
+/// @brief Identifier for a device within a node
 using DeviceRank = std::size_t;
-/// @brief Local identifier for a device within a single node
-using LocalDeviceRank = std::size_t;
 /// @brief Unique serial number for tracking objects
 using SerialNumber = std::uint64_t;
 /// @brief Unique identity for client identity (zmq)

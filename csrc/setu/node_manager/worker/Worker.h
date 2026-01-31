@@ -24,12 +24,10 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Instruction.h"
-#include "coordinator/datatypes/Program.h"
+#include "ir/Instruction.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
-using setu::commons::ClientRank;
 using setu::commons::CopyOperationId;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
@@ -38,12 +36,12 @@ using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::Instruction;
-using setu::coordinator::datatypes::Program;
+using setu::ir::Instruction;
+using setu::ir::Program;
 //==============================================================================
 class Worker {
  public:
-  Worker(Device device, std::size_t reply_port);
+  Worker(Device device, std::size_t port);
   ~Worker();
 
   void Start();
@@ -53,7 +51,7 @@ class Worker {
 
   [[nodiscard]] const Device& GetDevice() const { return device_; }
 
-  void Execute(const Program& program);
+  void Execute(const Program& instrs);
 
  private:
   void InitZmqSockets();
@@ -66,11 +64,10 @@ class Worker {
   void ExecuteInstruction(const Instruction& instruction);
 
   Device device_;
-  // Zmq context and sockets
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr reply_socket_;
 
-  std::size_t reply_port_;
+  std::size_t port_;
+  ZmqContextPtr zmq_context_;
+  ZmqSocketPtr socket_;
 
   std::atomic<bool> worker_running_{false};
 

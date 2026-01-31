@@ -17,13 +17,12 @@
 #include "node_manager/NodeAgent.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/utils/SetuCommHelper.h"
+#include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::DeviceRank;
-using setu::commons::LocalDeviceRank;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
@@ -47,22 +46,19 @@ using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
+using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
-using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
-using setu::coordinator::datatypes::Instruction;
-using setu::coordinator::datatypes::Program;
+using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
-NodeAgent::NodeAgent(NodeRank node_rank, std::size_t router_port,
-                     std::size_t dealer_executor_port,
-                     std::size_t dealer_handler_port,
+NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
+                     std::string coordinator_endpoint,
                      const std::vector<Device>& devices)
-    : node_rank_(node_rank),
-      router_port_(router_port),
-      dealer_executor_port_(dealer_executor_port),
-      dealer_handler_port_(dealer_handler_port) {
+    : node_id_(node_id),
+      port_(port),
+      coordinator_endpoint_(std::move(coordinator_endpoint)) {
   InitZmqSockets();
   InitWorkers(devices);
 }
@@ -140,26 +136,20 @@ void NodeAgent::CopyOperationFinished(CopyOperationId copy_op_id) {
   LOG_DEBUG("Marking copy operation ID: {} as finished", copy_op_id);
 }
 
-void NodeAgent::Execute(Plan plan) { LOG_DEBUG("Executing Plan {}", plan); }
+void NodeAgent::Execute(Plan plan) {
+  LOG_DEBUG("Executing Plan {}", plan.ToString());
+}
 
 void NodeAgent::InitZmqSockets() {
   LOG_DEBUG("Initializing ZMQ sockets");
 
   zmq_context_ = std::make_shared<zmq::context_t>();
 
-  client_router_socket_ = ZmqHelper::CreateAndBindSocket(
-      zmq_context_, zmq::socket_type::router, router_port_);
+  client_socket_ = ZmqHelper::CreateAndBindSocket(
+      zmq_context_, zmq::socket_type::router, port_);
 
-  // TODO: change "tcp://localhost:{}" to ip parameter
-  std::string executor_endpoint =
-      std::format("tcp://localhost:{}", dealer_executor_port_);
-  coordinator_dealer_executor_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, executor_endpoint);
-
-  std::string handler_endpoint =
-      std::format("tcp://localhost:{}", dealer_handler_port_);
-  coordinator_dealer_handler_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, handler_endpoint);
+  coordinator_socket_ = ZmqHelper::CreateAndConnectSocket(
+      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_);
 
   LOG_DEBUG("Initialized ZMQ sockets successfully");
 }
@@ -168,18 +158,15 @@ void NodeAgent::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
   // Close worker REQ sockets
-  for (auto& [device_rank, socket] : workers_req_sockets_) {
+  for (auto& [device_rank, socket] : worker_sockets_) {
     if (socket) {
       socket->close();
     }
   }
-  workers_req_sockets_.clear();
+  worker_sockets_.clear();
 
-  if (client_router_socket_) client_router_socket_->close();
-  if (coordinator_dealer_executor_socket_)
-    coordinator_dealer_executor_socket_->close();
-  if (coordinator_dealer_handler_socket_)
-    coordinator_dealer_handler_socket_->close();
+  if (client_socket_) client_socket_->close();
+  if (coordinator_socket_) coordinator_socket_->close();
   if (zmq_context_) zmq_context_->close();
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
@@ -232,17 +219,16 @@ void NodeAgent::HandlerLoop() {
 
   handler_running_ = true;
   while (handler_running_) {
-    auto ready = SetuCommHelper::PollForRead(
-        {client_router_socket_, coordinator_dealer_handler_socket_},
-        kPollTimeoutMs);
+    auto ready = Comm::PollForRead({client_socket_, coordinator_socket_},
+                                   kPollTimeoutMs);
 
     for (const auto& socket : ready) {
-      if (socket == client_router_socket_) {
+      if (socket == client_socket_) {
         auto [identity, request] =
-            SetuCommHelper::RecvWithIdentity<ClientRequest>(socket);
+            Comm::RecvWithIdentity<ClientRequest>(socket);
         HandleClientMessage(identity, request);
-      } else if (socket == coordinator_dealer_handler_socket_) {
-        auto message = SetuCommHelper::Recv<CoordinatorMessage>(socket);
+      } else if (socket == coordinator_socket_) {
+        auto message = Comm::Recv<CoordinatorMessage>(socket);
         HandleCoordinatorMessage(message);
       }
     }
@@ -301,8 +287,7 @@ void NodeAgent::HandleRegisterTensorShardRequest(
   tensor_name_to_spec_.emplace(request.tensor_shard_spec.name,
                                request.tensor_shard_spec);
 
-  SetuCommHelper::Send<NodeAgentRequest>(coordinator_dealer_handler_socket_,
-                                         request);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
 }
 
 void NodeAgent::HandleSubmitCopyRequest(const Identity& client_identity,
@@ -312,8 +297,7 @@ void NodeAgent::HandleSubmitCopyRequest(const Identity& client_identity,
 
   request_id_to_client_identity_[request.request_id] = client_identity;
 
-  SetuCommHelper::Send<NodeAgentRequest>(coordinator_dealer_handler_socket_,
-                                         request);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
 }
 
 void NodeAgent::HandleWaitForCopyRequest(const Identity& client_identity,
@@ -336,16 +320,16 @@ void NodeAgent::HandleGetTensorHandleRequest(
     LOG_ERROR("Tensor not found: {}", request.tensor_name);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound);
-    SetuCommHelper::SendWithIdentity<GetTensorHandleResponse>(
-        client_router_socket_, client_identity, response);
+    Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
+                                                    client_identity, response);
     return;
   }
 
   auto tensor_ipc_spec = PrepareTensorIPCSpec(it->second);
   GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
                                    std::move(tensor_ipc_spec));
-  SetuCommHelper::SendWithIdentity<GetTensorHandleResponse>(
-      client_router_socket_, client_identity, response);
+  Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
+                                                  client_identity, response);
 
   LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
 }
@@ -367,8 +351,8 @@ void NodeAgent::HandleCopyOperationFinishedRequest(
       WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 
       // unblock waiting clients
-      SetuCommHelper::SendWithIdentity<WaitForCopyResponse>(
-          client_router_socket_, client_id, response);
+      Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, client_id,
+                                                  response);
     }
     pending_waits_.erase(it);
   }
@@ -393,8 +377,8 @@ void NodeAgent::HandleRegisterTensorShardResponse(
   }
   const auto& client_identity = it->second;
 
-  SetuCommHelper::SendWithIdentity<RegisterTensorShardResponse>(
-      client_router_socket_, client_identity, response);
+  Comm::SendWithIdentity<RegisterTensorShardResponse>(
+      client_socket_, client_identity, response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -409,8 +393,8 @@ void NodeAgent::HandleSubmitCopyResponse(const SubmitCopyResponse& response) {
   }
   const auto& client_identity = it->second;
 
-  SetuCommHelper::SendWithIdentity<SubmitCopyResponse>(
-      client_router_socket_, client_identity, response);
+  Comm::SendWithIdentity<SubmitCopyResponse>(client_socket_, client_identity,
+                                             response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -425,8 +409,8 @@ void NodeAgent::HandleWaitForCopyResponse(const WaitForCopyResponse& response) {
   }
   const auto& client_identity = it->second;
 
-  SetuCommHelper::SendWithIdentity<WaitForCopyResponse>(
-      client_router_socket_, client_identity, response);
+  Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, client_identity,
+                                              response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -444,21 +428,21 @@ void NodeAgent::ExecutorLoop() {
     LOG_DEBUG("Executor received plan for copy_op_id: {}", copy_op_id);
 
     // For each worker program in the plan, send it to the corresponding worker
-    for (const auto& [device_rank, program] : plan.worker_programs) {
+    for (const auto& [participant, program] : plan.program) {
       // Ensure worker is ready before sending
-
-      auto it = workers_req_sockets_.find(device_rank);
-      ASSERT_VALID_RUNTIME(it != workers_req_sockets_.end(),
+      auto device_rank = participant.device_rank;
+      auto it = worker_sockets_.find(device_rank);
+      ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
                            "No socket found for device_rank: {}", device_rank);
 
       // Send ExecuteProgramRequest to worker
       LOG_DEBUG("Sending program with {} instructions to worker {}",
-                program.instrs.size(), device_rank);
+                program.size(), device_rank);
       ExecuteProgramRequest request(program);
-      SetuCommHelper::Send(it->second, request);
+      Comm::Send(it->second, request);
 
       // Wait for acknowledgment from worker
-      auto response = SetuCommHelper::Recv<ExecuteProgramResponse>(it->second);
+      auto response = Comm::Recv<ExecuteProgramResponse>(it->second);
       LOG_DEBUG("Received acknowledgment from worker {}: {}", device_rank,
                 response);
     }
@@ -467,7 +451,7 @@ void NodeAgent::ExecutorLoop() {
 
     // Notify coordinator that execution is complete
     ExecuteResponse response(RequestId{}, ErrorCode::kSuccess);
-    SetuCommHelper::Send(coordinator_dealer_executor_socket_, response);
+    Comm::Send(coordinator_socket_, response);
   }
 }
 //==============================================================================

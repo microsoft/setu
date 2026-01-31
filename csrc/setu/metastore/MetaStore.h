@@ -17,23 +17,18 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
-#include "commons/Types.h"
 //==============================================================================
-namespace setu::commons {
-// Display Constants
-constexpr std::size_t kMaxTokenPreviewCount = 5;
-constexpr const char* kNullString = "null";
-constexpr const char* kNoneString = "none";
-constexpr const char* kEllipsis = "...";
+namespace setu::metastore {
 //==============================================================================
-// Sampling Constants
-constexpr float kSamplingEps = 1e-5f;
+/**
+ * @brief Metadata store for managing tensor shard registrations
+ *
+ * TODO: Implement MetaStore functionality
+ */
+class MetaStore {
+ public:
+  MetaStore() = default;
+};
 //==============================================================================
-// Multiplier Constants
-constexpr double kThousand = 1000.0;
-constexpr double kMillion = 1000000.0;
-constexpr double kBillion = 1000000000.0;
-constexpr double kTrillion = 1000000000000.0;
-//==============================================================================
-}  // namespace setu::commons
+}  // namespace setu::metastore
 //==============================================================================
