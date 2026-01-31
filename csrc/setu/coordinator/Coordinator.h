@@ -52,9 +52,7 @@ using setu::coordinator::datatypes::CopyOperationPtr;
 //==============================================================================
 class Coordinator {
  public:
-  Coordinator(std::size_t router_executor_port,
-              std::size_t router_handler_port,
-              Planner planner);
+  Coordinator(std::size_t port);
 
   ~Coordinator();
 
@@ -88,15 +86,12 @@ class Coordinator {
   void InitZmqSockets();
   void CloseZmqSockets();
 
+  std::size_t port_;
   std::shared_ptr<zmq::context_t> zmq_context_;
-  ZmqSocketPtr node_agent_router_executor_socket_;
-  ZmqSocketPtr node_agent_router_handler_socket_;
-
+  ZmqSocketPtr node_agent_socket_;
+  
   std::thread handler_thread_;
   std::thread executor_thread_;
-
-  std::size_t router_executor_port_;
-  std::size_t router_handler_port_;
 
   std::atomic<bool> handler_running_{false};
   std::atomic<bool> executor_running_{false};

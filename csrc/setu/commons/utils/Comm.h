@@ -31,7 +31,7 @@ using setu::commons::BinaryRange;
 using setu::commons::Identity;
 using setu::commons::NonCopyableNonMovable;
 
-class SetuCommHelper : public NonCopyableNonMovable {
+class Comm : public NonCopyableNonMovable {
  public:
   /**
    * @brief Send a typed message as a single frame (blocking).

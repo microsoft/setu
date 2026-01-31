@@ -18,7 +18,7 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/messages/Messages.h"
-#include "commons/utils/SetuCommHelper.h"
+#include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
 //==============================================================================
 namespace setu::node_manager::worker {
@@ -30,7 +30,7 @@ using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
-using setu::commons::utils::SetuCommHelper;
+using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 using setu::ir::Instruction;
 //==============================================================================
@@ -103,7 +103,7 @@ void Worker::ExecutorLoop() {
   worker_running_ = true;
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
-    auto request = SetuCommHelper::Recv<ExecuteProgramRequest>(reply_socket_);
+    auto request = Comm::Recv<ExecuteProgramRequest>(reply_socket_);
     const auto& program = request.program;
 
     LOG_DEBUG("Worker received program with {} instructions", program.size());
@@ -115,7 +115,7 @@ void Worker::ExecutorLoop() {
 
     // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);
-    SetuCommHelper::Send(reply_socket_, response);
+    Comm::Send(reply_socket_, response);
   }
 }
 

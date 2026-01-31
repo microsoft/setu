@@ -14,15 +14,14 @@ import torch.multiprocessing as mp
 
 
 def _run_coordinator(
-    router_executor_port: int,
-    router_handler_port: int,
+    port: int,
     ready_event,
     stop_event,
 ):
     """Run the Coordinator in a separate process."""
     from setu._coordinator import Coordinator
 
-    coordinator = Coordinator(router_executor_port, router_handler_port)
+    coordinator = Coordinator(port)
     coordinator.start()
     ready_event.set()
 
@@ -33,9 +32,8 @@ def _run_coordinator(
 
 
 def _run_node_agent(
-    router_port: int,
-    dealer_executor_port: int,
-    dealer_handler_port: int,
+    port: int,
+    coordinator_endpoint: str,
     ready_event,
     stop_event,
 ):
@@ -54,9 +52,8 @@ def _run_node_agent(
 
     node_agent = NodeAgent(
         node_id=node_id,
-        router_port=router_port,
-        dealer_executor_port=dealer_executor_port,
-        dealer_handler_port=dealer_handler_port,
+        port=port,
+        coordinator_endpoint=coordinator_endpoint,
         devices=devices,
     )
     node_agent.start()
@@ -164,10 +161,10 @@ def test_register_tensor_shard():
         pytest.skip("CUDA not available")
 
     # Ports
-    coordinator_executor_port = 29000
-    coordinator_handler_port = 29001
-    node_agent_router_port = 29100
-    endpoint = f"tcp://localhost:{node_agent_router_port}"
+    coordinator_port = 29000
+    node_agent_port = 29100
+    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
+    client_endpoint = f"tcp://localhost:{node_agent_port}"
 
     ctx = mp.get_context("spawn")
     coordinator_ready = ctx.Event()
@@ -179,8 +176,7 @@ def test_register_tensor_shard():
     coordinator_proc = ctx.Process(
         target=_run_coordinator,
         args=(
-            coordinator_executor_port,
-            coordinator_handler_port,
+            coordinator_port,
             coordinator_ready,
             stop_event,
         ),
@@ -192,9 +188,8 @@ def test_register_tensor_shard():
     node_agent_proc = ctx.Process(
         target=_run_node_agent,
         args=(
-            node_agent_router_port,
-            coordinator_executor_port,
-            coordinator_handler_port,
+            node_agent_port,
+            coordinator_endpoint,
             node_agent_ready,
             stop_event,
         ),
@@ -209,7 +204,7 @@ def test_register_tensor_shard():
         # Run client
         client_proc = ctx.Process(
             target=_run_client_register_tensor,
-            args=(endpoint, "test_tensor", result_queue),
+            args=(client_endpoint, "test_tensor", result_queue),
         )
         client_proc.start()
         client_proc.join(timeout=15)
@@ -240,10 +235,10 @@ def test_get_tensor_handle():
         pytest.skip("CUDA not available")
 
     # Ports (different from other test to avoid conflicts)
-    coordinator_executor_port = 29010
-    coordinator_handler_port = 29011
-    node_agent_router_port = 29110
-    endpoint = f"tcp://localhost:{node_agent_router_port}"
+    coordinator_port = 29010
+    node_agent_port = 29110
+    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
+    client_endpoint = f"tcp://localhost:{node_agent_port}"
 
     ctx = mp.get_context("spawn")
     coordinator_ready = ctx.Event()
@@ -255,8 +250,7 @@ def test_get_tensor_handle():
     coordinator_proc = ctx.Process(
         target=_run_coordinator,
         args=(
-            coordinator_executor_port,
-            coordinator_handler_port,
+            coordinator_port,
             coordinator_ready,
             stop_event,
         ),
@@ -268,9 +262,8 @@ def test_get_tensor_handle():
     node_agent_proc = ctx.Process(
         target=_run_node_agent,
         args=(
-            node_agent_router_port,
-            coordinator_executor_port,
-            coordinator_handler_port,
+            node_agent_port,
+            coordinator_endpoint,
             node_agent_ready,
             stop_event,
         ),
@@ -284,7 +277,7 @@ def test_get_tensor_handle():
         # Run client
         client_proc = ctx.Process(
             target=_run_client_get_handle,
-            args=(endpoint, "handle_test_tensor", result_queue),
+            args=(client_endpoint, "handle_test_tensor", result_queue),
         )
         client_proc.start()
         client_proc.join(timeout=20)
@@ -328,10 +321,10 @@ def test_multiple_tensor_registrations():
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
-    coordinator_executor_port = 29020
-    coordinator_handler_port = 29021
-    node_agent_router_port = 29120
-    endpoint = f"tcp://localhost:{node_agent_router_port}"
+    coordinator_port = 29020
+    node_agent_port = 29120
+    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
+    client_endpoint = f"tcp://localhost:{node_agent_port}"
 
     ctx = mp.get_context("spawn")
     coordinator_ready = ctx.Event()
@@ -342,8 +335,7 @@ def test_multiple_tensor_registrations():
     coordinator_proc = ctx.Process(
         target=_run_coordinator,
         args=(
-            coordinator_executor_port,
-            coordinator_handler_port,
+            coordinator_port,
             coordinator_ready,
             stop_event,
         ),
@@ -354,9 +346,8 @@ def test_multiple_tensor_registrations():
     node_agent_proc = ctx.Process(
         target=_run_node_agent,
         args=(
-            node_agent_router_port,
-            coordinator_executor_port,
-            coordinator_handler_port,
+            node_agent_port,
+            coordinator_endpoint,
             node_agent_ready,
             stop_event,
         ),
@@ -371,7 +362,7 @@ def test_multiple_tensor_registrations():
         for i in range(3):
             client_proc = ctx.Process(
                 target=_run_client_register_tensor,
-                args=(endpoint, f"tensor_{i}", result_queue),
+                args=(client_endpoint, f"tensor_{i}", result_queue),
             )
             client_proc.start()
             client_proc.join(timeout=15)
