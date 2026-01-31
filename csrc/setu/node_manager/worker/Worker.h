@@ -41,7 +41,7 @@ using setu::ir::Program;
 //==============================================================================
 class Worker {
  public:
-  Worker(Device device, std::size_t reply_port);
+  Worker(Device device, std::size_t port);
   ~Worker();
 
   void Start();
@@ -64,11 +64,10 @@ class Worker {
   void ExecuteInstruction(const Instruction& instruction);
 
   Device device_;
-  // Zmq context and sockets
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr reply_socket_;
 
-  std::size_t reply_port_;
+  std::size_t port_;
+  ZmqContextPtr zmq_context_;
+  ZmqSocketPtr socket_;
 
   std::atomic<bool> worker_running_{false};
 

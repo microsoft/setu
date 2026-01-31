@@ -25,8 +25,7 @@ namespace setu::coordinator {
 //==============================================================================
 void InitCoordinatorPybindClass(py::module_& m) {
   py::class_<Coordinator, std::shared_ptr<Coordinator>>(m, "Coordinator")
-      .def(py::init<std::size_t>(),
-           py::arg("port"),
+      .def(py::init<std::size_t>(), py::arg("port"),
            "Create a Coordinator with specified port")
       .def("start", &Coordinator::Start, "Start the Coordinator loops")
       .def("stop", &Coordinator::Stop, "Stop the Coordinator loops");

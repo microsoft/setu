@@ -36,8 +36,7 @@ using setu::ir::Instruction;
 //==============================================================================
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
-Worker::Worker(Device device, std::size_t reply_port)
-    : device_(device), reply_port_(reply_port) {
+Worker::Worker(Device device, std::size_t port) : device_(device), port_(port) {
   InitZmqSockets();
 }
 
@@ -63,8 +62,8 @@ void Worker::InitZmqSockets() {
 
   zmq_context_ = std::make_shared<zmq::context_t>();
 
-  reply_socket_ = ZmqHelper::CreateAndBindSocket(
-      zmq_context_, zmq::socket_type::rep, reply_port_);
+  socket_ = ZmqHelper::CreateAndBindSocket(zmq_context_, zmq::socket_type::rep,
+                                           port_);
 
   LOG_DEBUG("Initialized ZMQ sockets successfully");
 }
@@ -72,7 +71,7 @@ void Worker::InitZmqSockets() {
 void Worker::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
-  if (reply_socket_) reply_socket_->close();
+  if (socket_) socket_->close();
   if (zmq_context_) zmq_context_->close();
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
@@ -103,7 +102,7 @@ void Worker::ExecutorLoop() {
   worker_running_ = true;
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
-    auto request = Comm::Recv<ExecuteProgramRequest>(reply_socket_);
+    auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
     const auto& program = request.program;
 
     LOG_DEBUG("Worker received program with {} instructions", program.size());
@@ -115,7 +114,7 @@ void Worker::ExecutorLoop() {
 
     // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);
-    Comm::Send(reply_socket_, response);
+    Comm::Send(socket_, response);
   }
 }
 

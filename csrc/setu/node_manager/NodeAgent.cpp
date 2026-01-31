@@ -46,21 +46,19 @@ using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
-using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::Comm;
+using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
 using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
-NodeAgent::NodeAgent(NodeId node_id, std::size_t router_port,
-                     std::size_t dealer_executor_port,
-                     std::size_t dealer_handler_port,
+NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
+                     std::string coordinator_endpoint,
                      const std::vector<Device>& devices)
     : node_id_(node_id),
-      router_port_(router_port),
-      dealer_executor_port_(dealer_executor_port),
-      dealer_handler_port_(dealer_handler_port) {
+      port_(port),
+      coordinator_endpoint_(std::move(coordinator_endpoint)) {
   InitZmqSockets();
   InitWorkers(devices);
 }
@@ -160,16 +158,15 @@ void NodeAgent::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
   // Close worker REQ sockets
-  for (auto& [device_rank, socket] : workers_req_sockets_) {
+  for (auto& [device_rank, socket] : worker_sockets_) {
     if (socket) {
       socket->close();
     }
   }
-  workers_req_sockets_.clear();
+  worker_sockets_.clear();
 
   if (client_socket_) client_socket_->close();
-  if (coordinator_socket_)
-    coordinator_socket_->close();
+  if (coordinator_socket_) coordinator_socket_->close();
   if (zmq_context_) zmq_context_->close();
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
@@ -222,9 +219,8 @@ void NodeAgent::HandlerLoop() {
 
   handler_running_ = true;
   while (handler_running_) {
-    auto ready = Comm::PollForRead(
-        {client_socket_, coordinator_socket_},
-        kPollTimeoutMs);
+    auto ready = Comm::PollForRead({client_socket_, coordinator_socket_},
+                                   kPollTimeoutMs);
 
     for (const auto& socket : ready) {
       if (socket == client_socket_) {
@@ -291,8 +287,7 @@ void NodeAgent::HandleRegisterTensorShardRequest(
   tensor_name_to_spec_.emplace(request.tensor_shard_spec.name,
                                request.tensor_shard_spec);
 
-  Comm::Send<NodeAgentRequest>(coordinator_socket_,
-                                         request);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
 }
 
 void NodeAgent::HandleSubmitCopyRequest(const Identity& client_identity,
@@ -302,8 +297,7 @@ void NodeAgent::HandleSubmitCopyRequest(const Identity& client_identity,
 
   request_id_to_client_identity_[request.request_id] = client_identity;
 
-  Comm::Send<NodeAgentRequest>(coordinator_socket_,
-                                         request);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
 }
 
 void NodeAgent::HandleWaitForCopyRequest(const Identity& client_identity,
@@ -326,16 +320,16 @@ void NodeAgent::HandleGetTensorHandleRequest(
     LOG_ERROR("Tensor not found: {}", request.tensor_name);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound);
-    Comm::SendWithIdentity<GetTensorHandleResponse>(
-        client_socket_, client_identity, response);
+    Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
+                                                    client_identity, response);
     return;
   }
 
   auto tensor_ipc_spec = PrepareTensorIPCSpec(it->second);
   GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
                                    std::move(tensor_ipc_spec));
-  Comm::SendWithIdentity<GetTensorHandleResponse>(
-      client_socket_, client_identity, response);
+  Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
+                                                  client_identity, response);
 
   LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
 }
@@ -357,8 +351,8 @@ void NodeAgent::HandleCopyOperationFinishedRequest(
       WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
 
       // unblock waiting clients
-      Comm::SendWithIdentity<WaitForCopyResponse>(
-          client_socket_, client_id, response);
+      Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, client_id,
+                                                  response);
     }
     pending_waits_.erase(it);
   }
@@ -399,8 +393,8 @@ void NodeAgent::HandleSubmitCopyResponse(const SubmitCopyResponse& response) {
   }
   const auto& client_identity = it->second;
 
-  Comm::SendWithIdentity<SubmitCopyResponse>(
-      client_socket_, client_identity, response);
+  Comm::SendWithIdentity<SubmitCopyResponse>(client_socket_, client_identity,
+                                             response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -415,8 +409,8 @@ void NodeAgent::HandleWaitForCopyResponse(const WaitForCopyResponse& response) {
   }
   const auto& client_identity = it->second;
 
-  Comm::SendWithIdentity<WaitForCopyResponse>(
-      client_socket_, client_identity, response);
+  Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, client_identity,
+                                              response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -437,8 +431,8 @@ void NodeAgent::ExecutorLoop() {
     for (const auto& [participant, program] : plan.program) {
       // Ensure worker is ready before sending
       auto device_rank = participant.device_rank;
-      auto it = workers_req_sockets_.find(device_rank);
-      ASSERT_VALID_RUNTIME(it != workers_req_sockets_.end(),
+      auto it = worker_sockets_.find(device_rank);
+      ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
                            "No socket found for device_rank: {}", device_rank);
 
       // Send ExecuteProgramRequest to worker

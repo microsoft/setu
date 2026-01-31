@@ -16,8 +16,8 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
 #include "commons/BoostCommon.h"
+#include "commons/StdCommon.h"
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
@@ -27,7 +27,6 @@
 #include "commons/messages/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
-#include "planner/Planner.h"
 #include "coordinator/datatypes/CopyOperation.h"
 //==============================================================================
 namespace setu::coordinator {
@@ -46,8 +45,6 @@ using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::planner::Plan;
-using setu::planner::backends::nccl;
 using setu::coordinator::datatypes::CopyOperationPtr;
 //==============================================================================
 class Coordinator {
@@ -89,17 +86,12 @@ class Coordinator {
   std::size_t port_;
   std::shared_ptr<zmq::context_t> zmq_context_;
   ZmqSocketPtr node_agent_socket_;
-  
+
   std::thread handler_thread_;
   std::thread executor_thread_;
 
   std::atomic<bool> handler_running_{false};
   std::atomic<bool> executor_running_{false};
-
-  Queue<CopyOperationPtr> executor_queue_;
-  std::unordered_map<NodeId, Identity> node_agent_addrs_;
-
-  Planner planner_;
 };
 //==============================================================================
 }  // namespace setu::coordinator

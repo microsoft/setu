@@ -6,8 +6,8 @@ namespace setu::coordinator::datatypes {
 using setu::commons::CopyOperationId;
 using setu::commons::datatypes::CopySpecPtr;
 struct CopyOperation {
-    CopyOperationId id;
-    CopySpecPtr spec;
+  CopyOperationId id;
+  CopySpecPtr spec;
 };
 using CopyOperationPtr = std::shared_ptr<CopyOperation>;
-}
+}  // namespace setu::coordinator::datatypes

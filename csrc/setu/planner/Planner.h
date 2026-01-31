@@ -10,11 +10,11 @@
 
 namespace setu::planner {
 
+using setu::commons::NodeId;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::ir::Program;
 using setu::metastore::MetaStore;
-using setu::commons::NodeId;
 
 using NodeAgentId = std::size_t;
 using DeviceId = std::size_t;

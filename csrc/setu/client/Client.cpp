@@ -90,8 +90,7 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   ClientRequest request = RegisterTensorShardRequest(shard_spec);
   Comm::Send(request_socket_, request);
 
-  auto response =
-      Comm::Recv<RegisterTensorShardResponse>(request_socket_);
+  auto response = Comm::Recv<RegisterTensorShardResponse>(request_socket_);
 
   LOG_DEBUG("Client received response for tensor shard: {} with error code: {}",
             shard_spec.name, response.error_code);
@@ -141,8 +140,7 @@ TensorIPCSpec Client::GetTensorHandle(TensorName tensor_name) {
   ClientRequest request = GetTensorHandleRequest(tensor_name);
   Comm::Send(request_socket_, request);
 
-  auto response =
-      Comm::Recv<GetTensorHandleResponse>(request_socket_);
+  auto response = Comm::Recv<GetTensorHandleResponse>(request_socket_);
 
   LOG_DEBUG(
       "Client received tensor handle response for: {} with error code: {}",

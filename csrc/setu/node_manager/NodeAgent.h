@@ -65,7 +65,8 @@ using setu::planner::Plan;
 //==============================================================================
 class NodeAgent {
  public:
-  NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,const std::vector<Device>& devices);
+  NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
+            const std::vector<Device>& devices);
   ~NodeAgent();
 
   std::optional<TensorShardRef> RegisterTensorShard(

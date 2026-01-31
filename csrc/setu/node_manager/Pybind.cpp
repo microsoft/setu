@@ -54,10 +54,10 @@ void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
       .def(py::init<NodeId, std::size_t, std::string,
                     const std::vector<Device>&>(),
-           py::arg("node_id"), py::arg("port"),
-           py::arg("coordinator_endpoint"),
+           py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
            py::arg("devices"),
-           "Create a NodeAgent with specified port, coordinator endpoint, and devices")
+           "Create a NodeAgent with specified port, coordinator endpoint, and "
+           "devices")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
       .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop")
       .def("register_tensor_shard", &NodeAgent::RegisterTensorShard,

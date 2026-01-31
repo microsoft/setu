@@ -17,8 +17,8 @@
 #include "coordinator/Coordinator.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/utils/Comm.h"
 #include "commons/QueueUtils.h"
+#include "commons/utils/Comm.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -40,10 +40,7 @@ using setu::commons::utils::ZmqHelper;
 //==============================================================================
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
-Coordinator::Coordinator(std::size_t port)
-    : port_(port) {
-  InitZmqSockets();
-}
+Coordinator::Coordinator(std::size_t port) : port_(port) { InitZmqSockets(); }
 
 Coordinator::~Coordinator() {
   Stop();
@@ -98,8 +95,7 @@ void Coordinator::InitZmqSockets() {
 void Coordinator::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
-  if (node_agent_socket_)
-    node_agent_socket_->close();
+  if (node_agent_socket_) node_agent_socket_->close();
   if (zmq_context_) zmq_context_->close();
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
@@ -149,9 +145,8 @@ void Coordinator::HandlerLoop() {
   handler_running_ = true;
   while (handler_running_) {
     auto [node_agent_identity, request] =
-        Comm::RecvWithIdentity<NodeAgentRequest, false>(
-            node_agent_socket_);
-  std::visit(
+        Comm::RecvWithIdentity<NodeAgentRequest, false>(node_agent_socket_);
+    std::visit(
         [&](const auto& req) {
           HandleNodeAgentRequest(node_agent_identity, req);
         },
@@ -227,15 +222,8 @@ void Coordinator::ExecutorLoop() {
 
   executor_running_ = true;
   while (executor_running_) {
-    auto op = TryPullFromQueue(executor_queue_);
-    auto plan = planner_.Compile(*op.spec, metastore_);
-    for (auto [node_id, fragment]: plan.Fragments()) {
-      auto id = node_agent_addrs_.at(node_id);
-      ExecuteRequest request(op.id, fragment);
-      Comm::SendWithIdentity<CoordinatorMessage, false>(
-        node_agent_socket_, id, request
-      );
-    }
+    // TODO: Implement executor loop to dispatch plans to NodeAgents
+    std::this_thread::sleep_for(kHandleLoopSleepMs);
   }
 }
 //==============================================================================
