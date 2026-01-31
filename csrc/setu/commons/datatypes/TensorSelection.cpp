@@ -23,20 +23,6 @@ using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
-
-/*
-contiguous iterator
-
-tensor_name, tensor_selection
-1. which shards contain the selection
-
-for shard in shards:
-  shard_selection = selection.select(shard)
-  for (start_offset, size) in shard_selection.contiguous(args):
-    src_buffer = ref(tensor_name,shard_id)[start_offset:start_offset+size]
-
-*/
-
 void TensorSelection::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   writer.WriteFields(name, indices);
