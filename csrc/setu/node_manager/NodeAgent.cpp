@@ -63,10 +63,11 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       coordinator_endpoint_(std::move(coordinator_endpoint)),
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()) {
-  handler_ = std::make_unique<Handler>(zmq_context_, port_,
+  handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
                                        coordinator_endpoint_, executor_queue_);
-  executor_ = std::make_unique<Executor>(zmq_context_, coordinator_endpoint_,
-                                         devices_, executor_queue_);
+  executor_ = std::make_unique<Executor>(node_id_, zmq_context_,
+                                         coordinator_endpoint_, devices_,
+                                         executor_queue_);
 }
 
 NodeAgent::~NodeAgent() {
@@ -125,10 +126,11 @@ void NodeAgent::Execute(Plan plan) {
 // Handler Implementation
 //==============================================================================
 NodeAgent::Handler::Handler(
-    std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
-    const std::string& coordinator_endpoint,
+    NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
+    std::size_t port, const std::string& coordinator_endpoint,
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
-    : zmq_context_(zmq_context),
+    : node_id_(node_id),
+      zmq_context_(zmq_context),
       port_(port),
       coordinator_endpoint_(coordinator_endpoint),
       executor_queue_(executor_queue) {
@@ -146,10 +148,11 @@ void NodeAgent::Handler::InitSockets() {
   client_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
 
+  Identity identity = to_string(node_id_);
   coordinator_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_);
+      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
 
-  LOG_DEBUG("Handler: Initialized ZMQ sockets successfully");
+  LOG_DEBUG("Handler: Initialized ZMQ sockets with identity={}", identity);
 }
 
 void NodeAgent::Handler::CloseSockets() {
@@ -418,10 +421,11 @@ void NodeAgent::Handler::AllocateTensor(
 // Executor Implementation
 //==============================================================================
 NodeAgent::Executor::Executor(
-    std::shared_ptr<zmq::context_t> zmq_context,
+    NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
     const std::string& coordinator_endpoint, const std::vector<Device>& devices,
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
-    : zmq_context_(zmq_context),
+    : node_id_(node_id),
+      zmq_context_(zmq_context),
       coordinator_endpoint_(coordinator_endpoint),
       devices_(devices),
       executor_queue_(executor_queue) {
@@ -436,13 +440,14 @@ NodeAgent::Executor::~Executor() {
 void NodeAgent::Executor::InitSockets() {
   LOG_DEBUG("Executor: Initializing ZMQ sockets");
 
+  Identity identity = to_string(node_id_);
   coordinator_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_);
+      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
 
   // TODO: Initialize worker sockets based on devices
   LOG_DEBUG("Executor: devices={}", devices_);
 
-  LOG_DEBUG("Executor: Initialized ZMQ sockets successfully");
+  LOG_DEBUG("Executor: Initialized ZMQ sockets with identity={}", identity);
 }
 
 void NodeAgent::Executor::CloseSockets() {
