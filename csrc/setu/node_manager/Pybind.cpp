@@ -48,8 +48,10 @@ void InitWorkerPybindClass(py::module_& m) {
           .def(py::init<Device, std::size_t>(), py::arg("device"), py::arg("reply_port"),
                "Create an NCCL worker for the given device and reply port")
           .def("setup", &NCCLWorker::Setup,
+               py::call_guard<py::gil_scoped_release>(),
                "Initialize CUDA device and stream (call before execute)")
           .def("execute", &NCCLWorker::Execute, py::arg("program"),
+               py::call_guard<py::gil_scoped_release>(),
                "Execute a program (instructions must be embellished with device pointers)");
 }
 //==============================================================================
