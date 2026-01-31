@@ -24,14 +24,14 @@
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
 using setu::commons::DevicePtr;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::TensorShardIdentifier;
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 struct CopyInstruction {

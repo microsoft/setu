@@ -23,8 +23,8 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 std::string TensorShardIdentifier::ToString() const {
-  return std::format("TensorShardIdentifier(name={}, shard_id={})",
-                     tensor_name, boost::uuids::to_string(shard_id));
+  return std::format("TensorShardIdentifier(name={}, shard_id={})", tensor_name,
+                     boost::uuids::to_string(shard_id));
 }
 
 void TensorShardIdentifier::Serialize(BinaryBuffer& buffer) const {

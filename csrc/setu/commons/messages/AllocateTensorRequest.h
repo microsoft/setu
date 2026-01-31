@@ -43,8 +43,9 @@ struct AllocateTensorRequest : public BaseRequest {
         tensor_shard_id(std::move(tensor_shard_id_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, tensor_shard_id={})",
-                       request_id, tensor_shard_id);
+    return std::format(
+        "AllocateTensorRequest(request_id={}, tensor_shard_id={})", request_id,
+        tensor_shard_id);
   }
 
   void Serialize(BinaryBuffer& buffer) const;

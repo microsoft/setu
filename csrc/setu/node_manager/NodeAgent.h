@@ -165,8 +165,10 @@ class NodeAgent {
   std::unordered_map<TensorShardIdentifier, DevicePtr> device_ptrs_lookup_;
 
   /// @brief Pending client waits: maps copy_op_id to list of client identities
-  std::unordered_map<CopyOperationId, std::vector<Identity>, boost::hash<CopyOperationId>> pending_waits_;
-  
+  std::unordered_map<CopyOperationId, std::vector<Identity>,
+                     boost::hash<CopyOperationId>>
+      pending_waits_;
+
   /// @brief Executor queue: (copy_op_id, node_plan) pairs for execution
   Queue<std::pair<CopyOperationId, Plan>> executor_queue_;
 

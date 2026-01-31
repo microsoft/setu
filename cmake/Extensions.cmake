@@ -105,7 +105,8 @@ file(GLOB_RECURSE CLIENT_SRC "csrc/setu/client/*.cpp")
 define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "")
 
-# Create object library for IR instruction sources (shared between node_manager, coordinator, and _ir)
+# Create object library for IR instruction sources (shared between node_manager, coordinator, and
+# _ir)
 file(GLOB_RECURSE IR_INSTR_SRC "csrc/setu/ir/instructions/*.cpp")
 list(APPEND IR_INSTR_SRC "csrc/setu/ir/Instruction.cpp")
 add_library(setu_ir_objects OBJECT ${IR_INSTR_SRC})
@@ -117,7 +118,8 @@ target_compile_options(setu_ir_objects PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Werror
 define_setu_extension(_ir "csrc/setu/ir/Pybind.cpp" "setu_common_objects;setu_ir_objects" "")
 
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")
-define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects;setu_ir_objects" "_kernels_common")
+define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects;setu_ir_objects"
+                      "_kernels_common")
 define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objects;setu_ir_objects"
                    "_kernels_common")
 
@@ -125,7 +127,8 @@ file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
 list(FILTER COORDINATOR_SRC EXCLUDE REGEX ".*/instructions/.*\\.cpp$")
 list(FILTER COORDINATOR_SRC EXCLUDE REGEX ".*/datatypes/Instruction\\.cpp$")
 define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects;setu_ir_objects" "")
-define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects;setu_ir_objects" "")
+define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects;setu_ir_objects"
+                   "")
 
 # OPTIMIZATION: Enhanced build graph and parallel compilation
 set_target_properties(setu_common_objects PROPERTIES INTERPROCEDURAL_OPTIMIZATION

@@ -33,17 +33,18 @@ void CopyInstruction::Serialize(BinaryBuffer& buffer) const {
   const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
   writer.WriteFields(src_tensor, src_memory_offset_bytes, dst_tensor,
-                     dst_memory_offset_bytes, dtype, num_elements, src_ptr_value,
-                     dst_ptr_value);
+                     dst_memory_offset_bytes, dtype, num_elements,
+                     src_ptr_value, dst_ptr_value);
 }
 
 CopyInstruction CopyInstruction::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [src_tensor, src_memory_offset_bytes, dst_tensor, dst_memory_offset_bytes,
-        dtype, num_elements, src_ptr_val, dst_ptr_val] =
-      reader.ReadFields<TensorShardIdentifier, std::size_t, TensorShardIdentifier,
-                        std::size_t, torch::Dtype, std::size_t, std::uintptr_t,
-                        std::uintptr_t>();
+  auto [src_tensor, src_memory_offset_bytes, dst_tensor,
+        dst_memory_offset_bytes, dtype, num_elements, src_ptr_val,
+        dst_ptr_val] =
+      reader.ReadFields<TensorShardIdentifier, std::size_t,
+                        TensorShardIdentifier, std::size_t, torch::Dtype,
+                        std::size_t, std::uintptr_t, std::uintptr_t>();
 
   auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
   auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_val);

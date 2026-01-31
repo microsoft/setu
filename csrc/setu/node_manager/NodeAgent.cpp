@@ -463,7 +463,7 @@ void NodeAgent::ExecutorLoop() {
       // Send ExecuteProgramRequest to worker
       LOG_DEBUG("Sending program with {} instructions to worker {}",
                 program.instrs.size(), device_rank);
-      
+
       // Populate device ptrs for instructions
       EmbellishProgram(program);
 
@@ -484,10 +484,10 @@ void NodeAgent::EmbellishProgram(Program& program) {
   auto const DevicePtrLookup =
       [this](const TensorShardIdentifier& id) -> DevicePtr {
     auto it = this->device_ptrs_lookup_.find(id);
-    ASSERT_VALID_RUNTIME(
-        it != this->device_ptrs_lookup_.end(),
-        "Embellish failed: Tensor {} (Shard {}) not found in NodeAgent registry.",
-        id.tensor_name, id.shard_id);
+    ASSERT_VALID_RUNTIME(it != this->device_ptrs_lookup_.end(),
+                         "Embellish failed: Tensor {} (Shard {}) not found in "
+                         "NodeAgent registry.",
+                         id.tensor_name, id.shard_id);
     return it->second;
   };
 

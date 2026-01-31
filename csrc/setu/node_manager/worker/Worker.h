@@ -30,11 +30,11 @@
 namespace setu::node_manager::worker {
 //==============================================================================
 using setu::commons::ClientRank;
+using setu::commons::CopyOperationId;
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
-using setu::commons::CopyOperationId;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
@@ -61,7 +61,7 @@ class Worker {
   [[nodiscard]] const Device& GetDevice() const { return device_; }
 
   virtual void Execute(const Program& program) = 0;
-  virtual void Setup() = 0; 
+  virtual void Setup() = 0;
 
  protected:
   void InitZmqSockets();

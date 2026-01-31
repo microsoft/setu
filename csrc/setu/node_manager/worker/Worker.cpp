@@ -45,14 +45,13 @@ Worker::~Worker() {
 }
 
 void Worker::Start() {
-  if (worker_running_)
-    return;
+  if (worker_running_) return;
 
   LOG_DEBUG("Starting Worker");
   if (!worker_running_.load()) {
     worker_running_ = true;
-    worker_thread_ =
-      std::thread(SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
+    worker_thread_ = std::thread(
+        SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
   }
 }
 

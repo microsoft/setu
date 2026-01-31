@@ -16,9 +16,13 @@
 //==============================================================================
 #include "Pybind.h"
 //==============================================================================
+#include <boost/uuid/string_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
+#include "commons/Types.h"
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/Device.h"
 #include "commons/datatypes/TensorDim.h"
@@ -32,15 +36,12 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
 #include "commons/enums/Enums.h"
-#include "commons/Types.h"
-#include <boost/uuid/string_generator.hpp>
-#include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
-using setu::commons::enums::DeviceKind;
 using setu::commons::ShardId;
 using setu::commons::datatypes::TensorShardIdentifier;
+using setu::commons::enums::DeviceKind;
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
@@ -266,14 +267,15 @@ void InitTensorShardWriteHandlePybind(py::module_& m) {
 }
 //==============================================================================
 void InitUuidPybind(py::module_& m) {
-     py::class_<boost::uuids::uuid>(m, "ShardId", py::module_local())
-    .def("__str__", [](const boost::uuids::uuid& id) {
+  py::class_<boost::uuids::uuid>(m, "ShardId", py::module_local())
+      .def("__str__", [](const boost::uuids::uuid& id) {
         return boost::uuids::to_string(id);
-    });
+      });
 }
 //==============================================================================
 void InitTensorShardIdentifierPybind(py::module_& m) {
-  py::class_<TensorShardIdentifier>(m, "TensorShardIdentifier", py::module_local())
+  py::class_<TensorShardIdentifier>(m, "TensorShardIdentifier",
+                                    py::module_local())
       .def(py::init<TensorName, ShardId>(), py::arg("tensor_name"),
            py::arg("shard_id"))
       .def_readonly("tensor_name", &TensorShardIdentifier::tensor_name,
@@ -282,9 +284,11 @@ void InitTensorShardIdentifierPybind(py::module_& m) {
                     "Unique UUID for the shard")
       .def("__str__", &TensorShardIdentifier::ToString)
       .def("__repr__", &TensorShardIdentifier::ToString)
-      .def("__eq__", [](const TensorShardIdentifier& self, const TensorShardIdentifier& other) {
-          return self == other;
-      }, py::is_operator());
+      .def(
+          "__eq__",
+          [](const TensorShardIdentifier& self,
+             const TensorShardIdentifier& other) { return self == other; },
+          py::is_operator());
 }
 //==============================================================================
 void InitDatatypesPybindSubmodule(py::module_& pm) {
@@ -297,7 +301,8 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
         return gen(uuid_str);
       },
       py::arg("uuid_str"),
-      "Create a ShardId from a UUID string (e.g. '00000000-0000-0000-0000-000000000001').");
+      "Create a ShardId from a UUID string (e.g. "
+      "'00000000-0000-0000-0000-000000000001').");
 
   InitDevicePybind(m);
   InitTensorSlicePybind(m);

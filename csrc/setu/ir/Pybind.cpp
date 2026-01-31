@@ -16,8 +16,9 @@
 //==============================================================================
 #include "setu/ir/Pybind.h"
 //==============================================================================
-#include <boost/uuid/uuid_io.hpp>
 #include <nccl.h>
+
+#include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 #include "setu/commons/Logging.h"
 #include "setu/commons/StdCommon.h"
@@ -68,7 +69,8 @@ void InitSendInstructionPybind(py::module_& m) {
       .def_readonly("src_tensor", &SendInstruction::src_tensor,
                     "Source tensor (name, shard_id) pair")
       .def_readonly("dtype", &SendInstruction::dtype, "Data type of elements")
-      .def_readonly("memory_offset_bytes", &SendInstruction::memory_offset_bytes,
+      .def_readonly("memory_offset_bytes",
+                    &SendInstruction::memory_offset_bytes,
                     "Byte offset in source memory")
       .def_readonly("num_elements", &SendInstruction::num_elements,
                     "Number of elements to send")
@@ -87,7 +89,8 @@ void InitReceiveInstructionPybind(py::module_& m) {
                     "Source device rank")
       .def_readonly("dst_tensor", &ReceiveInstruction::dst_tensor,
                     "Destination tensor (name, shard_id) pair")
-      .def_readonly("dtype", &ReceiveInstruction::dtype, "Data type of elements")
+      .def_readonly("dtype", &ReceiveInstruction::dtype,
+                    "Data type of elements")
       .def_readonly("memory_offset_bytes",
                     &ReceiveInstruction::memory_offset_bytes,
                     "Byte offset in destination memory")
@@ -137,9 +140,9 @@ void InitInstructionPybind(py::module_& m) {
           "embellish",
           [](Instruction& self, py::function py_resolver) {
             self.Embellish([&py_resolver](const TensorShardIdentifier& id) {
-              py::object result = py_resolver(
-                  py::cast(id.tensor_name),
-                  py::cast(boost::uuids::to_string(id.shard_id)));
+              py::object result =
+                  py_resolver(py::cast(id.tensor_name),
+                              py::cast(boost::uuids::to_string(id.shard_id)));
               auto ptr = reinterpret_cast<DevicePtr>(result.cast<intptr_t>());
               return ptr;
             });
@@ -165,7 +168,8 @@ void InitNcclUniqueIdPybind(py::module_& m) {
         // Show first few bytes as hex for debugging
         std::string hex;
         for (std::size_t i = 0; i < 8 && i < NCCL_UNIQUE_ID_BYTES; ++i) {
-          hex += std::format("{:02x}", static_cast<unsigned char>(id.internal[i]));
+          hex +=
+              std::format("{:02x}", static_cast<unsigned char>(id.internal[i]));
         }
         return std::format("NcclUniqueId({}...)", hex);
       });

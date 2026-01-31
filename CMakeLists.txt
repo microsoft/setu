@@ -1,6 +1,6 @@
 # ##################################################################################################
-# Copyright (C) 2025 by Vajra Team, Georgia Institute of Technology; Microsoft Corporation.
-# This file is part of the setu project.
+# Copyright (C) 2025 by Vajra Team, Georgia Institute of Technology; Microsoft Corporation. This
+# file is part of the setu project.
 # ##################################################################################################
 cmake_minimum_required(VERSION 4.0)
 set(CMAKE_POLICY_VERSION_MINIMUM 4.0)

@@ -11,11 +11,12 @@ import threading
 import pytest
 import torch
 
+
 def _get_extensions():
     """Import setu extensions; skip if not built or CUDA unavailable."""
     try:
         # Load setu package first so torch is in process (required for extension symbols)
-        from setu._commons.datatypes import Device, make_shard_id, TensorShardIdentifier
+        from setu._commons.datatypes import Device, TensorShardIdentifier, make_shard_id
         from setu._commons.enums import DeviceKind
         from setu._coordinator.datatypes import Program
         from setu._ir import (
@@ -27,6 +28,7 @@ def _get_extensions():
             generate_nccl_id,
         )
         from setu._node_manager import NCCLWorker
+
         return {
             "NCCLWorker": NCCLWorker,
             "Device": Device,

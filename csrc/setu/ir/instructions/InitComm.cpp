@@ -32,8 +32,8 @@ void InitCommInstruction::Serialize(BinaryBuffer& buffer) const {
 InitCommInstruction InitCommInstruction::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [comm_id, device_to_rank] =
-      reader
-          .ReadFields<ncclUniqueId, std::unordered_map<DeviceRank, std::int32_t>>();
+      reader.ReadFields<ncclUniqueId,
+                        std::unordered_map<DeviceRank, std::int32_t>>();
   return InitCommInstruction(comm_id, std::move(device_to_rank));
 }
 

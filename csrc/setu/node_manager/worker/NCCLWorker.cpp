@@ -14,8 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "node_manager/worker/Worker.h"
 #include "node_manager/worker/NCCLWorker.h"
+
+#include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/messages/Messages.h"
@@ -31,29 +32,26 @@ using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
 
-#define CUDA_CHECK(call)                                                       \
-  do {                                                                         \
-    cudaError_t err = (call);                                                  \
-    ASSERT_VALID_RUNTIME(err == cudaSuccess, "CUDA error: {} at {}:{}",        \
-                         cudaGetErrorString(err), __FILE__, __LINE__);         \
+#define CUDA_CHECK(call)                                                \
+  do {                                                                  \
+    cudaError_t err = (call);                                           \
+    ASSERT_VALID_RUNTIME(err == cudaSuccess, "CUDA error: {} at {}:{}", \
+                         cudaGetErrorString(err), __FILE__, __LINE__);  \
   } while (0)
 
-#define NCCL_CHECK(call)                                                       \
-  do {                                                                         \
-    ncclResult_t res = (call);                                                 \
-    ASSERT_VALID_RUNTIME(res == ncclSuccess, "NCCL error: {} at {}:{}",        \
-                         ncclGetErrorString(res), __FILE__, __LINE__);         \
+#define NCCL_CHECK(call)                                                \
+  do {                                                                  \
+    ncclResult_t res = (call);                                          \
+    ASSERT_VALID_RUNTIME(res == ncclSuccess, "NCCL error: {} at {}:{}", \
+                         ncclGetErrorString(res), __FILE__, __LINE__);  \
   } while (0)
-
 
 //==============================================================================
 // NCCLWorker
 //==============================================================================
 
-NCCLWorker::NCCLWorker(Device device,
-                       std::size_t reply_port)
-    : Worker(device, reply_port),
-      stream_(nullptr) {}
+NCCLWorker::NCCLWorker(Device device, std::size_t reply_port)
+    : Worker(device, reply_port), stream_(nullptr) {}
 
 NCCLWorker::~NCCLWorker() {
   if (stream_) {
@@ -167,12 +165,13 @@ void NCCLWorker::ExecuteSend(const SendInstruction& inst) {
 
   const auto& [tensor_name, shard_id] = inst.src_tensor;
 
-  NCCL_CHECK(ncclSend(
-      static_cast<char*>(inst.src_ptr) + inst.memory_offset_bytes,
-      inst.num_elements, ToNcclDataType(inst.dtype), peer_rank, entry.nccl_comm,
-      stream_));
+  NCCL_CHECK(
+      ncclSend(static_cast<char*>(inst.src_ptr) + inst.memory_offset_bytes,
+               inst.num_elements, ToNcclDataType(inst.dtype), peer_rank,
+               entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Send: {} elements from {}:{} to device: {}", inst.num_elements, tensor_name, shard_id, peer_rank);
+  LOG_DEBUG("Send: {} elements from {}:{} to device: {}", inst.num_elements,
+            tensor_name, shard_id, peer_rank);
 }
 
 void NCCLWorker::ExecuteReceive(const ReceiveInstruction& inst) {
@@ -181,11 +180,13 @@ void NCCLWorker::ExecuteReceive(const ReceiveInstruction& inst) {
 
   const auto& [tensor_name, shard_id] = inst.dst_tensor;
 
-  NCCL_CHECK(ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.memory_offset_bytes,
-                      inst.num_elements, ToNcclDataType(inst.dtype), peer_rank,
-                      entry.nccl_comm, stream_));
+  NCCL_CHECK(
+      ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.memory_offset_bytes,
+               inst.num_elements, ToNcclDataType(inst.dtype), peer_rank,
+               entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Receive: {} elements from device: {}:{} from device: {}", inst.num_elements, tensor_name, shard_id, peer_rank);
+  LOG_DEBUG("Receive: {} elements from device: {}:{} from device: {}",
+            inst.num_elements, tensor_name, shard_id, peer_rank);
 }
 
 //==============================================================================

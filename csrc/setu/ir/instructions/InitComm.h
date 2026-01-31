@@ -32,9 +32,11 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 struct InitCommInstruction {
-  InitCommInstruction(ncclUniqueId comm_id,
-                      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
-      : comm_id(std::move(comm_id)), device_to_rank(std::move(device_to_rank)) {}
+  InitCommInstruction(
+      ncclUniqueId comm_id,
+      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+      : comm_id(std::move(comm_id)),
+        device_to_rank(std::move(device_to_rank)) {}
 
   ~InitCommInstruction() = default;
   InitCommInstruction(const InitCommInstruction&) = default;

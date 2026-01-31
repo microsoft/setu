@@ -42,8 +42,8 @@ ReceiveInstruction ReceiveInstruction::Deserialize(const BinaryRange& range) {
                         std::size_t, std::size_t, std::uintptr_t>();
   const auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_value);
   return ReceiveInstruction(src_device_id,
-                            {std::move(tensor_name), std::move(shard_id)}, dtype,
-                            memory_offset_bytes, num_elements, dst_ptr);
+                            {std::move(tensor_name), std::move(shard_id)},
+                            dtype, memory_offset_bytes, num_elements, dst_ptr);
 }
 
 void ReceiveInstruction::Embellish(

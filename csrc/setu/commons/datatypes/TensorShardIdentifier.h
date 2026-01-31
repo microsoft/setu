@@ -68,8 +68,8 @@ struct TensorShardIdentifier {
 //==============================================================================
 template <>
 struct std::hash<setu::commons::datatypes::TensorShardIdentifier> {
-  std::size_t operator()(
-      const setu::commons::datatypes::TensorShardIdentifier& id) const noexcept {
+  std::size_t operator()(const setu::commons::datatypes::TensorShardIdentifier&
+                             id) const noexcept {
     std::size_t h1 = std::hash<std::string>{}(id.tensor_name);
     std::size_t h2 = boost::hash<boost::uuids::uuid>{}(id.shard_id);
     return h1 ^ (h2 << 1);
