@@ -186,6 +186,7 @@ class Coordinator {
     std::map<CopyKey, std::vector<PendingNodeAgent>> pending_node_agents_;
 
     /// Maps CopyOperationId to CopySpec
+    /// TODO: cleanup after copy finished
     std::map<CopyOperationId, CopySpec> copy_operations_;
 
     std::thread thread_;

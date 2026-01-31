@@ -308,6 +308,7 @@ void Coordinator::Handler::HandleSubmitCopyRequest(
     // Subsequent request - verify TensorSelections match
     const CopySpec& first_spec = pending_it->second;
 
+    /// TODO: need to handle errors differently
     ASSERT_VALID_RUNTIME(
         *request.copy_spec.src_selection == *first_spec.src_selection,
         "SubmitCopy {} -> {}: source selection mismatch",
