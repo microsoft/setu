@@ -17,7 +17,6 @@
 #pragma once
 //==============================================================================
 #include "commons/BoostCommon.h"
-#include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 #include "commons/utils/Serialization.h"
@@ -26,12 +25,11 @@ namespace setu::commons::datatypes {
 //==============================================================================
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
 //==============================================================================
 /**
  * @brief Uniquely identifies a specific shard of a tensor across the system.
- * * Combines the logical name of the parent tensor with a unique ShardId (UUID)
+ *
+ * Combines the logical name of the parent tensor with a unique ShardId (UUID)
  * to facilitate lookup in distributed registries and memory managers.
  */
 struct TensorShardIdentifier {
@@ -42,29 +40,18 @@ struct TensorShardIdentifier {
 
   /**
    * @brief Constructs an identifier for a tensor shard
-   * * @param name The human-readable or system-assigned name of the tensor
+   *
+   * @param name The human-readable or system-assigned name of the tensor
    * @param id The unique identifier (UUID) for this specific shard
    */
   TensorShardIdentifier(TensorName name, ShardId id)
       : tensor_name(std::move(name)), shard_id(std::move(id)) {}
 
+  [[nodiscard]] std::string ToString() const;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("TensorShardIdentifier(name={}, shard_id={})", 
-                       tensor_name, boost::uuids::to_string(shard_id));
-  }
+  void Serialize(BinaryBuffer& buffer) const;
 
-
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.WriteFields(tensor_name, shard_id);
-  }
-
-  static TensorShardIdentifier Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [name, id] = reader.ReadFields<TensorName, ShardId>();
-    return TensorShardIdentifier(std::move(name), std::move(id));
-  }
+  static TensorShardIdentifier Deserialize(const BinaryRange& range);
 
   /**
    * @brief Equality comparison operator
@@ -73,8 +60,8 @@ struct TensorShardIdentifier {
     return tensor_name == other.tensor_name && shard_id == other.shard_id;
   }
 
-  TensorName tensor_name; ///< Logical name of the parent tensor
-  ShardId shard_id;       ///< Unique UUID for the shard
+  TensorName tensor_name;  ///< Logical name of the parent tensor
+  ShardId shard_id;        ///< Unique UUID for the shard
 };
 //==============================================================================
 }  // namespace setu::commons::datatypes

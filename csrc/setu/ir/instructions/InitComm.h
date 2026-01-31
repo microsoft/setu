@@ -22,42 +22,36 @@
 #include "setu/commons/Types.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::coordinator::datatypes::instructions {
+namespace setu::ir {
 //==============================================================================
+using setu::commons::DeviceRank;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct UseCommInstruction {
-  explicit UseCommInstruction(ncclUniqueId comm_id)
-      : comm_id(std::move(comm_id)) {}
+struct InitCommInstruction {
+  InitCommInstruction(ncclUniqueId comm_id,
+                      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+      : comm_id(std::move(comm_id)), device_to_rank(std::move(device_to_rank)) {}
 
-  ~UseCommInstruction() = default;
-  UseCommInstruction(const UseCommInstruction&) = default;
-  UseCommInstruction& operator=(const UseCommInstruction&) = default;
-  UseCommInstruction(UseCommInstruction&&) = default;
-  UseCommInstruction& operator=(UseCommInstruction&&) = default;
+  ~InitCommInstruction() = default;
+  InitCommInstruction(const InitCommInstruction&) = default;
+  InitCommInstruction& operator=(const InitCommInstruction&) = default;
+  InitCommInstruction(InitCommInstruction&&) = default;
+  InitCommInstruction& operator=(InitCommInstruction&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("UseCommInstruction(comm_id_present={})", true);
-  }
+  [[nodiscard]] std::string ToString() const;
 
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.WriteFields(comm_id);
-  }
+  void Serialize(BinaryBuffer& buffer) const;
 
-  static UseCommInstruction Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [comm_id] = reader.ReadFields<ncclUniqueId>();
-    return UseCommInstruction(comm_id);
-  }
+  static InitCommInstruction Deserialize(const BinaryRange& range);
 
   ncclUniqueId comm_id;
+  std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
 };
 
 //==============================================================================
-}  // namespace setu::coordinator::datatypes::instructions
+}  // namespace setu::ir
 //==============================================================================

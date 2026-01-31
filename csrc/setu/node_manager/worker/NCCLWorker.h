@@ -24,8 +24,8 @@
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Instruction.h"
 #include "coordinator/datatypes/Program.h"
+#include "ir/Instruction.h"
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 namespace setu::node_manager::worker {
@@ -37,13 +37,13 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::CopyInstruction;
-using setu::coordinator::datatypes::InitCommInstruction;
-using setu::coordinator::datatypes::Instruction;
 using setu::coordinator::datatypes::Program;
-using setu::coordinator::datatypes::ReceiveInstruction;
-using setu::coordinator::datatypes::SendInstruction;
-using setu::coordinator::datatypes::UseCommInstruction;
+using setu::ir::CopyInstruction;
+using setu::ir::InitCommInstruction;
+using setu::ir::Instruction;
+using setu::ir::ReceiveInstruction;
+using setu::ir::SendInstruction;
+using setu::ir::UseCommInstruction;
 //==============================================================================
 
 class NCCLWorker : public Worker {

@@ -22,7 +22,7 @@
 #include "setu/commons/enums/Enums.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::coordinator::datatypes::instructions {
+namespace setu::ir {
 //==============================================================================
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
@@ -34,16 +34,13 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::TensorShardIdentifier;
 //==============================================================================
 
-// TODO: Move method definitions to cpp
 struct CopyInstruction {
   CopyInstruction(TensorShardIdentifier src_tensor,
                   std::size_t src_memory_offset_bytes,
                   TensorShardIdentifier dst_tensor,
-                  std::size_t dst_memory_offset_bytes,
-                  torch::Dtype dtype,
-                  std::size_t num_elements,
-                  DevicePtr src_ptr=nullptr,
-                  DevicePtr dst_ptr=nullptr)
+                  std::size_t dst_memory_offset_bytes, torch::Dtype dtype,
+                  std::size_t num_elements, DevicePtr src_ptr = nullptr,
+                  DevicePtr dst_ptr = nullptr)
       : src_tensor(std::move(src_tensor)),
         src_memory_offset_bytes(src_memory_offset_bytes),
         dst_tensor(std::move(dst_tensor)),
@@ -59,49 +56,19 @@ struct CopyInstruction {
   CopyInstruction(CopyInstruction&&) = default;
   CopyInstruction& operator=(CopyInstruction&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format(
-        "CopyInstruction(src_tensor=({}, {}), src_offset={}, dst_tensor=({}, "
-        "{}), dst_offset={}, dtype={}, num_elements={}, src_ptr={}, dst_ptr={})",
-        src_tensor.tensor_name, src_tensor.shard_id, src_memory_offset_bytes,
-        dst_tensor.tensor_name, dst_tensor.shard_id, dst_memory_offset_bytes,
-        static_cast<int>(dtype), num_elements, src_ptr, dst_ptr);
-  }
+  [[nodiscard]] std::string ToString() const;
 
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
-    const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-    writer.WriteFields(src_tensor, src_memory_offset_bytes,
-                       dst_tensor, dst_memory_offset_bytes, dtype,
-                       num_elements, src_ptr_value, dst_ptr_value);
-  }
+  void Serialize(BinaryBuffer& buffer) const;
 
-  static CopyInstruction Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [src_tensor, src_memory_offset_bytes,
-          dst_tensor, dst_memory_offset_bytes, dtype,
-          num_elements, src_ptr_val, dst_ptr_val] =
-        reader.ReadFields<TensorShardIdentifier, std::size_t, TensorShardIdentifier,
-                          std::size_t, torch::Dtype, std::size_t, std::uintptr_t, std::uintptr_t>();
-
-    auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
-    auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_val);
-    return CopyInstruction(std::move(src_tensor),
-                           src_memory_offset_bytes,
-                           std::move(dst_tensor),
-                           dst_memory_offset_bytes, dtype, num_elements, src_ptr, dst_ptr);
-  }
+  static CopyInstruction Deserialize(const BinaryRange& range);
 
   /**
    * @brief Populates the device pointers by looking up the base address
-   * @param resolver A callable that takes (TensorName, ShardId) and returns the base DevicePtr.
+   * @param resolver A callable that takes a TensorShardIdentifier and returns
+   * the base DevicePtr.
    */
   void Embellish(
-      const std::function<DevicePtr(const TensorName&, const ShardId&)>& resolver) {
-    src_ptr = resolver(src_tensor.tensor_name, src_tensor.shard_id);
-    dst_ptr = resolver(dst_tensor.tensor_name, dst_tensor.shard_id);
-  }
+      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
 
   TensorShardIdentifier src_tensor;
   std::size_t src_memory_offset_bytes;
@@ -116,5 +83,5 @@ struct CopyInstruction {
 };
 
 //==============================================================================
-}  // namespace setu::coordinator::datatypes::instructions
+}  // namespace setu::ir
 //==============================================================================

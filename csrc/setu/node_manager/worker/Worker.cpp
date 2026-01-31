@@ -32,7 +32,7 @@ using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
-using setu::coordinator::datatypes::Instruction;
+using setu::ir::Instruction;
 //==============================================================================
 Worker::Worker(Device device, std::size_t reply_port)
     : device_(device), reply_port_(reply_port), worker_running_{false} {

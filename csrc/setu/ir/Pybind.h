@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,31 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "setu/coordinator/datatypes/Pybind.h"
-
-#include "setu/commons/Logging.h"
+#pragma once
+//==============================================================================
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/TorchCommon.h"
-#include "setu/coordinator/Coordinator.h"
 //==============================================================================
-namespace setu::coordinator {
+namespace setu::ir {
 //==============================================================================
-void InitCoordinatorPybindClass(py::module_& m) {
-  py::class_<Coordinator, std::shared_ptr<Coordinator>>(m, "Coordinator")
-      .def(py::init<std::size_t, std::size_t>(),
-           py::arg("router_executor_port"), py::arg("router_handler_port"),
-           "Create a Coordinator with specified ports for NodeAgent "
-           "communication")
-      .def("start", &Coordinator::Start, "Start the Coordinator loops")
-      .def("stop", &Coordinator::Stop, "Stop the Coordinator loops");
-}
+void InitIrPybind(py::module_& m);
 //==============================================================================
-}  // namespace setu::coordinator
-//==============================================================================
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  setu::commons::Logger::InitializeLogLevel();
-
-  setu::coordinator::datatypes::InitDatatypesPybindSubmodule(m);
-  setu::coordinator::InitCoordinatorPybindClass(m);
-}
+}  // namespace setu::ir
 //==============================================================================

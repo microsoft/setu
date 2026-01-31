@@ -51,8 +51,8 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::SetuCommHelper;
 using setu::commons::utils::ZmqHelper;
-using setu::coordinator::datatypes::Instruction;
 using setu::coordinator::datatypes::Program;
+using setu::ir::Instruction;
 using setu::node_manager::worker::NCCLWorker;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
@@ -113,8 +113,10 @@ void NodeAgent::WaitForCopy(CopyOperationId copy_op_id) {
   // TODO: Implement wait for copy
 }
 
-void NodeAgent::AllocateTensor(const TensorShardSpec& tensor_shard_spec) {
-  LOG_DEBUG("Allocating tensor shard: tensor_shard_spec={}", tensor_shard_spec);
+void NodeAgent::AllocateTensor(const TensorShardIdentifier& tensor_shard_id,
+                               const TensorShardSpec& tensor_shard_spec) {
+  LOG_DEBUG("Allocating tensor shard: tensor_shard_id={}, tensor_shard_spec={}",
+            tensor_shard_id, tensor_shard_spec);
 
   // Build the shape from dims (using owned size for each dimension)
   std::vector<std::int64_t> shape;
@@ -129,6 +131,10 @@ void NodeAgent::AllocateTensor(const TensorShardSpec& tensor_shard_spec) {
                      .device(tensor_shard_spec.device.torch_device);
 
   torch::Tensor tensor = torch::empty(shape, options);
+
+  // Register the device pointer for this shard
+  device_ptrs_lookup_[tensor_shard_id] =
+      reinterpret_cast<DevicePtr>(tensor.data_ptr());
 
   // Store the tensor
   tensor_name_to_tensor_[tensor_shard_spec.name] = std::move(tensor);
@@ -355,7 +361,8 @@ void NodeAgent::HandleGetTensorHandleRequest(
 void NodeAgent::HandleAllocateTensorRequest(
     const AllocateTensorRequest& request) {
   LOG_DEBUG("Handling AllocateTensorRequest for request: {}", request);
-  AllocateTensor(tensor_name_to_spec_.at(request.tensor_name));
+  AllocateTensor(request.tensor_shard_id,
+                 tensor_name_to_spec_.at(request.tensor_shard_id.tensor_name));
 }
 
 void NodeAgent::HandleCopyOperationFinishedRequest(
@@ -474,14 +481,13 @@ void NodeAgent::ExecutorLoop() {
 }
 
 void NodeAgent::EmbellishProgram(Program& program) {
-  auto const DevicePtrLookup = [this](const TensorName& tensor_name,
-                                      const ShardId& shard_id) -> DevicePtr {
-    TensorShardIdentifier id(tensor_name, shard_id);
+  auto const DevicePtrLookup =
+      [this](const TensorShardIdentifier& id) -> DevicePtr {
     auto it = this->device_ptrs_lookup_.find(id);
     ASSERT_VALID_RUNTIME(
         it != this->device_ptrs_lookup_.end(),
         "Embellish failed: Tensor {} (Shard {}) not found in NodeAgent registry.",
-        tensor_name, shard_id);
+        id.tensor_name, id.shard_id);
     return it->second;
   };
 

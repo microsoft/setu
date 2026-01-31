@@ -22,7 +22,7 @@
 #include "setu/commons/enums/Enums.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::coordinator::datatypes::instructions {
+namespace setu::ir {
 //==============================================================================
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
@@ -36,12 +36,9 @@ using setu::commons::datatypes::TensorShardIdentifier;
 //==============================================================================
 
 struct SendInstruction {
-  SendInstruction(DeviceRank dst_device_id,
-                  TensorShardIdentifier src_tensor,
-                  torch::Dtype dtype,
-                  std::size_t memory_offset_bytes,
-                  std::size_t num_elements,
-                  DevicePtr src_ptr=nullptr)
+  SendInstruction(DeviceRank dst_device_id, TensorShardIdentifier src_tensor,
+                  torch::Dtype dtype, std::size_t memory_offset_bytes,
+                  std::size_t num_elements, DevicePtr src_ptr = nullptr)
       : dst_device_id(dst_device_id),
         src_tensor(std::move(src_tensor)),
         dtype(dtype),
@@ -55,41 +52,19 @@ struct SendInstruction {
   SendInstruction(SendInstruction&&) = default;
   SendInstruction& operator=(SendInstruction&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format(
-        "SendInstruction(dst_rank={}, tensor=({}, {}), dtype={}, "
-        "memory_offset={}, num_elements={}, src_device_ptr={})",
-        dst_device_id, src_tensor.tensor_name, src_tensor.shard_id,
-        static_cast<int>(dtype), memory_offset_bytes, num_elements, src_ptr);
-  }
+  [[nodiscard]] std::string ToString() const;
 
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
-    writer.WriteFields(dst_device_id, src_tensor,
-                       dtype, memory_offset_bytes, num_elements, src_ptr_value);
-  }
+  void Serialize(BinaryBuffer& buffer) const;
 
-  static SendInstruction Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [dst_device_id, src_tensor, dtype, memory_offset_bytes,
-          num_elements, src_ptr_val] =
-        reader.ReadFields<DeviceRank, TensorShardIdentifier, torch::Dtype, std::size_t,
-                          std::size_t, std::uintptr_t>();
-    auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
-    return SendInstruction(dst_device_id,
-                           std::move(src_tensor), dtype,
-                           memory_offset_bytes, num_elements, src_ptr);
-  }
+  static SendInstruction Deserialize(const BinaryRange& range);
 
   /**
    * @brief Populates the device pointers by looking up the base address
-   * @param resolver A callable that takes (TensorName, ShardId) and returns the base DevicePtr.
+   * @param resolver A callable that takes a TensorShardIdentifier and returns
+   * the base DevicePtr.
    */
   void Embellish(
-      const std::function<DevicePtr(const TensorName&, const ShardId&)>& resolver) {
-    src_ptr = resolver(src_tensor.tensor_name, src_tensor.shard_id);
-  }
+      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
 
   DeviceRank dst_device_id;
   TensorShardIdentifier src_tensor;
@@ -102,5 +77,5 @@ struct SendInstruction {
 };
 
 //==============================================================================
-}  // namespace setu::coordinator::datatypes::instructions
+}  // namespace setu::ir
 //==============================================================================

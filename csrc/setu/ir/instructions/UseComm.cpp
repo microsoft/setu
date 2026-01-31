@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,14 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "setu/ir/instructions/UseComm.h"
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/TorchCommon.h"
+namespace setu::ir {
 //==============================================================================
-namespace setu::coordinator::datatypes {
+
+std::string UseCommInstruction::ToString() const {
+  return std::format("UseCommInstruction(comm_id_present={})", true);
+}
+
+void UseCommInstruction::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(comm_id);
+}
+
+UseCommInstruction UseCommInstruction::Deserialize(const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [comm_id] = reader.ReadFields<ncclUniqueId>();
+  return UseCommInstruction(comm_id);
+}
+
 //==============================================================================
-void InitDatatypesPybindSubmodule(py::module_& pm);
-//==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::ir
 //==============================================================================

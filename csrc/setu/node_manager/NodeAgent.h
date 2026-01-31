@@ -82,7 +82,8 @@ class NodeAgent {
 
   void WaitForCopy(CopyOperationId copy_op_id);
 
-  void AllocateTensor(const TensorShardSpec& tensor_shard_spec);
+  void AllocateTensor(const TensorShardIdentifier& tensor_shard_id,
+                      const TensorShardSpec& tensor_shard_spec);
 
   void CopyOperationFinished(CopyOperationId copy_op_id);
 

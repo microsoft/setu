@@ -71,7 +71,8 @@ void InitNodeAgentPybindClass(py::module_& m) {
       .def("wait_for_copy", &NodeAgent::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
       .def("allocate_tensor", &NodeAgent::AllocateTensor,
-           py::arg("tensor_shars_spec"), "Allocate a tensor shard on a device")
+           py::arg("tensor_shard_id"), py::arg("tensor_shard_spec"),
+           "Allocate a tensor shard on a device")
       .def("copy_operation_finished", &NodeAgent::CopyOperationFinished,
            py::arg("copy_op_id"), "Notify that a copy operation has completed")
       .def("execute", &NodeAgent::Execute, py::arg("plan"),

@@ -26,6 +26,7 @@ using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -191,12 +192,13 @@ void Coordinator::HandleNodeAgentRequest(
       node_agent_router_handler_socket_, node_agent_identity, response);
 
   // Send AllocateTensorRequest to NodeAgent to allocate the tensor
-  AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);
+  TensorShardIdentifier tensor_shard_id(request.tensor_shard_spec.name,
+                                        shard_id);
+  AllocateTensorRequest allocate_request(tensor_shard_id);
   SetuCommHelper::SendWithIdentity<CoordinatorMessage, false>(
       node_agent_router_handler_socket_, node_agent_identity, allocate_request);
 
-  LOG_INFO("Sent AllocateTensorRequest for tensor: {}",
-           request.tensor_shard_spec.name);
+  LOG_INFO("Sent AllocateTensorRequest for tensor: {}", tensor_shard_id);
 }
 
 void Coordinator::HandleNodeAgentRequest(const Identity& node_agent_identity,

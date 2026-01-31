@@ -24,8 +24,8 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
-#include "coordinator/datatypes/Instruction.h"
 #include "coordinator/datatypes/Program.h"
+#include "ir/Instruction.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -42,12 +42,12 @@ using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::coordinator::datatypes::Instruction;
-using setu::coordinator::datatypes::CopyInstruction;
-using setu::coordinator::datatypes::ReceiveInstruction;
-using setu::coordinator::datatypes::SendInstruction;
-using setu::coordinator::datatypes::UseCommInstruction;
 using setu::coordinator::datatypes::Program;
+using setu::ir::CopyInstruction;
+using setu::ir::Instruction;
+using setu::ir::ReceiveInstruction;
+using setu::ir::SendInstruction;
+using setu::ir::UseCommInstruction;
 //==============================================================================
 class Worker {
  public:

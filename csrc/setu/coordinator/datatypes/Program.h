@@ -19,7 +19,7 @@
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/Types.h"
 #include "setu/commons/utils/Serialization.h"
-#include "setu/coordinator/datatypes/Instruction.h"
+#include "setu/ir/Instruction.h"
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
@@ -28,6 +28,7 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
+using setu::ir::Instruction;
 //==============================================================================
 
 struct Program {

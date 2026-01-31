@@ -16,45 +16,63 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
-#include "commons/Types.h"
-#include "commons/datatypes/TensorShardIdentifier.h"
-#include "commons/messages/BaseRequest.h"
-#include "commons/utils/Serialization.h"
+#include "setu/ir/instructions/Copy.h"
+#include "setu/ir/instructions/InitComm.h"
+#include "setu/ir/instructions/Receive.h"
+#include "setu/ir/instructions/Send.h"
+#include "setu/ir/instructions/UseComm.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::ir {
 //==============================================================================
-using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
+using setu::commons::DevicePtr;
+using setu::commons::ShardId;
+using setu::commons::TensorName;
+using setu::commons::datatypes::TensorShardIdentifier;
 //==============================================================================
 
-struct AllocateTensorRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(TensorShardIdentifier tensor_shard_id_param)
-      : BaseRequest(), tensor_shard_id(std::move(tensor_shard_id_param)) {}
+enum class InstructionType : std::uint8_t {
+  kInitComm = 1,
+  kUseComm = 2,
+  kCopy = 3,
+  kSend = 4,
+  kReceive = 5,
+};
 
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  AllocateTensorRequest(RequestId request_id_param,
-                        TensorShardIdentifier tensor_shard_id_param)
-      : BaseRequest(request_id_param),
-        tensor_shard_id(std::move(tensor_shard_id_param)) {}
+using InstructionVariant =
+    std::variant<InitCommInstruction, UseCommInstruction, CopyInstruction,
+                 SendInstruction, ReceiveInstruction>;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, tensor_shard_id={})",
-                       request_id, tensor_shard_id);
-  }
+struct Instruction {
+  Instruction() = delete;
+
+  template <typename T>
+  explicit Instruction(T inst) : instr(std::move(inst)) {}
+
+  ~Instruction() = default;
+  Instruction(const Instruction&) = default;
+  Instruction& operator=(const Instruction&) = default;
+  Instruction(Instruction&&) = default;
+  Instruction& operator=(Instruction&&) = default;
+
+  [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static AllocateTensorRequest Deserialize(const BinaryRange& range);
+  static Instruction Deserialize(const BinaryRange& range);
 
-  const TensorShardIdentifier tensor_shard_id;
+  void Embellish(
+      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
+
+  InstructionVariant instr;
 };
-using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================
