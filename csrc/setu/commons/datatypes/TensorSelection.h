@@ -21,6 +21,7 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorDimShard.h"
 #include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
@@ -174,6 +175,21 @@ struct TensorSelection {
     return std::make_shared<TensorSelection>(name, new_indices);
   }
 
+  /**
+   * @brief Narrow the selection to only include indices within a shard spec
+   *
+   * Creates a new TensorSelection that represents the intersection of the
+   * current selection with the region defined by the shard specification.
+   * This is useful for restricting a selection to a specific shard's bounds.
+   *
+   * @param spec The shard specification defining the region to narrow to.
+   *             Must have the same tensor name as this selection.
+   * @return New TensorSelection containing only indices that are both in the
+   *         current selection and within the shard spec's bounds
+   * @throws std::invalid_argument if the tensor names do not match
+   */
+  [[nodiscard]] TensorSelectionPtr Narrow(TensorShardSpecPtr spec) const;
+
   const TensorName name;
 
  private:
@@ -190,6 +206,68 @@ struct TensorSelection {
 
   const TensorIndicesMap indices;
 };
+//==============================================================================
+/**
+ * @brief Create a TensorSelection from a TensorShard
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor owned by the given shard.
+ *
+ * @param shard The TensorShard to create a selection from
+ * @return TensorSelectionPtr A selection covering the shard's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
+  ASSERT_VALID_POINTER_ARGUMENT(shard);
+
+  TensorIndicesMap result_indices;
+  for (const auto& [dim_name, dim_shard] : shard->dim_shards) {
+    // Create bitset for the full dimension size
+    TensorIndicesBitset bitset(dim_shard.dim_size);
+    // Set bits only for the slice owned by this shard
+    for (TensorIndex i = dim_shard.slice->start; i < dim_shard.slice->end;
+         ++i) {
+      bitset[static_cast<std::size_t>(i)] = true;
+    }
+    result_indices[dim_name] = bitset;
+  }
+  return std::make_shared<TensorSelection>(shard->name, result_indices);
+}
+//==============================================================================
+/**
+ * @brief Create a TensorSelection from a TensorShardSpec
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor defined by the given shard specification. Unlike
+ * CreateSelectionFromShard, this works with TensorShardSpec which uses a vector
+ * of TensorDimSpec instead of a map of TensorDimShard.
+ *
+ * @param spec The TensorShardSpec to create a selection from
+ * @return TensorSelectionPtr A selection covering the spec's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShardSpec(
+    TensorShardSpecPtr spec) {
+  ASSERT_VALID_POINTER_ARGUMENT(spec);
+
+  TensorIndicesMap result_indices;
+  for (const auto& dim_spec : spec->dims) {
+    // Create bitset for the full dimension size
+    TensorIndicesBitset bitset(dim_spec.size);
+    // Set bits only for the range owned by this shard [start, end)
+    for (TensorIndex i = dim_spec.start; i < dim_spec.end; ++i) {
+      bitset[static_cast<std::size_t>(i)] = true;
+    }
+    result_indices[dim_spec.name] = bitset;
+  }
+  return std::make_shared<TensorSelection>(spec->name, result_indices);
+}
+//==============================================================================
+inline TensorSelectionPtr TensorSelection::Narrow(
+    TensorShardSpecPtr spec) const {
+  ASSERT_VALID_ARGUMENTS(name == spec->name,
+                         "Tried to narrow {} using shard spec of tensor {}",
+                         name, spec->name);
+  return GetIntersection(CreateSelectionFromShardSpec(spec));
+}
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

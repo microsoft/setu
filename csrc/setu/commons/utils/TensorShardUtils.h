@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,17 +19,25 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
-#include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardSpec.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::commons::utils {
 //==============================================================================
 using setu::commons::TensorIndex;
 using setu::commons::TensorIndicesBitset;
 using setu::commons::TensorIndicesMap;
+using setu::commons::TensorName;
+using setu::commons::datatypes::TensorShardPtr;
+using setu::commons::datatypes::TensorShardSpecPtr;
+//==============================================================================
+// Forward declaration to avoid circular dependency
+namespace setu::commons::datatypes {
+struct TensorSelection;
+using TensorSelectionPtr = std::shared_ptr<TensorSelection>;
+}  // namespace setu::commons::datatypes
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorSelectionPtr;
-using setu::commons::datatypes::TensorShardPtr;
 //==============================================================================
 /**
  * @brief Create a TensorSelection from a TensorShard
@@ -57,5 +65,33 @@ inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
   return std::make_shared<TensorSelection>(shard->name, result_indices);
 }
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+/**
+ * @brief Create a TensorSelection from a TensorShardSpec
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor defined by the given shard specification. Unlike
+ * CreateSelectionFromShard, this works with TensorShardSpec which uses a vector
+ * of TensorDimSpec instead of a map of TensorDimShard.
+ *
+ * @param spec The TensorShardSpec to create a selection from
+ * @return TensorSelectionPtr A selection covering the spec's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShardSpec(
+    TensorShardSpecPtr spec) {
+  ASSERT_VALID_POINTER_ARGUMENT(spec);
+
+  TensorIndicesMap result_indices;
+  for (const auto& dim_spec : spec->dims) {
+    // Create bitset for the full dimension size
+    TensorIndicesBitset bitset(dim_spec.size);
+    // Set bits only for the range owned by this shard [start, end)
+    for (TensorIndex i = dim_spec.start; i < dim_spec.end; ++i) {
+      bitset[static_cast<std::size_t>(i)] = true;
+    }
+    result_indices[dim_spec.name] = bitset;
+  }
+  return std::make_shared<TensorSelection>(spec->name, result_indices);
+}
+//==============================================================================
+}  // namespace setu::commons::utils
 //==============================================================================
