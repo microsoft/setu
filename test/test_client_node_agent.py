@@ -99,7 +99,7 @@ def _register_tensor(endpoint: str, tensor_name: str, dims_spec=None):
 def _register_and_get_handle(endpoint: str, tensor_name: str, dims_spec):
     """Register a tensor and get its IPC handle."""
     from setu._client import Client
-    from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
+    from setu._commons.datatypes import Device, TensorShardSpec
 
     client = Client()
     client.connect(endpoint)
@@ -215,8 +215,10 @@ def test_get_tensor_handle(infrastructure):
     )
     spec_dict = tensor_ipc_spec.to_dict()
 
-    assert spec_dict.get("tensor_size") == [4, 8], \
-        f"Unexpected tensor size: {spec_dict.get('tensor_size')}"
+    assert spec_dict.get("tensor_size") == [
+        4,
+        8,
+    ], f"Unexpected tensor size: {spec_dict.get('tensor_size')}"
 
     # Verify spec contains required fields
     required_fields = [

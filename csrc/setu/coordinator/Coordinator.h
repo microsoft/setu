@@ -64,34 +64,127 @@ class Coordinator {
   void Stop();
 
  private:
-  void StartHandlerLoop();
-  void StopHandlerLoop();
+  //============================================================================
+  // Architecture: Gateway + Queues
+  //
+  // Both the Handler and Executor have to send messages back to the NodeAgent
+  // through a Router socket. But, ZMQ sockets are not thread-safe. So, we
+  // would need to bind two ZMQ sockets on different ports, because we cannot
+  // bind two sockets to the same port using the same shared context. To
+  // workaround this complexity, we use a single I/O thread (Gateway) that owns
+  // the ZMQ socket. Internal components (Handler, Executor) communicate with
+  // Gateway through thread-safe queues:
+  //
+  //   NodeAgents <---> [Gateway] <---> inbox_queue_  ---> Handler
+  //                        ^
+  //                        |
+  //                    outbox_queue_ <--- Handler / Executor
+  //
+  // This keeps ZMQ isolated to one thread and makes Handler/Executor pure
+  // business logic with no networking concerns.
+  //============================================================================
 
-  void StartExecutorLoop();
-  void StopExecutorLoop();
+  //============================================================================
+  // Message types for internal queues
+  //============================================================================
+  using CoordinatorMessage = setu::commons::messages::CoordinatorMessage;
+  using NodeAgentRequest = setu::commons::messages::NodeAgentRequest;
 
-  void HandlerLoop();
-  void ExecutorLoop();
+  struct InboxMessage {
+    Identity node_agent_identity;
+    NodeAgentRequest request;
+  };
 
-  void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                              const RegisterTensorShardRequest& request);
-  void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                              const SubmitCopyRequest& request);
-  void HandleNodeAgentRequest(const Identity& node_agent_identity,
-                              const WaitForCopyRequest& request);
+  struct OutboxMessage {
+    Identity node_agent_identity;
+    CoordinatorMessage message;
+  };
 
-  void InitZmqSockets();
-  void CloseZmqSockets();
+  //============================================================================
+  // Gateway: Owns ZMQ socket, handles all network I/O
+  //============================================================================
+  struct Gateway {
+    Gateway(std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
+            Queue<InboxMessage>& inbox_queue,
+            Queue<OutboxMessage>& outbox_queue);
+    ~Gateway();
+
+    void Start();
+    void Stop();
+
+   private:
+    void InitSockets();
+    void CloseSockets();
+    void Loop();
+
+    std::shared_ptr<zmq::context_t> zmq_context_;
+    std::size_t port_;
+
+    Queue<InboxMessage>& inbox_queue_;
+    Queue<OutboxMessage>& outbox_queue_;
+
+    ZmqSocketPtr node_agent_socket_;
+
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+  };
+
+  //============================================================================
+  // Handler: Processes incoming requests (pure business logic, no ZMQ)
+  //============================================================================
+  struct Handler {
+    Handler(Queue<InboxMessage>& inbox_queue,
+            Queue<OutboxMessage>& outbox_queue);
+
+    void Start();
+    void Stop();
+
+   private:
+    void Loop();
+
+    void HandleNodeAgentRequest(const Identity& node_agent_identity,
+                                const RegisterTensorShardRequest& request);
+    void HandleNodeAgentRequest(const Identity& node_agent_identity,
+                                const SubmitCopyRequest& request);
+    void HandleNodeAgentRequest(const Identity& node_agent_identity,
+                                const WaitForCopyRequest& request);
+
+    Queue<InboxMessage>& inbox_queue_;
+    Queue<OutboxMessage>& outbox_queue_;
+
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+  };
+
+  //============================================================================
+  // Executor: Dispatches execution plans to NodeAgents (pure business logic)
+  //============================================================================
+  struct Executor {
+    Executor(Queue<OutboxMessage>& outbox_queue);
+
+    void Start();
+    void Stop();
+
+   private:
+    void Loop();
+
+    Queue<OutboxMessage>& outbox_queue_;
+
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+  };
 
   std::size_t port_;
+
   std::shared_ptr<zmq::context_t> zmq_context_;
-  ZmqSocketPtr node_agent_socket_;
 
-  std::thread handler_thread_;
-  std::thread executor_thread_;
+  // Internal message queues
+  Queue<InboxMessage> inbox_queue_;
+  Queue<OutboxMessage> outbox_queue_;
 
-  std::atomic<bool> handler_running_{false};
-  std::atomic<bool> executor_running_{false};
+  std::unique_ptr<Gateway> gateway_;
+  std::unique_ptr<Handler> handler_;
+  std::unique_ptr<Executor> executor_;
 };
 //==============================================================================
 }  // namespace setu::coordinator
