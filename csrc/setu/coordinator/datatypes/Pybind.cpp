@@ -2,7 +2,7 @@
 // Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
 // Corporation
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License")
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "Pybind.h"
+#include "setu/coordinator/datatypes/Pybind.h"
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
@@ -27,6 +27,7 @@
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
+using setu::commons::DeviceRank;
 using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelectionPtr;

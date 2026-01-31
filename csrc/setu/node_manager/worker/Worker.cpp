@@ -34,9 +34,8 @@ using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 using setu::ir::Instruction;
 //==============================================================================
-constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
-//==============================================================================
-Worker::Worker(Device device, std::size_t port) : device_(device), port_(port) {
+Worker::Worker(Device device, std::size_t port)
+    : device_(device), port_(port), worker_running_{false} {
   InitZmqSockets();
 }
 
@@ -46,15 +45,24 @@ Worker::~Worker() {
 }
 
 void Worker::Start() {
+  if (worker_running_) return;
+
   LOG_DEBUG("Starting Worker");
   if (!worker_running_.load()) {
-    StartExecutorLoop();
+    worker_running_ = true;
+    worker_thread_ = std::thread(
+        SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
   }
 }
 
 void Worker::Stop() {
-  LOG_DEBUG("Stopping Worker");
-  StopExecutorLoop();
+  if (!worker_running_) {
+    return;
+  }
+  worker_running_ = false;
+  if (worker_thread_.joinable()) {
+    worker_thread_.join();
+  }
 }
 
 void Worker::InitZmqSockets() {
@@ -77,29 +85,10 @@ void Worker::CloseZmqSockets() {
   LOG_DEBUG("Closed ZMQ sockets successfully");
 }
 
-void Worker::StartExecutorLoop() {
-  LOG_DEBUG("Starting executor loop");
+void Worker::WorkerLoop() {
+  LOG_DEBUG("WorkerLoop started on device {}", device_);
 
-  executor_thread_ = std::thread(SETU_LAUNCH_THREAD(
-      [this]() { this->ExecutorLoop(); }, "ExecutorLoopThread"));
-}
-
-void Worker::StopExecutorLoop() {
-  LOG_DEBUG("Stopping executor loop");
-
-  worker_running_ = false;
-
-  if (executor_thread_.joinable()) {
-    executor_thread_.join();
-  }
-
-  LOG_DEBUG("Executor loop stopped");
-}
-
-void Worker::ExecutorLoop() {
-  LOG_DEBUG("Entering executor loop");
-
-  worker_running_ = true;
+  this->Setup();
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
     auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
@@ -108,7 +97,7 @@ void Worker::ExecutorLoop() {
     LOG_DEBUG("Worker received program with {} instructions", program.size());
 
     // Execute each instruction in the program
-    Execute(program);
+    this->Execute(program);
 
     LOG_DEBUG("Worker completed executing all instructions");
 
@@ -116,21 +105,6 @@ void Worker::ExecutorLoop() {
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);
     Comm::Send(socket_, response);
   }
-}
-
-void Worker::Execute(const Program& program) {
-  LOG_DEBUG("Worker executing program with {} instructions", program.size());
-
-  for (const auto& instruction : program) {
-    ExecuteInstruction(instruction);
-  }
-
-  LOG_DEBUG("Worker completed executing program");
-}
-
-void Worker::ExecuteInstruction(const Instruction& instruction) {
-  LOG_DEBUG("Executing instruction (type index: {})", instruction.index());
-  // TODO: Implement instruction execution logic
 }
 //==============================================================================
 }  // namespace setu::node_manager::worker

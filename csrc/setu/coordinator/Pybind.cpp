@@ -14,12 +14,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "coordinator/datatypes/Pybind.h"
+#include "setu/coordinator/datatypes/Pybind.h"
 
-#include "commons/Logging.h"
-#include "commons/StdCommon.h"
-#include "commons/TorchCommon.h"
-#include "coordinator/Coordinator.h"
+#include "setu/commons/Logging.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/TorchCommon.h"
+#include "setu/coordinator/Coordinator.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================

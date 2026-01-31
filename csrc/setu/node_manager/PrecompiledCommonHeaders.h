@@ -34,6 +34,9 @@
 // CUDA headers (used in all CUDA functionality)
 #include <cuda_runtime_api.h>  // NOLINT
 
+// NCCL headers (used for GPU communication)
+#include <nccl.h>  // NOLINT
+
 // Common Setu headers (stable interfaces)
 #include "commons/Logging.h"
 //==============================================================================

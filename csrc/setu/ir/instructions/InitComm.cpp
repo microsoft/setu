@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,14 +14,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "setu/ir/instructions/InitComm.h"
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/TorchCommon.h"
+namespace setu::ir {
 //==============================================================================
-namespace setu::coordinator::datatypes {
+
+std::string InitCommInstruction::ToString() const {
+  return std::format("InitCommInstruction(device_to_rank_size={})",
+                     device_to_rank.size());
+}
+
+void InitCommInstruction::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(comm_id, device_to_rank);
+}
+
+InitCommInstruction InitCommInstruction::Deserialize(const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [comm_id, device_to_rank] =
+      reader.ReadFields<ncclUniqueId,
+                        std::unordered_map<DeviceRank, std::int32_t>>();
+  return InitCommInstruction(comm_id, std::move(device_to_rank));
+}
+
 //==============================================================================
-void InitDatatypesPybindSubmodule(py::module_& pm);
-//==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::ir
 //==============================================================================

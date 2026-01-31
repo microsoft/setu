@@ -16,67 +16,66 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include <cuda_runtime.h>
+#include <nccl.h>
+//==============================================================================
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
-#include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/Device.h"
-#include "commons/datatypes/TensorShardRef.h"
-#include "commons/datatypes/TensorShardSpec.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
 #include "ir/Instruction.h"
+#include "node_manager/worker/Worker.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
-using setu::commons::CopyOperationId;
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
-using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
-using setu::commons::datatypes::TensorShardRef;
-using setu::commons::datatypes::TensorShardSpec;
-using setu::commons::enums::ErrorCode;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::ir::CopyInstruction;
+using setu::ir::InitCommInstruction;
 using setu::ir::Instruction;
 using setu::ir::Program;
 using setu::ir::ReceiveInstruction;
 using setu::ir::SendInstruction;
 using setu::ir::UseCommInstruction;
 //==============================================================================
-class Worker {
+
+class NCCLWorker : public Worker {
  public:
-  Worker(Device device, std::size_t port);
-  ~Worker();
+  NCCLWorker(Device device, std::size_t reply_port);
+  ~NCCLWorker();
 
-  void Start();
-  void Stop();
+  void Execute(const Program& program) override;
+  void Setup() override;
 
-  [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
-  [[nodiscard]] const Device& GetDevice() const { return device_; }
+ private:
+  void ExecuteInstruction(const Instruction& instruction, bool& group_started);
 
-  virtual void Execute(const Program& program) = 0;
-  virtual void Setup() = 0;
+  void ExecuteInitComm(const InitCommInstruction& inst);
+  void ExecuteUseComm(const UseCommInstruction& inst);
+  void ExecuteCopy(const CopyInstruction& inst);
+  void ExecuteSend(const SendInstruction& inst);
+  void ExecuteReceive(const ReceiveInstruction& inst);
 
- protected:
-  void InitZmqSockets();
-  void CloseZmqSockets();
+  [[nodiscard]] static std::string CommIdToString(const ncclUniqueId& id);
+  [[nodiscard]] static ncclDataType_t ToNcclDataType(torch::Dtype dtype);
+  [[nodiscard]] static std::size_t GetDTypeSizeBytes(torch::Dtype dtype);
 
-  void WorkerLoop();
+  struct CommCacheEntry {
+    ncclComm_t nccl_comm;
+    std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
+  };
 
-  Device device_;
-
-  std::size_t port_;
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr socket_;
-
-  std::atomic<bool> worker_running_;
-
-  std::thread worker_thread_;
+  std::unordered_map<std::string, CommCacheEntry> comm_cache_;
+  std::string active_comm_key_;
+  cudaStream_t stream_;
 };
+
 //==============================================================================
 }  // namespace setu::node_manager::worker
 //==============================================================================

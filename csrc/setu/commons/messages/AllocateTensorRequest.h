@@ -19,38 +19,40 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/Types.h"
+#include "commons/datatypes/TensorShardIdentifier.h"
 #include "commons/messages/BaseRequest.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::TensorName;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct AllocateTensorRequest : public BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(TensorName tensor_name_param)
-      : BaseRequest(), tensor_name(std::move(tensor_name_param)) {}
+  explicit AllocateTensorRequest(TensorShardIdentifier tensor_shard_id_param)
+      : BaseRequest(), tensor_shard_id(std::move(tensor_shard_id_param)) {}
 
   /// @brief Constructs a request with explicit request ID (for
   /// deserialization).
   AllocateTensorRequest(RequestId request_id_param,
-                        TensorName tensor_name_param)
+                        TensorShardIdentifier tensor_shard_id_param)
       : BaseRequest(request_id_param),
-        tensor_name(std::move(tensor_name_param)) {}
+        tensor_shard_id(std::move(tensor_shard_id_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, tensor_name={})",
-                       request_id, tensor_name);
+    return std::format(
+        "AllocateTensorRequest(request_id={}, tensor_shard_id={})", request_id,
+        tensor_shard_id);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
   static AllocateTensorRequest Deserialize(const BinaryRange& range);
 
-  const TensorName tensor_name;
+  const TensorShardIdentifier tensor_shard_id;
 };
 using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
 

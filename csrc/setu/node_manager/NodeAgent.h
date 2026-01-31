@@ -28,12 +28,15 @@
 #include "commons/messages/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
+#include "ir/Instruction.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Planner.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
+using setu::commons::ConcurrentMap;
 using setu::commons::CopyOperationId;
+using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
 using setu::commons::NodeId;
@@ -43,6 +46,7 @@ using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::AllocateTensorRequest;
@@ -60,6 +64,7 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::ir::Program;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
 //==============================================================================
@@ -96,9 +101,11 @@ class NodeAgent {
   // Handler: Handles incoming messages from clients and coordinator
   //============================================================================
   struct Handler {
-    Handler(std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
-            const std::string& coordinator_endpoint,
-            Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+    Handler(
+        std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
+        const std::string& coordinator_endpoint,
+        Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+        ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup);
     ~Handler();
 
     void Start();
@@ -135,12 +142,14 @@ class NodeAgent {
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
     void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
 
-    void AllocateTensor(const TensorShardSpec& tensor_shard_spec);
+    void AllocateTensor(const TensorShardIdentifier& tensor_shard_id,
+                        const TensorShardSpec& tensor_shard_spec);
 
     std::shared_ptr<zmq::context_t> zmq_context_;
     std::size_t port_;
     std::string coordinator_endpoint_;
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
+    ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup_;
 
     ZmqSocketPtr client_socket_;
     ZmqSocketPtr coordinator_socket_;
@@ -167,10 +176,12 @@ class NodeAgent {
   // Executor: Executes plans by dispatching to workers
   //============================================================================
   struct Executor {
-    Executor(std::shared_ptr<zmq::context_t> zmq_context,
-             const std::string& coordinator_endpoint,
-             const std::vector<Device>& devices,
-             Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+    Executor(
+        std::shared_ptr<zmq::context_t> zmq_context,
+        const std::string& coordinator_endpoint,
+        const std::vector<Device>& devices,
+        Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+        ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup);
     ~Executor();
 
     void Start();
@@ -180,11 +191,13 @@ class NodeAgent {
     void InitSockets();
     void CloseSockets();
     void Loop();
+    void EmbellishProgram(Program& program);
 
     std::shared_ptr<zmq::context_t> zmq_context_;
     std::string coordinator_endpoint_;
     std::vector<Device> devices_;
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
+    ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup_;
 
     ZmqSocketPtr coordinator_socket_;
     std::unordered_map<DeviceRank, ZmqSocketPtr> worker_sockets_;
@@ -202,6 +215,11 @@ class NodeAgent {
   std::shared_ptr<zmq::context_t> zmq_context_;
 
   std::unordered_map<DeviceRank, std::unique_ptr<Worker>> workers_;
+
+  /// @brief Shared lookup: (TensorName, ShardId) -> DevicePtr
+  /// Handler populates this when allocating tensors, Executor reads it
+  /// Thread-safe concurrent map for access from both Handler and Executor
+  ConcurrentMap<TensorShardIdentifier, DevicePtr> device_ptrs_lookup_;
 
   // Executor queue: (copy_op_id, node_plan) pairs for execution
   Queue<std::pair<CopyOperationId, Plan>> executor_queue_;

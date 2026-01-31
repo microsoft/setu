@@ -49,6 +49,7 @@ add_custom_target(
           _commons_static
           _client
           _client_static
+          _ir
           _node_manager
           _node_manager_static
           _coordinator

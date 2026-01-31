@@ -14,29 +14,46 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#pragma once
 //==============================================================================
-namespace setu::commons::messages {
+#include <nccl.h>
 //==============================================================================
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
+//==============================================================================
+namespace setu::ir {
+//==============================================================================
+using setu::commons::DeviceRank;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
-  BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, tensor_shard_id);
-}
+struct InitCommInstruction {
+  InitCommInstruction(
+      ncclUniqueId comm_id,
+      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+      : comm_id(std::move(comm_id)),
+        device_to_rank(std::move(device_to_rank)) {}
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
-    const BinaryRange& range) {
-  BinaryReader reader(range);
-  auto [request_id_val, tensor_shard_id_val] =
-      reader.ReadFields<RequestId, TensorShardIdentifier>();
-  return AllocateTensorRequest(request_id_val, std::move(tensor_shard_id_val));
-}
+  ~InitCommInstruction() = default;
+  InitCommInstruction(const InitCommInstruction&) = default;
+  InitCommInstruction& operator=(const InitCommInstruction&) = default;
+  InitCommInstruction(InitCommInstruction&&) = default;
+  InitCommInstruction& operator=(InitCommInstruction&&) = default;
+
+  [[nodiscard]] std::string ToString() const;
+
+  void Serialize(BinaryBuffer& buffer) const;
+
+  static InitCommInstruction Deserialize(const BinaryRange& range);
+
+  ncclUniqueId comm_id;
+  std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
+};
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

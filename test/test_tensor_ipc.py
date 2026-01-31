@@ -57,7 +57,7 @@ def test_tensor_ipc_basic():
     from setu._commons.utils import prepare_tensor_ipc_spec
 
     # Create a shared tensor
-    original_tensor = torch.randn((1, 2, 3), device="cuda")
+    original_tensor = torch.randn((1, 2, 3), device="cuda:0")
     original_value = original_tensor[0][0][0].item()
 
     # Prepare IPC spec

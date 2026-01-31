@@ -45,6 +45,7 @@ struct TensorDimShard {
    * @param slice_param Slice specification defining which part of the dimension
    * this shard contains
    * @param stride_param Memory stride for accessing elements in this shard
+   * along this dimension
    *
    * @throws std::invalid_argument if any size parameter is 0 or if any pointer
    * is null

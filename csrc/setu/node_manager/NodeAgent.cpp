@@ -22,11 +22,13 @@
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
+using setu::commons::ConcurrentMap;
 using setu::commons::DeviceRank;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -49,6 +51,8 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
+using setu::ir::Instruction;
+using setu::ir::Program;
 using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
@@ -63,10 +67,12 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       coordinator_endpoint_(std::move(coordinator_endpoint)),
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()) {
-  handler_ = std::make_unique<Handler>(zmq_context_, port_,
-                                       coordinator_endpoint_, executor_queue_);
-  executor_ = std::make_unique<Executor>(zmq_context_, coordinator_endpoint_,
-                                         devices_, executor_queue_);
+  handler_ =
+      std::make_unique<Handler>(zmq_context_, port_, coordinator_endpoint_,
+                                executor_queue_, device_ptrs_lookup_);
+  executor_ =
+      std::make_unique<Executor>(zmq_context_, coordinator_endpoint_, devices_,
+                                 executor_queue_, device_ptrs_lookup_);
 }
 
 NodeAgent::~NodeAgent() {
@@ -127,11 +133,13 @@ void NodeAgent::Execute(Plan plan) {
 NodeAgent::Handler::Handler(
     std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
     const std::string& coordinator_endpoint,
-    Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
+    Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+    ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup)
     : zmq_context_(zmq_context),
       port_(port),
       coordinator_endpoint_(coordinator_endpoint),
-      executor_queue_(executor_queue) {
+      executor_queue_(executor_queue),
+      device_ptrs_lookup_(device_ptrs_lookup) {
   InitSockets();
 }
 
@@ -308,7 +316,41 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
 void NodeAgent::Handler::HandleAllocateTensorRequest(
     const AllocateTensorRequest& request) {
   LOG_DEBUG("Handling AllocateTensorRequest for request: {}", request);
-  AllocateTensor(tensor_name_to_spec_.at(request.tensor_name));
+  AllocateTensor(request.tensor_shard_id,
+                 tensor_name_to_spec_.at(request.tensor_shard_id.tensor_name));
+}
+
+void NodeAgent::Handler::AllocateTensor(
+    const TensorShardIdentifier& tensor_shard_id,
+    const TensorShardSpec& tensor_shard_spec) {
+  LOG_DEBUG("Allocating tensor shard: tensor_shard_id={}, tensor_shard_spec={}",
+            tensor_shard_id, tensor_shard_spec);
+
+  // Build the shape from dims (using owned size for each dimension)
+  std::vector<std::int64_t> shape;
+  shape.reserve(tensor_shard_spec.dims.size());
+  for (const auto& dim_spec : tensor_shard_spec.dims) {
+    shape.push_back(static_cast<std::int64_t>(dim_spec.GetOwnedSize()));
+  }
+
+  // Create tensor options with dtype and device from spec
+  auto options = torch::TensorOptions()
+                     .dtype(tensor_shard_spec.dtype)
+                     .device(tensor_shard_spec.device.torch_device);
+
+  torch::Tensor tensor = torch::empty(shape, options);
+
+  // Register the device pointer in the shared concurrent lookup (Executor reads
+  // this) Using insert_or_assign for thread-safe insertion
+  device_ptrs_lookup_.insert_or_assign(
+      tensor_shard_id, reinterpret_cast<DevicePtr>(tensor.data_ptr()));
+
+  // Store the tensor to keep it alive
+  tensor_name_to_tensor_[tensor_shard_spec.name] = std::move(tensor);
+
+  LOG_DEBUG("Allocated tensor '{}' with shape {} on device {}",
+            tensor_shard_spec.name, shape,
+            tensor_shard_spec.device.torch_device.str());
 }
 
 void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
@@ -388,43 +430,19 @@ void NodeAgent::Handler::HandleWaitForCopyResponse(
   request_id_to_client_identity_.erase(it);
 }
 
-void NodeAgent::Handler::AllocateTensor(
-    const TensorShardSpec& tensor_shard_spec) {
-  LOG_DEBUG("Allocating tensor shard: tensor_shard_spec={}", tensor_shard_spec);
-
-  // Build the shape from dims (using owned size for each dimension)
-  std::vector<std::int64_t> shape;
-  shape.reserve(tensor_shard_spec.dims.size());
-  for (const auto& dim_spec : tensor_shard_spec.dims) {
-    shape.push_back(static_cast<std::int64_t>(dim_spec.GetOwnedSize()));
-  }
-
-  // Create tensor options with dtype and device from spec
-  auto options = torch::TensorOptions()
-                     .dtype(tensor_shard_spec.dtype)
-                     .device(tensor_shard_spec.device.torch_device);
-
-  torch::Tensor tensor = torch::empty(shape, options);
-
-  // Store the tensor
-  tensor_name_to_tensor_[tensor_shard_spec.name] = std::move(tensor);
-
-  LOG_DEBUG("Successfully allocated tensor '{}' with shape {} on device {}",
-            tensor_shard_spec.name, shape,
-            tensor_shard_spec.device.torch_device.str());
-}
-
 //==============================================================================
 // Executor Implementation
 //==============================================================================
 NodeAgent::Executor::Executor(
     std::shared_ptr<zmq::context_t> zmq_context,
     const std::string& coordinator_endpoint, const std::vector<Device>& devices,
-    Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
+    Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+    ConcurrentMap<TensorShardIdentifier, DevicePtr>& device_ptrs_lookup)
     : zmq_context_(zmq_context),
       coordinator_endpoint_(coordinator_endpoint),
       devices_(devices),
-      executor_queue_(executor_queue) {
+      executor_queue_(executor_queue),
+      device_ptrs_lookup_(device_ptrs_lookup) {
   InitSockets();
 }
 
@@ -495,13 +513,16 @@ void NodeAgent::Executor::Loop() {
 
       // For each worker program in the plan, send it to the corresponding
       // worker
-      for (const auto& [participant, program] : plan.program) {
+      for (auto& [participant, program] : plan.program) {
         // Ensure worker is ready before sending
         auto device_rank = participant.device_rank;
         auto it = worker_sockets_.find(device_rank);
         ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
                              "No socket found for device_rank: {}",
                              device_rank);
+
+        // Populate device ptrs for instructions
+        EmbellishProgram(program);
 
         // Send ExecuteProgramRequest to worker
         LOG_DEBUG("Sending program with {} instructions to worker {}",
@@ -527,6 +548,25 @@ void NodeAgent::Executor::Loop() {
     }
   }
 }
+
+void NodeAgent::Executor::EmbellishProgram(Program& program) {
+  auto const DevicePtrLookup =
+      [this](const TensorShardIdentifier& id) -> DevicePtr {
+    DevicePtr result = nullptr;
+    bool found = this->device_ptrs_lookup_.visit(
+        id, [&result](const auto& entry) { result = entry.second; });
+    ASSERT_VALID_RUNTIME(found,
+                         "Embellish failed: Tensor {} (Shard {}) not found in "
+                         "NodeAgent registry.",
+                         id.tensor_name, id.shard_id);
+    return result;
+  };
+
+  for (auto& instr : program) {
+    instr.Embellish(DevicePtrLookup);
+  }
+}
+
 //==============================================================================
 }  // namespace setu::node_manager
 //==============================================================================

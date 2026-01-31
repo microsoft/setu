@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,14 +14,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "commons/datatypes/TensorShardIdentifier.h"
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/TorchCommon.h"
+namespace setu::commons::datatypes {
 //==============================================================================
-namespace setu::coordinator::datatypes {
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
-void InitDatatypesPybindSubmodule(py::module_& pm);
+
+std::string TensorShardIdentifier::ToString() const {
+  return std::format("TensorShardIdentifier(name={}, shard_id={})", tensor_name,
+                     boost::uuids::to_string(shard_id));
+}
+
+void TensorShardIdentifier::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(tensor_name, shard_id);
+}
+
+TensorShardIdentifier TensorShardIdentifier::Deserialize(
+    const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [name, id] = reader.ReadFields<TensorName, ShardId>();
+  return TensorShardIdentifier(std::move(name), std::move(id));
+}
+
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::commons::datatypes
 //==============================================================================

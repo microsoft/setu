@@ -16,6 +16,9 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include <functional>
+#include <type_traits>
+//==============================================================================
 // Boost headers
 #include <boost/algorithm/hex.hpp>
 #include <boost/container_hash/hash.hpp>
@@ -26,6 +29,7 @@
 #include <boost/thread/concurrent_queues/queue_op_status.hpp>
 #include <boost/thread/concurrent_queues/sync_priority_queue.hpp>
 #include <boost/thread/concurrent_queues/sync_queue.hpp>
+#include <boost/unordered/concurrent_flat_map.hpp>
 #include <boost/uuid/detail/md5.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid.hpp>
@@ -38,6 +42,9 @@ template <typename... Args>
 using Queue = ::boost::concurrent::sync_queue<Args...>;
 template <typename... Args>
 using PriorityQueue = ::boost::concurrent::sync_priority_queue<Args...>;
+template <typename Key, typename Value, typename Hash = boost::hash<Key>,
+          typename Pred = std::equal_to<Key>>
+using ConcurrentMap = ::boost::concurrent_flat_map<Key, Value, Hash, Pred>;
 //==============================================================================
 /**
  * @brief Generate a random UUID
