@@ -154,13 +154,14 @@ def _run_client_get_handle(endpoint: str, tensor_name: str, result_queue):
         result_queue.put({"success": False, "error": str(e)})
 
 
-@pytest.mark.gpu
-def test_register_tensor_shard():
-    """Test registering a tensor shard through Client -> NodeAgent -> Coordinator."""
+@pytest.fixture(scope="module")
+def infrastructure():
+    """
+    Start Coordinator and NodeAgent once for all tests in this module.
+    """
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
-    # Ports
     coordinator_port = 29000
     node_agent_port = 29100
     coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
@@ -170,7 +171,6 @@ def test_register_tensor_shard():
     coordinator_ready = ctx.Event()
     node_agent_ready = ctx.Event()
     stop_event = ctx.Event()
-    result_queue = ctx.Queue()
 
     # Start Coordinator
     coordinator_proc = ctx.Process(
@@ -197,188 +197,110 @@ def test_register_tensor_shard():
     node_agent_proc.start()
     assert node_agent_ready.wait(timeout=10), "NodeAgent failed to start"
 
-    # Give infrastructure time to fully initialize
-    time.sleep(0.5)
+    # Brief delay for initialization
+    time.sleep(0.1)
 
-    try:
-        # Run client
+    # Yield infrastructure for tests to use
+    yield {
+        "client_endpoint": client_endpoint,
+        "ctx": ctx,
+    }
+
+    # Cleanup
+    stop_event.set()
+    time.sleep(0.1)
+    for proc in [node_agent_proc, coordinator_proc]:
+        proc.join(timeout=3)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=1)
+
+
+@pytest.mark.gpu
+def test_register_tensor_shard(infrastructure):
+    """Test registering a tensor shard through Client -> NodeAgent -> Coordinator."""
+    client_endpoint = infrastructure["client_endpoint"]
+    ctx = infrastructure["ctx"]
+    result_queue = ctx.Queue()
+
+    # Run client
+    client_proc = ctx.Process(
+        target=_run_client_register_tensor,
+        args=(client_endpoint, "test_tensor", result_queue),
+    )
+    client_proc.start()
+    client_proc.join(timeout=10)
+
+    assert (
+        client_proc.exitcode == 0
+    ), f"Client process failed: {client_proc.exitcode}"
+
+    result = result_queue.get(timeout=3)
+    assert result["success"], f"Client error: {result.get('error')}"
+    assert result["has_shard_ref"], "Should receive a valid TensorShardRef"
+    assert result["tensor_name"] == "test_tensor"
+
+
+@pytest.mark.gpu
+def test_get_tensor_handle(infrastructure):
+    """Test getting a tensor IPC handle after registration."""
+    client_endpoint = infrastructure["client_endpoint"]
+    ctx = infrastructure["ctx"]
+    result_queue = ctx.Queue()
+
+    # Run client
+    client_proc = ctx.Process(
+        target=_run_client_get_handle,
+        args=(client_endpoint, "handle_test_tensor", result_queue),
+    )
+    client_proc.start()
+    client_proc.join(timeout=10)
+
+    assert (
+        client_proc.exitcode == 0
+    ), f"Client process failed: {client_proc.exitcode}"
+
+    result = result_queue.get(timeout=3)
+    assert result["success"], f"Client error: {result.get('error')}"
+    assert result["tensor_size"] == [
+        4,
+        8,
+    ], f"Unexpected tensor size: {result['tensor_size']}"
+
+    # Verify spec contains required fields
+    spec_dict = result["spec_dict"]
+    required_fields = [
+        "tensor_size",
+        "tensor_stride",
+        "storage_handle",
+        "storage_size_bytes",
+        "ref_counter_handle",
+        "event_handle",
+    ]
+    for field in required_fields:
+        assert field in spec_dict, f"Missing field: {field}"
+
+
+@pytest.mark.gpu
+def test_multiple_tensor_registrations(infrastructure):
+    """Test registering multiple tensors from a single client."""
+    client_endpoint = infrastructure["client_endpoint"]
+    ctx = infrastructure["ctx"]
+
+    # Register 3 tensors sequentially
+    for i in range(3):
+        result_queue = ctx.Queue()
         client_proc = ctx.Process(
             target=_run_client_register_tensor,
-            args=(client_endpoint, "test_tensor", result_queue),
+            args=(client_endpoint, f"tensor_{i}", result_queue),
         )
         client_proc.start()
-        client_proc.join(timeout=15)
+        client_proc.join(timeout=10)
 
-        assert (
-            client_proc.exitcode == 0
-        ), f"Client process failed: {client_proc.exitcode}"
-
-        result = result_queue.get(timeout=5)
-        assert result["success"], f"Client error: {result.get('error')}"
-        assert result["has_shard_ref"], "Should receive a valid TensorShardRef"
-        assert result["tensor_name"] == "test_tensor"
-
-    finally:
-        # Cleanup
-        stop_event.set()
-        time.sleep(0.3)
-        for proc in [node_agent_proc, coordinator_proc]:
-            proc.join(timeout=5)
-            if proc.is_alive():
-                proc.terminate()
-
-
-@pytest.mark.gpu
-def test_get_tensor_handle():
-    """Test getting a tensor IPC handle after registration."""
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    # Ports (different from other test to avoid conflicts)
-    coordinator_port = 29010
-    node_agent_port = 29110
-    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
-    client_endpoint = f"tcp://localhost:{node_agent_port}"
-
-    ctx = mp.get_context("spawn")
-    coordinator_ready = ctx.Event()
-    node_agent_ready = ctx.Event()
-    stop_event = ctx.Event()
-    result_queue = ctx.Queue()
-
-    # Start Coordinator
-    coordinator_proc = ctx.Process(
-        target=_run_coordinator,
-        args=(
-            coordinator_port,
-            coordinator_ready,
-            stop_event,
-        ),
-    )
-    coordinator_proc.start()
-    assert coordinator_ready.wait(timeout=10), "Coordinator failed to start"
-
-    # Start NodeAgent
-    node_agent_proc = ctx.Process(
-        target=_run_node_agent,
-        args=(
-            node_agent_port,
-            coordinator_endpoint,
-            node_agent_ready,
-            stop_event,
-        ),
-    )
-    node_agent_proc.start()
-    assert node_agent_ready.wait(timeout=10), "NodeAgent failed to start"
-
-    time.sleep(0.5)
-
-    try:
-        # Run client
-        client_proc = ctx.Process(
-            target=_run_client_get_handle,
-            args=(client_endpoint, "handle_test_tensor", result_queue),
-        )
-        client_proc.start()
-        client_proc.join(timeout=20)
-
-        assert (
-            client_proc.exitcode == 0
-        ), f"Client process failed: {client_proc.exitcode}"
-
-        result = result_queue.get(timeout=5)
-        assert result["success"], f"Client error: {result.get('error')}"
-        assert result["tensor_size"] == [
-            4,
-            8,
-        ], f"Unexpected tensor size: {result['tensor_size']}"
-
-        # Verify spec contains required fields
-        spec_dict = result["spec_dict"]
-        required_fields = [
-            "tensor_size",
-            "tensor_stride",
-            "storage_handle",
-            "storage_size_bytes",
-            "ref_counter_handle",
-            "event_handle",
-        ]
-        for field in required_fields:
-            assert field in spec_dict, f"Missing field: {field}"
-
-    finally:
-        stop_event.set()
-        time.sleep(0.3)
-        for proc in [node_agent_proc, coordinator_proc]:
-            proc.join(timeout=5)
-            if proc.is_alive():
-                proc.terminate()
-
-
-@pytest.mark.gpu
-def test_multiple_tensor_registrations():
-    """Test registering multiple tensors from a single client."""
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    coordinator_port = 29020
-    node_agent_port = 29120
-    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
-    client_endpoint = f"tcp://localhost:{node_agent_port}"
-
-    ctx = mp.get_context("spawn")
-    coordinator_ready = ctx.Event()
-    node_agent_ready = ctx.Event()
-    stop_event = ctx.Event()
-    result_queue = ctx.Queue()
-
-    coordinator_proc = ctx.Process(
-        target=_run_coordinator,
-        args=(
-            coordinator_port,
-            coordinator_ready,
-            stop_event,
-        ),
-    )
-    coordinator_proc.start()
-    assert coordinator_ready.wait(timeout=10)
-
-    node_agent_proc = ctx.Process(
-        target=_run_node_agent,
-        args=(
-            node_agent_port,
-            coordinator_endpoint,
-            node_agent_ready,
-            stop_event,
-        ),
-    )
-    node_agent_proc.start()
-    assert node_agent_ready.wait(timeout=10)
-
-    time.sleep(0.5)
-
-    try:
-        # Register 3 tensors sequentially
-        for i in range(3):
-            client_proc = ctx.Process(
-                target=_run_client_register_tensor,
-                args=(client_endpoint, f"tensor_{i}", result_queue),
-            )
-            client_proc.start()
-            client_proc.join(timeout=15)
-
-            assert client_proc.exitcode == 0
-            result = result_queue.get(timeout=5)
-            assert result["success"], f"Tensor {i} failed: {result.get('error')}"
-            assert result["has_shard_ref"]
-
-    finally:
-        stop_event.set()
-        time.sleep(0.3)
-        for proc in [node_agent_proc, coordinator_proc]:
-            proc.join(timeout=5)
-            if proc.is_alive():
-                proc.terminate()
+        assert client_proc.exitcode == 0
+        result = result_queue.get(timeout=3)
+        assert result["success"], f"Tensor {i} failed: {result.get('error')}"
+        assert result["has_shard_ref"]
 
 
 if __name__ == "__main__":
