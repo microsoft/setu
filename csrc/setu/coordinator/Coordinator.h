@@ -180,6 +180,7 @@ class Coordinator {
 
     /// Stores the first CopySpec received for each (src, dst) pair for
     /// validation
+    /// TODO: we might have copies with distinct TensorSelections, we need to address that
     std::map<CopyKey, CopySpec> pending_copy_specs_;
 
     /// Tracks NodeAgents waiting for SubmitCopy response
