@@ -51,6 +51,7 @@ add_custom_target(
           _client_static
           _node_manager
           _node_manager_static
+          _metastore_static
           _coordinator
           _coordinator_static
   COMMENT "Build all default targets")

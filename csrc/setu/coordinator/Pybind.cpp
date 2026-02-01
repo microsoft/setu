@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "coordinator/datatypes/Pybind.h"
+#include "metastore/datatypes/Pybind.h"
 
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
@@ -36,7 +36,7 @@ void InitCoordinatorPybindClass(py::module_& m) {
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   setu::commons::Logger::InitializeLogLevel();
 
-  setu::coordinator::datatypes::InitDatatypesPybindSubmodule(m);
+  setu::metastore::datatypes::InitDatatypesPybindSubmodule(m);
   setu::coordinator::InitCoordinatorPybindClass(m);
 }
 //==============================================================================

@@ -13,8 +13,8 @@ void SubmitCopyResponse::Serialize(BinaryBuffer& buffer) const {
 
 SubmitCopyResponse SubmitCopyResponse::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, error_code_val] =
-      reader.ReadFields<RequestId, ErrorCode>();
-  return SubmitCopyResponse(request_id_val, error_code_val);
+  auto [request_id_val, copy_op_id, error_code_val] =
+      reader.ReadFields<RequestId, CopyOperationId, ErrorCode>();
+  return SubmitCopyResponse(request_id_val, copy_op_id, error_code_val);
 }
 }  // namespace setu::commons::messages

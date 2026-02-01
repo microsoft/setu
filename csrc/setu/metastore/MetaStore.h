@@ -16,18 +16,90 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/ClassTraits.h"
+#include "commons/Logging.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
+#include "commons/Types.h"
+//==============================================================================
+#include "commons/datatypes/TensorDim.h"
+#include "commons/datatypes/TensorShardRef.h"
+#include "commons/datatypes/TensorShardSpec.h"
+#include "metastore/datatypes/TensorMetadata.h"
 //==============================================================================
 namespace setu::metastore {
+//==============================================================================
+using setu::commons::NodeId;
+using setu::commons::ShardId;
+using setu::commons::TensorName;
+using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::datatypes::TensorShardSpecPtr;
+using setu::metastore::datatypes::TensorMetadata;
+using setu::metastore::datatypes::TensorMetadataPtr;
 //==============================================================================
 /**
  * @brief Metadata store for managing tensor shard registrations
  *
- * TODO: Implement MetaStore functionality
+ * MetaStore is responsible for tracking all registered tensor shards in the
+ * system.
  */
 class MetaStore {
  public:
   MetaStore() = default;
+
+  /**
+   * @brief Registers a new tensor shard in the metadata store
+   *
+   * Creates a new shard registration from the provided specification. A unique
+   * shard ID is generated and assigned to the shard. The shard metadata is
+   * stored for future lookups.
+   *
+   * @param shard_spec The specification describing the tensor shard to register
+   * @param owner_node_id The NodeId of the NodeAgent that owns this shard
+   * @return TensorShardRef containing the assigned shard ID and metadata
+   */
+  [[nodiscard]] TensorShardRef RegisterTensorShard(
+      const TensorShardSpec& shard_spec /*[in]*/,
+      const NodeId& owner_node_id /*[in]*/);
+
+  [[nodiscard]] bool AllShardsRegistered(const TensorName& tensor_name) const;
+
+  /**
+   * @brief Returns the number of shards registered for a given tensor
+   *
+   * @param tensor_name The name of the tensor to query
+   * @return Number of shards registered for this tensor
+   */
+  [[nodiscard]] std::size_t GetNumShardsForTensor(
+      const TensorName& tensor_name /*[in]*/) const;
+
+  /**
+   * @brief Returns the tensor metadata for a fully registered tensor
+   *
+   * Builds and caches TensorMetadata when all shards have been registered.
+   * Returns nullptr if the tensor is not found or not fully registered.
+   *
+   * @param tensor_name The name of the tensor to query
+   * @return Shared pointer to const TensorMetadata if fully registered, nullptr
+   * otherwise
+   */
+  [[nodiscard]] TensorMetadataPtr GetTensorMetadata(
+      const TensorName& tensor_name /*[in]*/);
+
+ private:
+  /// Tensor shard data: expected size, registered size, shards, and owners
+  struct TensorShardsData {
+    std::size_t expected_size{0};
+    std::size_t registered_size{0};
+    std::unordered_map<ShardId, TensorShardSpecPtr> shards_specs;
+    std::unordered_map<ShardId, NodeId> shard_owners;
+  };
+
+  mutable std::recursive_mutex mutex_;
+  std::unordered_map<TensorName, TensorShardsData> tensor_shards_data_;
+  std::unordered_map<TensorName, TensorMetadataPtr> tensor_metadata_cache_;
 };
 //==============================================================================
 }  // namespace setu::metastore

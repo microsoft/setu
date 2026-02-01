@@ -22,7 +22,6 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
-#include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/messages/Messages.h"
@@ -96,8 +95,8 @@ class NodeAgent {
   // Handler: Handles incoming messages from clients and coordinator
   //============================================================================
   struct Handler {
-    Handler(std::shared_ptr<zmq::context_t> zmq_context, std::size_t port,
-            const std::string& coordinator_endpoint,
+    Handler(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
+            std::size_t port, const std::string& coordinator_endpoint,
             Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
     ~Handler();
 
@@ -137,6 +136,7 @@ class NodeAgent {
 
     void AllocateTensor(const TensorShardSpec& tensor_shard_spec);
 
+    NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
     std::size_t port_;
     std::string coordinator_endpoint_;
@@ -167,7 +167,7 @@ class NodeAgent {
   // Executor: Executes plans by dispatching to workers
   //============================================================================
   struct Executor {
-    Executor(std::shared_ptr<zmq::context_t> zmq_context,
+    Executor(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
              const std::string& coordinator_endpoint,
              const std::vector<Device>& devices,
              Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
@@ -181,6 +181,7 @@ class NodeAgent {
     void CloseSockets();
     void Loop();
 
+    NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
     std::string coordinator_endpoint_;
     std::vector<Device> devices_;

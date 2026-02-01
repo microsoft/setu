@@ -21,8 +21,9 @@
 #include "commons/Types.h"
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardSpec.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
 using setu::commons::TensorIndex;
 using setu::commons::TensorIndicesBitset;
@@ -30,6 +31,7 @@ using setu::commons::TensorIndicesMap;
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::datatypes::TensorShardPtr;
+using setu::commons::datatypes::TensorShardSpecPtr;
 //==============================================================================
 /**
  * @brief Create a TensorSelection from a TensorShard
@@ -57,5 +59,31 @@ inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
   return std::make_shared<TensorSelection>(shard->name, result_indices);
 }
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+/**
+ * @brief Create a TensorSelection from a TensorShardSpec
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor owned by the given shard spec.
+ *
+ * @param shard_spec The TensorShardSpec to create a selection from
+ * @return TensorSelectionPtr A selection covering the shard spec's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShard(
+    TensorShardSpecPtr shard_spec) {
+  ASSERT_VALID_POINTER_ARGUMENT(shard_spec);
+
+  TensorIndicesMap result_indices;
+  for (const auto& dim_spec : shard_spec->dims) {
+    // Create bitset for the full dimension size
+    TensorIndicesBitset bitset(dim_spec.size);
+    // Set bits only for the range owned by this shard spec
+    for (TensorIndex i = dim_spec.start; i < dim_spec.end; ++i) {
+      bitset[static_cast<std::size_t>(i)] = true;
+    }
+    result_indices[dim_spec.name] = bitset;
+  }
+  return std::make_shared<TensorSelection>(shard_spec->name, result_indices);
+}
+//==============================================================================
+}  // namespace setu::metastore::datatypes
 //==============================================================================

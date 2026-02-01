@@ -19,13 +19,13 @@
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/TensorSelection.h"
-#include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardSpec.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
+using setu::commons::ShardId;
 using setu::commons::datatypes::TensorSelectionPtr;
-using setu::commons::datatypes::TensorShardPtr;
-using setu::commons::datatypes::TensorShardsMap;
+using setu::commons::datatypes::TensorShardSpecPtr;
 //==============================================================================
 /**
  * @brief Maps tensor selection subsets to their owning shards for distributed
@@ -51,8 +51,9 @@ struct TensorOwnershipMap {
    * @throws std::invalid_argument if selection or shards are null, or if shards
    * is empty
    */
-  TensorOwnershipMap(TensorSelectionPtr selection_param,
-                     TensorShardsMap shards_param)
+  TensorOwnershipMap(
+      TensorSelectionPtr selection_param,
+      const std::unordered_map<ShardId, TensorShardSpecPtr>& shards_param)
       : shard_mapping(BuildOwnershipMapping(selection_param, shards_param)) {
     ASSERT_VALID_POINTER_ARGUMENT(selection_param);
     ASSERT_VALID_ARGUMENTS(shards_param.size() > 0, "Shards must be non-empty");
@@ -76,8 +77,8 @@ struct TensorOwnershipMap {
     return std::format("TensorOwnershipMap(mappings={})", shard_mapping);
   }
 
-  /// @brief Vector of (selection subset, owning shard) pairs
-  const std::vector<std::pair<TensorSelectionPtr, TensorShardPtr>>
+  /// @brief Vector of (selection subset, owning shard spec) pairs
+  const std::vector<std::pair<TensorSelectionPtr, TensorShardSpecPtr>>
       shard_mapping;
 
  private:
@@ -89,15 +90,17 @@ struct TensorOwnershipMap {
    * for non-empty intersections to avoid unnecessary entries.
    *
    * @param selection Tensor selection to analyze
-   * @param shards Available tensor shards to check against
-   * @return Vector of (selection subset, owning shard) pairs
+   * @param shards Available tensor shard specs to check against
+   * @return Vector of (selection subset, owning shard spec) pairs
    */
-  static std::vector<std::pair<TensorSelectionPtr, TensorShardPtr>>
-  BuildOwnershipMapping(TensorSelectionPtr selection, TensorShardsMap shards);
+  static std::vector<std::pair<TensorSelectionPtr, TensorShardSpecPtr>>
+  BuildOwnershipMapping(
+      TensorSelectionPtr selection,
+      const std::unordered_map<ShardId, TensorShardSpecPtr>& shards);
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorOwnershipMap object
 using TensorOwnershipMapPtr = std::shared_ptr<TensorOwnershipMap>;
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

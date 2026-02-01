@@ -21,36 +21,42 @@
 #include "commons/TorchCommon.h"
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorSelection.h"
-#include "commons/datatypes/TensorShard.h"
-#include "coordinator/datatypes/TensorMetadata.h"
-#include "coordinator/datatypes/TensorOwnershipMap.h"
+#include "commons/datatypes/TensorShardSpec.h"
+#include "metastore/datatypes/TensorMetadata.h"
+#include "metastore/datatypes/TensorOwnershipMap.h"
 //==============================================================================
-namespace setu::coordinator::datatypes {
+namespace setu::metastore::datatypes {
 //==============================================================================
+using setu::commons::NodeId;
+using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelectionPtr;
-using setu::commons::datatypes::TensorShardsMap;
-using setu::coordinator::datatypes::TensorMetadata;
-using setu::coordinator::datatypes::TensorOwnershipMap;
-using setu::coordinator::datatypes::TensorOwnershipMapPtr;
+using setu::commons::datatypes::TensorShardSpecPtr;
+using TensorShardSpecMap = std::unordered_map<ShardId, TensorShardSpecPtr>;
+using ShardOwnerMap = std::unordered_map<ShardId, NodeId>;
 //==============================================================================
 void InitTensorMetadataPybind(py::module_& m) {
   py::class_<TensorMetadata>(m, "TensorMetadata", py::module_local())
-      .def(py::init<TensorName, TensorDimMap, torch::Dtype, TensorShardsMap>(),
+      .def(py::init<TensorName, TensorDimMap, torch::Dtype, TensorShardSpecMap,
+                    ShardOwnerMap>(),
            py::arg("name"), py::arg("dims"), py::arg("dtype"),
-           py::arg("shards"))
+           py::arg("shards"), py::arg("shard_owners"))
       .def_readonly("name", &TensorMetadata::name, "Name of the tensor")
       .def_readonly("dims", &TensorMetadata::dims,
                     "Map of dimension names to TensorDim objects")
       .def_readonly("dtype", &TensorMetadata::dtype,
                     "Data type of tensor elements")
       .def_readonly("shards", &TensorMetadata::shards,
-                    "Map of node IDs to tensor shards")
+                    "Map of shard IDs to tensor shard specs")
+      .def_readonly("shard_owners", &TensorMetadata::shard_owners,
+                    "Map of shard IDs to owning NodeIds")
       .def_readonly("size", &TensorMetadata::size,
                     "Total number of elements in the tensor")
       .def("get_size", &TensorMetadata::GetSize,
            "Get total number of elements in the tensor")
+      .def("get_owner_node_ids", &TensorMetadata::GetOwnerNodeIds,
+           "Get all unique NodeIds that own shards of this tensor")
       .def("get_ownership_map", &TensorMetadata::GetOwnershipMap,
            py::arg("selection"), "Get ownership map for a tensor selection")
       .def("__str__", &TensorMetadata::ToString)
@@ -60,10 +66,10 @@ void InitTensorMetadataPybind(py::module_& m) {
 void InitTensorOwnershipMapPybind(py::module_& m) {
   py::class_<TensorOwnershipMap, TensorOwnershipMapPtr>(m, "TensorOwnershipMap",
                                                         py::module_local())
-      .def(py::init<TensorSelectionPtr, TensorShardsMap>(),
+      .def(py::init<TensorSelectionPtr, const TensorShardSpecMap&>(),
            py::arg("selection"), py::arg("shards"))
       .def_readonly("shard_mapping", &TensorOwnershipMap::shard_mapping,
-                    "Vector of (selection subset, owning shard) pairs")
+                    "Vector of (selection subset, owning shard spec) pairs")
       .def("get_num_shards", &TensorOwnershipMap::GetNumShards,
            "Get number of shard ownership mappings")
       .def("__str__", &TensorOwnershipMap::ToString)
@@ -77,5 +83,5 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitTensorOwnershipMapPybind(m);
 }
 //==============================================================================
-}  // namespace setu::coordinator::datatypes
+}  // namespace setu::metastore::datatypes
 //==============================================================================

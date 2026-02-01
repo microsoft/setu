@@ -84,11 +84,11 @@ struct TensorSelection {
 
   [[nodiscard]] bool IsEmpty() const {
     for (const auto& [dim_name, dim] : indices) {
-      if (!dim.none()) {
-        return false;
+      if (dim.none()) {
+        return true;
       }
     }
-    return true;
+    return false;
   }
 
   [[nodiscard]] bool IsCompatible(TensorSelectionPtr other) const {
@@ -105,6 +105,38 @@ struct TensorSelection {
     }
 
     return true;
+  }
+
+  /**
+   * @brief Check equality with another TensorSelection
+   *
+   * Two TensorSelections are equal if they have the same name and identical
+   * index bitsets for all dimensions.
+   *
+   * @param other The TensorSelection to compare against
+   * @return true if both selections are identical, false otherwise
+   */
+  [[nodiscard]] bool operator==(const TensorSelection& other) const {
+    if (name != other.name) {
+      return false;
+    }
+    if (indices.size() != other.indices.size()) {
+      return false;
+    }
+    for (const auto& [dim_name, dim] : indices) {
+      auto it = other.indices.find(dim_name);
+      if (it == other.indices.end()) {
+        return false;
+      }
+      if (dim != it->second) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] bool operator!=(const TensorSelection& other) const {
+    return !(*this == other);
   }
 
   /**
