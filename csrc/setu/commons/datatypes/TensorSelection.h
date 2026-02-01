@@ -221,6 +221,43 @@ struct TensorSelection {
     return std::make_shared<TensorSelection>(name, new_indices);
   }
 
+  /**
+   * @brief Localize this selection to a shard's coordinate space
+   *
+   * Creates a new TensorSelection where the bitsets are sized to the shard's
+   * owned region and indices are shifted to be relative to the shard's start.
+   *
+   * Example: If dimension "x" has size 100 in the full tensor, the shard owns
+   * [25, 50), and this selection has indices {30, 31, 35} selected, the
+   * localized selection will have indices {5, 6, 10} in a bitset of size 25.
+   *
+   * This is useful for getting shard-local buffer offsets from
+   * ContiguousBufferRangeView.
+   *
+   * @param shard The shard metadata defining the local coordinate space
+   * @return New TensorSelection in the shard's local coordinate space
+   */
+  [[nodiscard]] TensorSelectionPtr Localize(
+      TensorShardMetadataPtr shard) const {
+    ASSERT_VALID_POINTER_ARGUMENT(shard);
+    ASSERT_VALID_ARGUMENTS(
+        name == shard->spec.name,
+        "Selection tensor name {} does not match shard tensor name {}", name,
+        shard->spec.name);
+
+    TensorIndicesMap localized_indices;
+    for (const auto& dim_spec : shard->spec.dims) {
+      std::size_t local_size = dim_spec.GetOwnedSize();
+      std::size_t start = static_cast<std::size_t>(dim_spec.start);
+      const auto& bitset = indices.at(dim_spec.name);
+      auto local_bitset = bitset >> start;
+      local_bitset.resize(local_size);
+      localized_indices[dim_spec.name] = local_bitset;
+    }
+
+    return std::make_shared<TensorSelection>(name, localized_indices);
+  }
+
   const TensorName name;
 
  private:
