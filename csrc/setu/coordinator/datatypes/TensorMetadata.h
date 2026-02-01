@@ -23,7 +23,6 @@
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "coordinator/datatypes/TensorOwnershipMap.h"
-#include "coordinator/datatypes/TensorShardUtils.h"
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
@@ -140,7 +139,7 @@ struct TensorMetadata {
     std::size_t total_shard_size = 0;
 
     for (const auto& [_, shard] : shards) {
-      total_shard_size += shard->shard_size;
+      total_shard_size += shard->metadata.spec.GetNumElements();
     }
 
     ASSERT_VALID_ARGUMENTS(total_shard_size == size,
@@ -154,9 +153,9 @@ struct TensorMetadata {
 
         // Create selections from each shard
         TensorSelectionPtr selection1 =
-            setu::coordinator::datatypes::CreateSelectionFromShard(shard1);
+            setu::commons::datatypes::CreateSelectionFromShard(shard1);
         TensorSelectionPtr selection2 =
-            setu::coordinator::datatypes::CreateSelectionFromShard(shard2);
+            setu::commons::datatypes::CreateSelectionFromShard(shard2);
 
         // Check if they intersect
         TensorSelectionPtr intersection =

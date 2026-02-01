@@ -19,10 +19,10 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
-#include "coordinator/datatypes/TensorShardUtils.h"
 //==============================================================================
 namespace setu::coordinator::datatypes {
 //==============================================================================
+using setu::commons::datatypes::CreateSelectionFromShard;
 using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::datatypes::TensorShardPtr;
 using setu::commons::datatypes::TensorShardsMap;

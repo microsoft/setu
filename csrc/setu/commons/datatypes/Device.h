@@ -30,11 +30,10 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 /**
- * @brief Represents a physical compute device in the distributed system
+ * @brief Represents a physical compute device
  *
  * Device encapsulates information about a physical compute device including
- * its type (CPU, GPU, etc.) via torch::Device, and its position within the
- * distributed system hierarchy (node rank and global device rank).
+ * its type (CPU, GPU, etc.) and local index via torch::Device.
  */
 struct Device {
   /**
@@ -43,26 +42,20 @@ struct Device {
   Device() = default;
 
   /**
-   * @brief Constructs a device with all identifying information
+   * @brief Constructs a device from a torch::Device
    *
-   * @param node_id_param ID of the node containing this device
-   * @param device_rank_param Global rank of this device across all nodes
    * @param torch_device_param PyTorch device (type + local index, e.g., cuda:0)
    */
-  Device(NodeId node_id_param, DeviceRank device_rank_param,
-         torch::Device torch_device_param)
-      : node_id(node_id_param),
-        device_rank(device_rank_param),
-        torch_device(torch_device_param) {}
+  explicit Device(torch::Device torch_device_param)
+      : torch_device(torch_device_param) {}
 
   /**
    * @brief Returns a string representation of the device
    *
-   * @return String containing node ID, device rank, and torch device info
+   * @return String containing torch device info
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format("Device(node_id={}, device_rank={}, torch_device={})",
-                       node_id, device_rank, torch_device.str());
+    return std::format("Device(torch_device={})", torch_device.str());
   }
 
   void Serialize(BinaryBuffer& buffer) const;
@@ -76,8 +69,7 @@ struct Device {
    * @return true if devices are equal, false otherwise
    */
   [[nodiscard]] bool operator==(const Device& other) const {
-    return node_id == other.node_id && device_rank == other.device_rank &&
-           torch_device == other.torch_device;
+    return torch_device == other.torch_device;
   }
 
   /**
@@ -90,8 +82,15 @@ struct Device {
     return !(*this == other);
   }
 
-  const NodeId node_id;              ///< ID of the node containing this device
-  const DeviceRank device_rank;      ///< Global rank across all devices
+  /**
+   * @brief Returns the local device index
+   *
+   * @return Local device index (e.g., 0 for cuda:0)
+   */
+  [[nodiscard]] std::int16_t LocalDeviceIndex() const {
+    return static_cast<std::int16_t>(torch_device.index());
+  }
+
   const torch::Device torch_device;  ///< PyTorch device (type + local index)
 };
 //==============================================================================
@@ -104,15 +103,12 @@ template <>
 struct hash<setu::commons::datatypes::Device> {
   std::size_t operator()(
       const setu::commons::datatypes::Device& device) const noexcept {
-    std::size_t h1 = boost::hash<boost::uuids::uuid>{}(device.node_id);
-    std::size_t h2 = std::hash<std::size_t>{}(device.device_rank);
-    std::size_t h3 = std::hash<std::int8_t>{}(
+    std::size_t h1 = std::hash<std::int8_t>{}(
         static_cast<std::int8_t>(device.torch_device.type()));
-    std::size_t h4 = std::hash<std::int16_t>{}(
+    std::size_t h2 = std::hash<std::int16_t>{}(
         static_cast<std::int16_t>(device.torch_device.index()));
 
-    // Combine hashes using XOR and bit shifting
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
+    return h1 ^ (h2 << 1);
   }
 };
 }  // namespace std

@@ -497,7 +497,7 @@ void NodeAgent::Executor::Loop() {
       // worker
       for (const auto& [participant, program] : plan.program) {
         // Ensure worker is ready before sending
-        auto device_rank = participant.device_rank;
+        auto device_rank = participant.LocalDeviceIndex();
         auto it = worker_sockets_.find(device_rank);
         ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
                              "No socket found for device_rank: {}",

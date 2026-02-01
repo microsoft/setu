@@ -27,6 +27,7 @@
 #include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardHandle.h"
+#include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/datatypes/TensorSlice.h"
@@ -37,12 +38,7 @@ namespace setu::commons::datatypes {
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device", py::module_local())
-      .def(py::init<NodeId, DeviceRank, torch::Device>(), py::arg("node_id"),
-           py::arg("device_rank"), py::arg("torch_device"))
-      .def_readonly("node_id", &Device::node_id,
-                    "ID of the node containing this device")
-      .def_readonly("device_rank", &Device::device_rank,
-                    "Global rank across all devices")
+      .def(py::init<torch::Device>(), py::arg("torch_device"))
       .def_readonly("torch_device", &Device::torch_device,
                     "PyTorch device (type + local index)")
       .def("__str__", &Device::ToString)
@@ -165,31 +161,32 @@ void InitTensorDimShardPybind(py::module_& m) {
       .def("__repr__", &TensorDimShard::ToString);
 }
 //==============================================================================
+void InitTensorShardMetadataPybind(py::module_& m) {
+  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(
+      m, "TensorShardMetadata", py::module_local())
+      .def(py::init<TensorShardSpec, NodeId>(), py::arg("spec"),
+           py::arg("owner"), "Create metadata with auto-generated ID")
+      .def(py::init<ShardId, TensorShardSpec, NodeId>(), py::arg("id"),
+           py::arg("spec"), py::arg("owner"),
+           "Create metadata with explicit ID")
+      .def_readonly("id", &TensorShardMetadata::id,
+                    "Unique identifier for this shard")
+      .def_readonly("spec", &TensorShardMetadata::spec,
+                    "Specification describing the shard")
+      .def_readonly("owner", &TensorShardMetadata::owner,
+                    "NodeId of the owner node")
+      .def("__str__", &TensorShardMetadata::ToString)
+      .def("__repr__", &TensorShardMetadata::ToString);
+}
+//==============================================================================
 void InitTensorShardPybind(py::module_& m) {
   py::class_<TensorShard, TensorShardPtr>(m, "TensorShard", py::module_local())
-      .def(py::init<TensorName, Device, DevicePtr, torch::Dtype,
-                    TensorDimShardsMap>(),
-           py::arg("name"), py::arg("device"), py::arg("device_ptr"),
-           py::arg("dtype"), py::arg("dim_shards"))
-      .def_readonly("id", &TensorShard::id, "Unique identifier for this shard")
-      .def_readonly("name", &TensorShard::name,
-                    "Name of the tensor being sharded")
-      .def_readonly("device", &TensorShard::device,
-                    "Device where this shard resides")
+      .def(py::init<TensorShardMetadata, DevicePtr>(), py::arg("metadata"),
+           py::arg("device_ptr"))
+      .def_readonly("metadata", &TensorShard::metadata,
+                    "Metadata describing this shard")
       .def_readonly("device_ptr", &TensorShard::device_ptr,
                     "Pointer to device memory location")
-      .def_readonly("dtype", &TensorShard::dtype,
-                    "Data type of tensor elements")
-      .def_readonly("dim_shards", &TensorShard::dim_shards,
-                    "Map of dimension names to shard info")
-      .def_readonly("shard_size", &TensorShard::shard_size,
-                    "Size of this specific shard")
-      .def("get_shard_size", &TensorShard::GetShardSize,
-           "Get total number of elements in the shard")
-      .def("get_num_dims", &TensorShard::GetNumDims,
-           "Get number of dimensions in this shard")
-      .def("get_dim_slice", &TensorShard::GetDimSlice, py::arg("dim_name"),
-           "Get slice information for a specific dimension")
       .def("__str__", &TensorShard::ToString)
       .def("__repr__", &TensorShard::ToString);
 }
@@ -267,8 +264,9 @@ void InitDatatypesPybindSubmodule(py::module_& pm) {
   InitTensorSelectionPybind(m);
   InitCopySpecPybind(m);
   InitTensorDimShardPybind(m);
-  InitTensorShardPybind(m);
   InitTensorShardSpecPybind(m);
+  InitTensorShardMetadataPybind(m);
+  InitTensorShardPybind(m);
   InitTensorShardRefPybind(m);
   InitTensorShardReadHandlePybind(m);
   InitTensorShardWriteHandlePybind(m);

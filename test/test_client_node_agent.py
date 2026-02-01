@@ -43,8 +43,6 @@ def _run_node_agent(
     node_id = uuid.uuid4()
     devices = [
         Device(
-            node_id=node_id,
-            device_rank=0,
             torch_device=torch.device("cuda:0"),
         )
     ]
@@ -79,8 +77,6 @@ def _register_tensor(endpoint: str, tensor_name: str, dims_spec=None):
     client.connect(endpoint)
 
     device = Device(
-        node_id=uuid.uuid4(),
-        device_rank=0,
         torch_device=torch.device("cuda:0"),
     )
     shard_spec = TensorShardSpec(
@@ -105,8 +101,6 @@ def _register_and_get_handle(endpoint: str, tensor_name: str, dims_spec):
     client.connect(endpoint)
 
     device = Device(
-        node_id=uuid.uuid4(),
-        device_rank=0,
         torch_device=torch.device("cuda:0"),
     )
     shard_spec = TensorShardSpec(

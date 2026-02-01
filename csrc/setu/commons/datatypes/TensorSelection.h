@@ -191,5 +191,48 @@ struct TensorSelection {
   const TensorIndicesMap indices;
 };
 //==============================================================================
+/**
+ * @brief Create a TensorSelection from a TensorShardSpec
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor defined by the given shard specification. Unlike
+ * CreateSelectionFromShard, this works with TensorShardSpec which uses a vector
+ * of TensorDimSpec instead of a map of TensorDimShard.
+ *
+ * @param spec The TensorShardSpec to create a selection from
+ * @return TensorSelectionPtr A selection covering the spec's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShardSpec(
+    TensorShardSpecPtr spec) {
+  ASSERT_VALID_POINTER_ARGUMENT(spec);
+
+  TensorIndicesMap result_indices;
+  for (const auto& dim_spec : spec->dims) {
+    // Create bitset for the full dimension size
+    TensorIndicesBitset bitset(dim_spec.size);
+    // Set bits only for the range owned by this shard [start, end)
+    for (TensorIndex i = dim_spec.start; i < dim_spec.end; ++i) {
+      bitset[static_cast<std::size_t>(i)] = true;
+    }
+    result_indices[dim_spec.name] = bitset;
+  }
+  return std::make_shared<TensorSelection>(spec->name, result_indices);
+}
+//==============================================================================
+/**
+ * @brief Create a TensorSelection from a TensorShard
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor owned by the given shard.
+ *
+ * @param shard The TensorShard to create a selection from
+ * @return TensorSelectionPtr A selection covering the shard's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
+  ASSERT_VALID_POINTER_ARGUMENT(shard);
+  return CreateSelectionFromShardSpec(
+      std::make_shared<TensorShardSpec>(shard->metadata.spec));
+}
+//==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================
