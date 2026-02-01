@@ -14,33 +14,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/datatypes/TensorShard.h"
-
-#include "commons/TorchCommon.h"
+#include "commons/datatypes/TensorShardMetadata.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
-void TensorShard::Serialize(BinaryBuffer& buffer) const {
+void TensorShardMetadata::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  // Serialize device_ptr as a raw address value (valid only intra-process).
-  const auto device_ptr_value = reinterpret_cast<std::uintptr_t>(device_ptr);
-  writer.WriteFields(id, name, device, device_ptr_value, dtype, dim_shards);
+  writer.WriteFields(id, owner);
+  spec.Serialize(buffer);
 }
 
-TensorShard TensorShard::Deserialize(const BinaryRange& range) {
+TensorShardMetadata TensorShardMetadata::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [id_val, name_val, device_val, device_ptr_value, dtype_val,
-        dim_shards_val] =
-      reader.ReadFields<ShardId, TensorName, Device, std::uintptr_t,
-                        torch::Dtype, TensorDimShardsMap>();
-  auto device_ptr_val = reinterpret_cast<DevicePtr>(device_ptr_value);
-  return TensorShard(id_val, name_val, device_val, device_ptr_val, dtype_val,
-                     dim_shards_val);
+  auto [id_val, owner_val] = reader.ReadFields<ShardId, NodeId>();
+  auto spec_val = reader.Read<TensorShardSpec>();
+  return TensorShardMetadata(id_val, std::move(spec_val), owner_val);
 }
 //==============================================================================
 }  // namespace setu::commons::datatypes

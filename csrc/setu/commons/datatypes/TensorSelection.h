@@ -221,32 +221,6 @@ struct TensorSelection {
 };
 //==============================================================================
 /**
- * @brief Create a TensorSelection from a TensorShard
- *
- * This utility function creates a TensorSelection that represents the exact
- * region of the tensor owned by the given shard.
- *
- * @param shard The TensorShard to create a selection from
- * @return TensorSelectionPtr A selection covering the shard's region
- */
-inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
-  ASSERT_VALID_POINTER_ARGUMENT(shard);
-
-  TensorIndicesMap result_indices;
-  for (const auto& [dim_name, dim_shard] : shard->dim_shards) {
-    // Create bitset for the full dimension size
-    TensorIndicesBitset bitset(dim_shard.dim_size);
-    // Set bits only for the slice owned by this shard
-    for (TensorIndex i = dim_shard.slice->start; i < dim_shard.slice->end;
-         ++i) {
-      bitset[static_cast<std::size_t>(i)] = true;
-    }
-    result_indices[dim_name] = bitset;
-  }
-  return std::make_shared<TensorSelection>(shard->name, result_indices);
-}
-//==============================================================================
-/**
  * @brief Create a TensorSelection from a TensorShardSpec
  *
  * This utility function creates a TensorSelection that represents the exact
@@ -272,6 +246,21 @@ inline TensorSelectionPtr CreateSelectionFromShardSpec(
     result_indices[dim_spec.name] = bitset;
   }
   return std::make_shared<TensorSelection>(spec->name, result_indices);
+}
+//==============================================================================
+/**
+ * @brief Create a TensorSelection from a TensorShard
+ *
+ * This utility function creates a TensorSelection that represents the exact
+ * region of the tensor owned by the given shard.
+ *
+ * @param shard The TensorShard to create a selection from
+ * @return TensorSelectionPtr A selection covering the shard's region
+ */
+inline TensorSelectionPtr CreateSelectionFromShard(TensorShardPtr shard) {
+  ASSERT_VALID_POINTER_ARGUMENT(shard);
+  return CreateSelectionFromShardSpec(
+      std::make_shared<TensorShardSpec>(shard->metadata.spec));
 }
 //==============================================================================
 inline TensorSelectionPtr TensorSelection::Narrow(

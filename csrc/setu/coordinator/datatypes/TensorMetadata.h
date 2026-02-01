@@ -139,7 +139,7 @@ struct TensorMetadata {
     std::size_t total_shard_size = 0;
 
     for (const auto& [_, shard] : shards) {
-      total_shard_size += shard->shard_size;
+      total_shard_size += shard->metadata.spec.GetNumElements();
     }
 
     ASSERT_VALID_ARGUMENTS(total_shard_size == size,

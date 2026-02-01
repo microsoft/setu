@@ -28,16 +28,16 @@ void Device::Serialize(BinaryBuffer& buffer) const {
   // Serialize torch::Device as device_type (int8) + device_index (int16)
   auto device_type = static_cast<std::int8_t>(torch_device.type());
   auto device_index = static_cast<std::int16_t>(torch_device.index());
-  writer.WriteFields(node_id, device_rank, device_type, device_index);
+  writer.WriteFields(device_type, device_index);
 }
 
 Device Device::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [node_id_val, device_rank_val, device_type_val, device_index_val] =
-      reader.ReadFields<NodeId, DeviceRank, std::int8_t, std::int16_t>();
+  auto [device_type_val, device_index_val] =
+      reader.ReadFields<std::int8_t, std::int16_t>();
   auto torch_device = torch::Device(
       static_cast<c10::DeviceType>(device_type_val), device_index_val);
-  return Device(node_id_val, device_rank_val, torch_device);
+  return Device(torch_device);
 }
 //==============================================================================
 }  // namespace setu::commons::datatypes

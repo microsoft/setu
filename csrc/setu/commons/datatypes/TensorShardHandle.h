@@ -43,14 +43,14 @@ class TensorShardReadHandle : public NonCopyableNonMovable {
   explicit TensorShardReadHandle(TensorShardPtr shard_param)
       : shard(shard_param), lock(shard->mutex) {
     ASSERT_VALID_POINTER_ARGUMENT(shard_param);
-    LOG_DEBUG("Acquired read lock for shard: {}", shard->name);
+    LOG_DEBUG("Acquired read lock for shard: {}", shard->metadata.spec.name);
   }
 
   /**
    * @brief Releases the shared lock on destruction
    */
   ~TensorShardReadHandle() {
-    LOG_DEBUG("Released read lock for shard: {}", shard->name);
+    LOG_DEBUG("Released read lock for shard: {}", shard->metadata.spec.name);
   }
 
   /**
@@ -91,14 +91,14 @@ class TensorShardWriteHandle : public NonCopyableNonMovable {
   explicit TensorShardWriteHandle(TensorShardPtr shard_param)
       : shard(shard_param), lock(shard->mutex) {
     ASSERT_VALID_POINTER_ARGUMENT(shard_param);
-    LOG_DEBUG("Acquired write lock for shard: {}", shard->name);
+    LOG_DEBUG("Acquired write lock for shard: {}", shard->metadata.spec.name);
   }
 
   /**
    * @brief Releases the exclusive lock on destruction
    */
   ~TensorShardWriteHandle() {
-    LOG_DEBUG("Released write lock for shard: {}", shard->name);
+    LOG_DEBUG("Released write lock for shard: {}", shard->metadata.spec.name);
   }
 
   /**
