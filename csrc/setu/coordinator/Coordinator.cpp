@@ -279,8 +279,7 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
     // Get tensor metadata to find all owner NodeIds
     auto metadata =
         metastore_.GetTensorMetadata(request.tensor_shard_spec.name);
-    ASSERT_VALID_RUNTIME(metadata.has_value(),
-                         "Metadata should exist for fully registered tensor");
+    ASSERT_VALID_POINTER_ARGUMENT(metadata);
 
     // Send AllocateTensorRequest to all NodeAgents that own shards
     AllocateTensorRequest allocate_request(request.tensor_shard_spec.name);

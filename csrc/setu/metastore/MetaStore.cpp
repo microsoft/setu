@@ -90,7 +90,7 @@ std::size_t MetaStore::GetNumShardsForTensor(
   return 0;
 }
 //==============================================================================
-std::optional<TensorMetadata> MetaStore::GetTensorMetadata(
+TensorMetadataPtr MetaStore::GetTensorMetadata(
     const TensorName& tensor_name) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
@@ -102,7 +102,7 @@ std::optional<TensorMetadata> MetaStore::GetTensorMetadata(
 
   // Check if all shards are registered
   if (!AllShardsRegistered(tensor_name)) {
-    return std::nullopt;
+    return nullptr;
   }
 
   auto tensor_it = tensor_shards_data_.find(tensor_name);
@@ -124,8 +124,8 @@ std::optional<TensorMetadata> MetaStore::GetTensorMetadata(
   }
 
   // Build and cache TensorMetadata
-  TensorMetadata metadata(tensor_name, dims, first_shard_spec->dtype, shards,
-                          shard_owners);
+  auto metadata = std::make_shared<TensorMetadata>(
+      tensor_name, dims, first_shard_spec->dtype, shards, shard_owners);
   tensor_metadata_cache_.emplace(tensor_name, metadata);
 
   return metadata;

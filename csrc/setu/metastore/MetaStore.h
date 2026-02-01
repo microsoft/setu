@@ -37,6 +37,7 @@ using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::datatypes::TensorShardSpecPtr;
 using setu::metastore::datatypes::TensorMetadata;
+using setu::metastore::datatypes::TensorMetadataPtr;
 //==============================================================================
 /**
  * @brief Metadata store for managing tensor shard registrations
@@ -78,13 +79,13 @@ class MetaStore {
    * @brief Returns the tensor metadata for a fully registered tensor
    *
    * Builds and caches TensorMetadata when all shards have been registered.
-   * Returns std::nullopt if the tensor is not found or not fully registered.
+   * Returns nullptr if the tensor is not found or not fully registered.
    *
    * @param tensor_name The name of the tensor to query
-   * @return Optional containing TensorMetadata if fully registered, nullopt
+   * @return Shared pointer to const TensorMetadata if fully registered, nullptr
    * otherwise
    */
-  [[nodiscard]] std::optional<TensorMetadata> GetTensorMetadata(
+  [[nodiscard]] TensorMetadataPtr GetTensorMetadata(
       const TensorName& tensor_name /*[in]*/);
 
  private:
@@ -98,7 +99,7 @@ class MetaStore {
 
   mutable std::recursive_mutex mutex_;
   std::unordered_map<TensorName, TensorShardsData> tensor_shards_data_;
-  std::unordered_map<TensorName, TensorMetadata> tensor_metadata_cache_;
+  std::unordered_map<TensorName, TensorMetadataPtr> tensor_metadata_cache_;
 };
 //==============================================================================
 }  // namespace setu::metastore
