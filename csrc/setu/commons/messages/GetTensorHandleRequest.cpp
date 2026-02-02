@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#include "commons/messages/GetTensorHandleRequest.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -24,17 +24,16 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
+void GetTensorHandleRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, shard_ids);
+  writer.WriteFields(request_id, shard_id);
 }
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
+GetTensorHandleRequest GetTensorHandleRequest::Deserialize(
     const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, shard_ids_val] =
-      reader.ReadFields<RequestId, std::vector<ShardId>>();
-  return AllocateTensorRequest(request_id_val, std::move(shard_ids_val));
+  auto [request_id_val, shard_id_val] = reader.ReadFields<RequestId, ShardId>();
+  return GetTensorHandleRequest(request_id_val, shard_id_val);
 }
 
 //==============================================================================

@@ -57,8 +57,10 @@ void InitClientPybindClass(py::module_& m) {
            "Submit a copy operation and return an operation ID")
       .def("wait_for_copy", &Client::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
-      .def("get_tensor_handle", &Client::GetTensorHandle,
-           py::arg("tensor_name"), "Get the IPC handle for a tensor");
+      .def("get_tensor_handle", &Client::GetTensorHandle, py::arg("shard_ref"),
+           "Get the IPC handle for a tensor shard")
+      .def("get_shards", &Client::GetShards,
+           "Get all registered tensor shard references");
 }
 //==============================================================================
 void InitEnumsPybindClass(py::module_& m) {

@@ -24,7 +24,6 @@
 //==============================================================================
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorShardMetadata.h"
-#include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "metastore/datatypes/TensorMetadata.h"
 //==============================================================================
@@ -36,7 +35,6 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShardMetadataMap;
 using setu::commons::datatypes::TensorShardMetadataPtr;
-using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::datatypes::TensorShardSpecPtr;
 using setu::metastore::datatypes::TensorMetadata;
@@ -62,9 +60,10 @@ class MetaStore {
    *
    * @param shard_spec The specification describing the tensor shard to register
    * @param owner_node_id The NodeId of the NodeAgent that owns this shard
-   * @return TensorShardRef containing the assigned shard ID and metadata
+   * @return TensorShardMetadataPtr containing the assigned shard ID and
+   * metadata
    */
-  [[nodiscard]] TensorShardRef RegisterTensorShard(
+  [[nodiscard]] TensorShardMetadataPtr RegisterTensorShard(
       const TensorShardSpec& shard_spec /*[in]*/,
       const NodeId& owner_node_id /*[in]*/);
 

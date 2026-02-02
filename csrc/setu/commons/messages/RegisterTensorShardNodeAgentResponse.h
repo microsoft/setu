@@ -31,8 +31,11 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-struct RegisterTensorShardResponse : public BaseResponse {
-  RegisterTensorShardResponse(
+/// @brief Response from NodeAgent to Client for tensor shard registration.
+/// Contains TensorShardRef which provides a lightweight handle to the
+/// registered shard with its ID and dimension information.
+struct RegisterTensorShardNodeAgentResponse : public BaseResponse {
+  RegisterTensorShardNodeAgentResponse(
       RequestId request_id_param,
       ErrorCode error_code_param = ErrorCode::kSuccess,
       std::optional<TensorShardRef> shard_ref_param = std::nullopt)
@@ -40,18 +43,20 @@ struct RegisterTensorShardResponse : public BaseResponse {
         shard_ref(std::move(shard_ref_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("RegisterTensorShardResponse(error_code={})",
-                       error_code);
+    return std::format(
+        "RegisterTensorShardNodeAgentResponse(request_id={}, error_code={})",
+        request_id, error_code);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static RegisterTensorShardResponse Deserialize(const BinaryRange& range);
+  static RegisterTensorShardNodeAgentResponse Deserialize(
+      const BinaryRange& range);
 
   const std::optional<TensorShardRef> shard_ref;
 };
-using RegisterTensorShardResponsePtr =
-    std::shared_ptr<RegisterTensorShardResponse>;
+using RegisterTensorShardNodeAgentResponsePtr =
+    std::shared_ptr<RegisterTensorShardNodeAgentResponse>;
 
 //==============================================================================
 }  // namespace setu::commons::messages
