@@ -58,7 +58,8 @@ struct TensorShardSpec {
       : name(std::move(name_param)),
         dims(std::move(dims_param)),
         dtype(dtype_param),
-        device(device_param) {
+        device(device_param),
+        row_major_start_position_(ComputeRowMajorStartPosition()) {
     ASSERT_VALID_ARGUMENTS(!dims.empty(), "Dims must be non-empty");
   }
 
@@ -84,6 +85,32 @@ struct TensorShardSpec {
   [[nodiscard]] std::size_t GetNumDims() const { return dims.size(); }
 
   /**
+   * @brief Get the row-major start position of this shard
+   *
+   * Returns the row-major linearized position of this shard's starting corner
+   * in the full tensor coordinate space. Uses the dims vector ordering (first
+   * dimension is outermost/slowest-varying).
+   *
+   * @return Row-major position: sum of (start_i * stride_i) for each dimension
+   *
+   * Example: For dims = [("x", size=10, start=2), ("y", size=5, start=3)],
+   * the row-major start position is: 2 * 5 + 3 = 13
+   */
+  [[nodiscard]] std::size_t GetRowMajorStartPosition() const {
+    return row_major_start_position_;
+  }
+
+  /**
+   * @brief Comparison operator for sorting shards by row-major position
+   *
+   * Enables sorting a collection of TensorShardSpec by their position in the
+   * tensor. Shards are ordered by their row-major start position.
+   */
+  [[nodiscard]] bool operator<(const TensorShardSpec& other) const {
+    return row_major_start_position_ < other.row_major_start_position_;
+  }
+
+  /**
    * @brief Returns a string representation of the tensor shard spec
    *
    * @return String containing all spec properties
@@ -107,6 +134,22 @@ struct TensorShardSpec {
   const std::vector<TensorDimSpec> dims;  ///< Dimension specs of the tensor
   const torch::Dtype dtype;               ///< Data type of tensor elements
   const Device device;                    ///< Device where tensor resides
+
+ private:
+  [[nodiscard]] std::size_t ComputeRowMajorStartPosition() const {
+    std::size_t position = 0;
+    std::size_t stride = 1;
+
+    // Iterate from innermost to outermost, accumulating strides
+    for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+      position += static_cast<std::size_t>(it->start) * stride;
+      stride *= it->size;
+    }
+
+    return position;
+  }
+
+  const std::size_t row_major_start_position_;  ///< Cached row-major position
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorShardSpec object

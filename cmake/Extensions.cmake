@@ -100,6 +100,9 @@ define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objec
 file(GLOB_RECURSE METASTORE_SRC "csrc/setu/metastore/*.cpp")
 define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" "")
 
+file(GLOB_RECURSE PLANNER_SRC "csrc/setu/planner/*.cpp")
+define_setu_static(_planner_static "${PLANNER_SRC}" "setu_common_objects" "_metastore_static")
+
 file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
 define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects"
                       "${NCCL_LIBRARY};_metastore_static")

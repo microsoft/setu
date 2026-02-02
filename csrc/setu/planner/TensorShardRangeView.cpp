@@ -14,18 +14,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/backends/nccl.h"
+#include "planner/TensorShardRangeView.h"
 //==============================================================================
 #include "commons/Logging.h"
 //==============================================================================
-namespace setu::planner::backends::nccl {
+namespace setu::planner {
 //==============================================================================
-
-Plan NCCLPlanner::Compile(CopySpec& /*copy_spec*/, MetaStore& /*metastore*/) {
-  LOG_ERROR("NCCLPlanner::Compile not yet implemented");
-  return Plan{};
+TensorShardRangeView::TensorShardRangeView(
+    TensorOwnershipMapPtr ownership_map) {
+  ASSERT_VALID_POINTER_ARGUMENT(ownership_map);
+  ComputeRanges(ownership_map);
 }
-
 //==============================================================================
-}  // namespace setu::planner::backends::nccl
+void TensorShardRangeView::ComputeRanges(TensorOwnershipMapPtr ownership_map) {
+  for (const auto& [selection_subset, shard_metadata] :
+       ownership_map->shard_mapping) {
+    auto localized = selection_subset->Localize(shard_metadata);
+    std::vector<TensorDimName> dim_order;
+    for (const auto& dim : shard_metadata->spec.dims) {
+      dim_order.push_back(dim.name);
+    }
+
+    ContiguousBufferRangeView range_view(dim_order, localized);
+    for (const auto& range : range_view) {
+      ranges_.push_back(
+          ShardBufferRange{.metadata = shard_metadata, .range = range});
+    }
+  }
+}
+//==============================================================================
+}  // namespace setu::planner
 //==============================================================================

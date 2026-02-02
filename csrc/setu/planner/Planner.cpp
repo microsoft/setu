@@ -19,7 +19,7 @@
 namespace setu::planner {
 //==============================================================================
 
-std::vector<Plan> Plan::Fragments() { return {}; }
+std::unordered_map<NodeId, Plan> Plan::Fragments() { return {}; }
 
 //==============================================================================
 }  // namespace setu::planner

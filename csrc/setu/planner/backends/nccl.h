@@ -27,7 +27,7 @@ using setu::metastore::MetaStore;
 
 class NCCLPlanner : public Planner {
  public:
-  Plan Compile(CopySpec& copy_spec, const MetaStore& metastore) override;
+  Plan Compile(CopySpec& copy_spec, MetaStore& metastore) override;
 
  private:
   std::map<std::set<Device>, ncclUniqueId> comm_cache_;

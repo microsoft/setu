@@ -52,6 +52,12 @@ TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
     ownership_map.push_back(std::make_pair(intersection, shard));
   }
 
+  // Sort by shard's row-major start position for consistent iteration order
+  std::sort(ownership_map.begin(), ownership_map.end(),
+            [](const auto& a, const auto& b) {
+              return a.second->spec < b.second->spec;
+            });
+
   return ownership_map;
 }
 //==============================================================================
