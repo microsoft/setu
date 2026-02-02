@@ -27,9 +27,11 @@
 
 namespace setu::client {
 using setu::commons::CopyOperationId;
+using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardRefPtr;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
 using setu::commons::utils::TensorIPCSpec;
@@ -56,12 +58,16 @@ class Client {
 
   void WaitForCopy(CopyOperationId copy_op_id);
 
-  TensorIPCSpec GetTensorHandle(TensorName tensor_name);
+  TensorIPCSpec GetTensorHandle(const TensorShardRef& shard_ref);
+
+  [[nodiscard]] const std::vector<TensorShardRefPtr>& GetShards() const;
 
  private:
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr request_socket_;
+
+  std::vector<TensorShardRefPtr> client_shards_;
 
   std::string endpoint_;
   bool is_connected_{false};

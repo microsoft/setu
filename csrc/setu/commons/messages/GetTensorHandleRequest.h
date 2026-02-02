@@ -25,37 +25,35 @@
 namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::RequestId;
-using setu::commons::TensorName;
+using setu::commons::ShardId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
 struct GetTensorHandleRequest : public BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
-  explicit GetTensorHandleRequest(TensorName tensor_name_param)
-      : BaseRequest(), tensor_name(std::move(tensor_name_param)) {
-    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  explicit GetTensorHandleRequest(ShardId shard_id_param)
+      : BaseRequest(), shard_id(shard_id_param) {
+    ASSERT_VALID_ARGUMENTS(!shard_id.is_nil(), "Shard ID cannot be nil");
   }
 
   /// @brief Constructs a request with explicit request ID (for
   /// deserialization).
-  GetTensorHandleRequest(RequestId request_id_param,
-                         TensorName tensor_name_param)
-      : BaseRequest(request_id_param),
-        tensor_name(std::move(tensor_name_param)) {
-    ASSERT_VALID_ARGUMENTS(!tensor_name.empty(), "Tensor name cannot be empty");
+  GetTensorHandleRequest(RequestId request_id_param, ShardId shard_id_param)
+      : BaseRequest(request_id_param), shard_id(shard_id_param) {
+    ASSERT_VALID_ARGUMENTS(!shard_id.is_nil(), "Shard ID cannot be nil");
   }
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("GetTensorHandleRequest(request_id={}, tensor_name={})",
-                       request_id, tensor_name);
+    return std::format("GetTensorHandleRequest(request_id={}, shard_id={})",
+                       request_id, shard_id);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
   static GetTensorHandleRequest Deserialize(const BinaryRange& range);
 
-  const TensorName tensor_name;
+  const ShardId shard_id;
 };
 using GetTensorHandleRequestPtr = std::shared_ptr<GetTensorHandleRequest>;
 

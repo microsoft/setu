@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/GetTensorHandleRequest.h"
-#include "commons/messages/GetTensorHandleResponse.h"
+#include "commons/messages/RegisterTensorShardCoordinatorResponse.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -25,31 +24,20 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-void GetTensorHandleRequest::Serialize(BinaryBuffer& buffer) const {
+void RegisterTensorShardCoordinatorResponse::Serialize(
+    BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, tensor_name);
+  writer.WriteFields(request_id, error_code, shard_metadata);
 }
 
-GetTensorHandleRequest GetTensorHandleRequest::Deserialize(
-    const BinaryRange& range) {
+RegisterTensorShardCoordinatorResponse
+RegisterTensorShardCoordinatorResponse::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, tensor_name_val] =
-      reader.ReadFields<RequestId, TensorName>();
-  return GetTensorHandleRequest(request_id_val, tensor_name_val);
-}
-
-void GetTensorHandleResponse::Serialize(BinaryBuffer& buffer) const {
-  BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, error_code, tensor_ipc_spec);
-}
-
-GetTensorHandleResponse GetTensorHandleResponse::Deserialize(
-    const BinaryRange& range) {
-  BinaryReader reader(range);
-  auto [request_id_val, error_code_val, tensor_ipc_spec_val] =
-      reader.ReadFields<RequestId, ErrorCode, std::optional<TensorIPCSpec>>();
-  return GetTensorHandleResponse(request_id_val, error_code_val,
-                                 std::move(tensor_ipc_spec_val));
+  auto [request_id_val, error_code_val, shard_metadata_val] =
+      reader.ReadFields<RequestId, ErrorCode,
+                        std::optional<TensorShardMetadata>>();
+  return RegisterTensorShardCoordinatorResponse(request_id_val, error_code_val,
+                                                shard_metadata_val);
 }
 
 //==============================================================================

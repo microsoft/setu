@@ -22,6 +22,7 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
+#include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/messages/Messages.h"
@@ -42,6 +43,9 @@ using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorShardMetadata;
+using setu::commons::datatypes::TensorShardMetadataMap;
+using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::AllocateTensorRequest;
@@ -51,8 +55,8 @@ using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
-using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyRequest;
@@ -129,12 +133,12 @@ class NodeAgent {
     void HandleCopyOperationFinishedRequest(
         const CopyOperationFinishedRequest& request);
     void HandleExecuteRequest(const ExecuteRequest& request);
-    void HandleRegisterTensorShardResponse(
-        const RegisterTensorShardResponse& response);
+    void HandleRegisterTensorShardCoordinatorResponse(
+        const RegisterTensorShardCoordinatorResponse& response);
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
     void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
 
-    void AllocateTensor(const TensorShardSpec& tensor_shard_spec);
+    void AllocateTensor(const TensorShardMetadata& shard_metadata);
 
     NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
@@ -159,8 +163,10 @@ class NodeAgent {
                        boost::hash<CopyOperationId>>
         pending_waits_;
 
-    std::unordered_map<TensorName, TensorShardSpec> tensor_name_to_spec_;
-    std::unordered_map<TensorName, torch::Tensor> tensor_name_to_tensor_;
+    TensorShardMetadataMap tensor_shard_metadata_map_;
+    /// TODO: Call torch::Tensor something like TensorStorage and probably move
+    /// to TensorShard (no raw device ptr in TensorShard?)
+    std::unordered_map<ShardId, torch::Tensor> shard_id_to_tensor_;
   };
 
   //============================================================================

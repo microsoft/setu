@@ -26,6 +26,8 @@
 namespace setu::commons::messages {
 //==============================================================================
 using setu::commons::RequestId;
+using setu::commons::datatypes::TensorShardMetadata;
+using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
 using setu::ir::Program;
@@ -46,15 +48,36 @@ void InitRegisterTensorShardRequestPybind(py::module_& m) {
       .def("__repr__", &RegisterTensorShardRequest::ToString);
 }
 //==============================================================================
-void InitRegisterTensorShardResponsePybind(py::module_& m) {
-  py::class_<RegisterTensorShardResponse>(m, "RegisterTensorShardResponse",
-                                          py::module_local())
-      .def(py::init<RequestId, ErrorCode>(), py::arg("request_id"),
-           py::arg("error_code") = ErrorCode::kSuccess)
-      .def_readonly("request_id", &RegisterTensorShardResponse::request_id)
-      .def_readonly("error_code", &RegisterTensorShardResponse::error_code)
-      .def("__str__", &RegisterTensorShardResponse::ToString)
-      .def("__repr__", &RegisterTensorShardResponse::ToString);
+void InitRegisterTensorShardCoordinatorResponsePybind(py::module_& m) {
+  py::class_<RegisterTensorShardCoordinatorResponse>(
+      m, "RegisterTensorShardCoordinatorResponse", py::module_local())
+      .def(py::init<RequestId, ErrorCode, std::optional<TensorShardMetadata>>(),
+           py::arg("request_id"), py::arg("error_code") = ErrorCode::kSuccess,
+           py::arg("shard_metadata") = std::nullopt)
+      .def_readonly("request_id",
+                    &RegisterTensorShardCoordinatorResponse::request_id)
+      .def_readonly("error_code",
+                    &RegisterTensorShardCoordinatorResponse::error_code)
+      .def_readonly("shard_metadata",
+                    &RegisterTensorShardCoordinatorResponse::shard_metadata)
+      .def("__str__", &RegisterTensorShardCoordinatorResponse::ToString)
+      .def("__repr__", &RegisterTensorShardCoordinatorResponse::ToString);
+}
+//==============================================================================
+void InitRegisterTensorShardNodeAgentResponsePybind(py::module_& m) {
+  py::class_<RegisterTensorShardNodeAgentResponse>(
+      m, "RegisterTensorShardNodeAgentResponse", py::module_local())
+      .def(py::init<RequestId, ErrorCode, std::optional<TensorShardRef>>(),
+           py::arg("request_id"), py::arg("error_code") = ErrorCode::kSuccess,
+           py::arg("shard_ref") = std::nullopt)
+      .def_readonly("request_id",
+                    &RegisterTensorShardNodeAgentResponse::request_id)
+      .def_readonly("error_code",
+                    &RegisterTensorShardNodeAgentResponse::error_code)
+      .def_readonly("shard_ref",
+                    &RegisterTensorShardNodeAgentResponse::shard_ref)
+      .def("__str__", &RegisterTensorShardNodeAgentResponse::ToString)
+      .def("__repr__", &RegisterTensorShardNodeAgentResponse::ToString);
 }
 //==============================================================================
 void InitExecuteProgramRequestPybind(py::module_& m) {
@@ -86,7 +109,8 @@ void InitMessagesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("messages", "Messages submodule");
 
   InitRegisterTensorShardRequestPybind(m);
-  InitRegisterTensorShardResponsePybind(m);
+  InitRegisterTensorShardCoordinatorResponsePybind(m);
+  InitRegisterTensorShardNodeAgentResponsePybind(m);
   InitExecuteProgramRequestPybind(m);
   InitExecuteProgramResponsePybind(m);
 }

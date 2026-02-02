@@ -30,8 +30,9 @@
 #include "commons/messages/ExecuteResponse.h"
 #include "commons/messages/GetTensorHandleRequest.h"
 #include "commons/messages/GetTensorHandleResponse.h"
+#include "commons/messages/RegisterTensorShardCoordinatorResponse.h"
+#include "commons/messages/RegisterTensorShardNodeAgentResponse.h"
 #include "commons/messages/RegisterTensorShardRequest.h"
-#include "commons/messages/RegisterTensorShardResponse.h"
 #include "commons/messages/SubmitCopyRequest.h"
 #include "commons/messages/SubmitCopyResponse.h"
 #include "commons/messages/WaitForCopyRequest.h"
@@ -53,7 +54,7 @@ using NodeAgentRequest =
 /// nested request/response handling.
 using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
-                 ExecuteRequest, RegisterTensorShardResponse,
+                 ExecuteRequest, RegisterTensorShardCoordinatorResponse,
                  SubmitCopyResponse, WaitForCopyResponse>;
 
 using Request = std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
@@ -61,9 +62,9 @@ using Request = std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                              AllocateTensorRequest,
                              CopyOperationFinishedRequest, ExecuteRequest>;
 
-using Response = std::variant<RegisterTensorShardResponse, SubmitCopyResponse,
-                              WaitForCopyResponse, GetTensorHandleResponse,
-                              AllocateTensorResponse,
+using Response = std::variant<RegisterTensorShardNodeAgentResponse,
+                              SubmitCopyResponse, WaitForCopyResponse,
+                              GetTensorHandleResponse, AllocateTensorResponse,
                               CopyOperationFinishedResponse, ExecuteResponse>;
 //==============================================================================
 }  // namespace setu::commons::messages

@@ -127,7 +127,7 @@ def _register_and_get_handle(endpoint: str, tensor_name: str, dims_spec):
     if shard_ref is None:
         raise RuntimeError("Failed to register tensor")
 
-    tensor_ipc_spec = client.get_tensor_handle(tensor_name)
+    tensor_ipc_spec = client.get_tensor_handle(shard_ref)
     client.disconnect()
 
     return tensor_ipc_spec
@@ -250,6 +250,121 @@ def test_multiple_tensor_registrations(infrastructure):
         shard_ref = _register_tensor(client_endpoint, f"tensor_{i}")
         assert shard_ref is not None, f"Failed to register tensor_{i}"
         assert shard_ref.name == f"tensor_{i}"
+
+
+@pytest.mark.gpu
+def test_get_shards_tracking(infrastructure):
+    """Test that client tracks registered shards via get_shards()."""
+    from setu._client import Client
+    from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
+
+    client_endpoint = infrastructure["client_endpoint"]
+
+    client = Client()
+    client.connect(client_endpoint)
+
+    # Initially no shards
+    assert len(client.get_shards()) == 0, "New client should have no shards"
+
+    # Register first shard
+    device = Device(torch_device=torch.device("cuda:0"))
+    dims_1 = [
+        TensorDimSpec("dim_0", 16, 0, 16),
+        TensorDimSpec("dim_1", 32, 0, 32),
+    ]
+    shard_spec_1 = TensorShardSpec(
+        name="tracked_tensor_1",
+        dims=dims_1,
+        dtype=torch.float32,
+        device=device,
+    )
+    shard_ref_1 = client.register_tensor_shard(shard_spec_1)
+    assert shard_ref_1 is not None
+
+    # Should have 1 shard now
+    shards = client.get_shards()
+    assert len(shards) == 1, f"Expected 1 shard, got {len(shards)}"
+    assert shards[0].name == "tracked_tensor_1"
+    assert shards[0].shard_id == shard_ref_1.shard_id
+
+    # Register second shard
+    dims_2 = [
+        TensorDimSpec("dim_0", 8, 0, 8),
+        TensorDimSpec("dim_1", 16, 0, 16),
+    ]
+    shard_spec_2 = TensorShardSpec(
+        name="tracked_tensor_2",
+        dims=dims_2,
+        dtype=torch.float32,
+        device=device,
+    )
+    shard_ref_2 = client.register_tensor_shard(shard_spec_2)
+    assert shard_ref_2 is not None
+
+    # Should have 2 shards now
+    shards = client.get_shards()
+    assert len(shards) == 2, f"Expected 2 shards, got {len(shards)}"
+
+    # Verify both shards are tracked
+    shard_names = {s.name for s in shards}
+    assert shard_names == {"tracked_tensor_1", "tracked_tensor_2"}
+
+    client.disconnect()
+
+
+@pytest.mark.gpu
+def test_multiple_shards_same_client_get_handles(infrastructure):
+    """Test registering multiple shards from same client and getting handles for all."""
+    from setu._client import Client
+    from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
+
+    client_endpoint = infrastructure["client_endpoint"]
+
+    client = Client()
+    client.connect(client_endpoint)
+
+    device = Device(torch_device=torch.device("cuda:0"))
+
+    # Register 3 different tensors
+    tensor_configs = [
+        ("multi_shard_a", [(4, 4), (8, 8)]),
+        ("multi_shard_b", [(16, 16), (32, 32)]),
+        ("multi_shard_c", [(2, 2), (4, 4), (8, 8)]),
+    ]
+
+    registered_refs = []
+    for tensor_name, dim_sizes in tensor_configs:
+        dims = [
+            TensorDimSpec(f"dim_{i}", size, 0, size)
+            for i, (_, size) in enumerate(dim_sizes)
+        ]
+        shard_spec = TensorShardSpec(
+            name=tensor_name,
+            dims=dims,
+            dtype=torch.float32,
+            device=device,
+        )
+        shard_ref = client.register_tensor_shard(shard_spec)
+        assert shard_ref is not None, f"Failed to register {tensor_name}"
+        registered_refs.append(shard_ref)
+
+    # Verify all shards are tracked
+    shards = client.get_shards()
+    assert len(shards) == 3, f"Expected 3 shards, got {len(shards)}"
+
+    # Get handles for all registered shards
+    for shard_ref, (tensor_name, dim_sizes) in zip(registered_refs, tensor_configs):
+        handle = client.get_tensor_handle(shard_ref)
+        assert handle is not None, f"Failed to get handle for {tensor_name}"
+
+        spec_dict = handle.to_dict()
+        expected_sizes = [size for _, size in dim_sizes]
+        assert spec_dict["tensor_size"] == expected_sizes, (
+            f"Size mismatch for {tensor_name}: "
+            f"expected {expected_sizes}, got {spec_dict['tensor_size']}"
+        )
+
+    client.disconnect()
 
 
 @pytest.fixture(scope="function")
@@ -375,12 +490,12 @@ def test_distributed_tensor_allocation(multi_node_infrastructure):
     # Verify both NodeAgents allocated the tensor by getting handles
     client_0 = Client()
     client_0.connect(infra["client_endpoint_0"])
-    handle_0 = client_0.get_tensor_handle(tensor_name)
+    handle_0 = client_0.get_tensor_handle(shard_ref_0)
     client_0.disconnect()
 
     client_1 = Client()
     client_1.connect(infra["client_endpoint_1"])
-    handle_1 = client_1.get_tensor_handle(tensor_name)
+    handle_1 = client_1.get_tensor_handle(shard_ref_1)
     client_1.disconnect()
 
     assert handle_0 is not None, "NodeAgent 0 should have allocated tensor"

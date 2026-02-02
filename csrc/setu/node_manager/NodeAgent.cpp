@@ -27,6 +27,12 @@ using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::TensorDim;
+using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorShardMetadata;
+using setu::commons::datatypes::TensorShardMetadataMap;
+using setu::commons::datatypes::TensorShardMetadataPtr;
+using setu::commons::datatypes::TensorShardRef;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -40,8 +46,9 @@ using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::NodeAgentRequest;
+using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
+using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
-using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyRequest;
@@ -236,8 +243,9 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
           HandleCopyOperationFinishedRequest(msg);
         } else if constexpr (std::is_same_v<T, ExecuteRequest>) {
           HandleExecuteRequest(msg);
-        } else if constexpr (std::is_same_v<T, RegisterTensorShardResponse>) {
-          HandleRegisterTensorShardResponse(msg);
+        } else if constexpr (std::is_same_v<
+                                 T, RegisterTensorShardCoordinatorResponse>) {
+          HandleRegisterTensorShardCoordinatorResponse(msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
           HandleSubmitCopyResponse(msg);
         } else if constexpr (std::is_same_v<T, WaitForCopyResponse>) {
@@ -254,11 +262,6 @@ void NodeAgent::Handler::HandleRegisterTensorShardRequest(
             request.tensor_shard_spec.name);
 
   request_id_to_client_identity_[request.request_id] = client_identity;
-
-  // Store the spec so we can allocate the tensor when Coordinator sends
-  // AllocateTensorRequest
-  tensor_name_to_spec_.emplace(request.tensor_shard_spec.name,
-                               request.tensor_shard_spec);
 
   Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
 }
@@ -285,12 +288,11 @@ void NodeAgent::Handler::HandleWaitForCopyRequest(
 
 void NodeAgent::Handler::HandleGetTensorHandleRequest(
     const Identity& client_identity, const GetTensorHandleRequest& request) {
-  LOG_DEBUG("Handling GetTensorHandleRequest for tensor: {}",
-            request.tensor_name);
+  LOG_DEBUG("Handling GetTensorHandleRequest for shard: {}", request.shard_id);
 
-  auto it = tensor_name_to_tensor_.find(request.tensor_name);
-  if (it == tensor_name_to_tensor_.end()) {
-    LOG_ERROR("Tensor not found: {}", request.tensor_name);
+  auto it = shard_id_to_tensor_.find(request.shard_id);
+  if (it == shard_id_to_tensor_.end()) {
+    LOG_ERROR("Shard not found: {}", request.shard_id);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound);
     Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
@@ -304,13 +306,20 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
   Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
                                                   client_identity, response);
 
-  LOG_DEBUG("Sent tensor handle response for tensor: {}", request.tensor_name);
+  LOG_DEBUG("Sent tensor handle response for shard: {}", request.shard_id);
 }
 
 void NodeAgent::Handler::HandleAllocateTensorRequest(
     const AllocateTensorRequest& request) {
   LOG_DEBUG("Handling AllocateTensorRequest for request: {}", request);
-  AllocateTensor(tensor_name_to_spec_.at(request.tensor_name));
+
+  for (const auto& shard_id : request.shard_ids) {
+    auto it = tensor_shard_metadata_map_.find(shard_id);
+    ASSERT_VALID_RUNTIME(it != tensor_shard_metadata_map_.end(),
+                         "No metadata found for shard: {}", shard_id);
+
+    AllocateTensor(*it->second);
+  }
 }
 
 void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
@@ -338,20 +347,41 @@ void NodeAgent::Handler::HandleExecuteRequest(const ExecuteRequest& request) {
   executor_queue_.push(std::make_pair(request.copy_op_id, request.node_plan));
 }
 
-void NodeAgent::Handler::HandleRegisterTensorShardResponse(
-    const RegisterTensorShardResponse& response) {
+void NodeAgent::Handler::HandleRegisterTensorShardCoordinatorResponse(
+    const RegisterTensorShardCoordinatorResponse& response) {
   auto it = request_id_to_client_identity_.find(response.request_id);
   if (it == request_id_to_client_identity_.end()) {
     LOG_WARNING(
-        "Received RegisterTensorShardResponse for unknown request_id: "
-        "{}, ignoring",
+        "Received RegisterTensorShardCoordinatorResponse for unknown "
+        "request_id: {}, ignoring",
         response.request_id);
     return;
   }
   const auto& client_identity = it->second;
 
-  Comm::SendWithIdentity<RegisterTensorShardResponse>(
-      client_socket_, client_identity, response);
+  // Reconstruct TensorShardRef from TensorShardMetadata
+  std::optional<TensorShardRef> shard_ref;
+  if (response.shard_metadata.has_value()) {
+    const auto& metadata = response.shard_metadata.value();
+
+    // Store the metadata for later allocation
+    auto metadata_ptr = std::make_shared<TensorShardMetadata>(metadata);
+    tensor_shard_metadata_map_.emplace(metadata.id, metadata_ptr);
+
+    // Build TensorDimMap from the spec's dims
+    TensorDimMap dims;
+    for (const auto& dim_spec : metadata.spec.dims) {
+      dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
+    }
+
+    shard_ref.emplace(metadata.spec.name, metadata.id, std::move(dims));
+  }
+
+  // Send RegisterTensorShardNodeAgentResponse to client
+  RegisterTensorShardNodeAgentResponse client_response(
+      response.request_id, response.error_code, std::move(shard_ref));
+  Comm::SendWithIdentity<RegisterTensorShardNodeAgentResponse>(
+      client_socket_, client_identity, client_response);
 
   request_id_to_client_identity_.erase(it);
 }
@@ -391,29 +421,29 @@ void NodeAgent::Handler::HandleWaitForCopyResponse(
 }
 
 void NodeAgent::Handler::AllocateTensor(
-    const TensorShardSpec& tensor_shard_spec) {
-  LOG_DEBUG("Allocating tensor shard: tensor_shard_spec={}", tensor_shard_spec);
+    const TensorShardMetadata& shard_metadata) {
+  LOG_DEBUG("Allocating tensor shard: shard_metadata={}", shard_metadata);
+
+  const auto& spec = shard_metadata.spec;
 
   // Build the shape from dims (using owned size for each dimension)
   std::vector<std::int64_t> shape;
-  shape.reserve(tensor_shard_spec.dims.size());
-  for (const auto& dim_spec : tensor_shard_spec.dims) {
+  shape.reserve(spec.dims.size());
+  for (const auto& dim_spec : spec.dims) {
     shape.push_back(static_cast<std::int64_t>(dim_spec.GetOwnedSize()));
   }
 
   // Create tensor options with dtype and device from spec
-  auto options = torch::TensorOptions()
-                     .dtype(tensor_shard_spec.dtype)
-                     .device(tensor_shard_spec.device.torch_device);
+  auto options =
+      torch::TensorOptions().dtype(spec.dtype).device(spec.device.torch_device);
 
   torch::Tensor tensor = torch::empty(shape, options);
 
-  // Store the tensor
-  tensor_name_to_tensor_[tensor_shard_spec.name] = std::move(tensor);
+  // Store the tensor by shard ID
+  shard_id_to_tensor_[shard_metadata.id] = std::move(tensor);
 
-  LOG_DEBUG("Successfully allocated tensor '{}' with shape {} on device {}",
-            tensor_shard_spec.name, shape,
-            tensor_shard_spec.device.torch_device.str());
+  LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
+            shard_metadata.id, shape, spec.device.torch_device.str());
 }
 
 //==============================================================================
