@@ -16,64 +16,39 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/utils/Serialization.h"
+#include <nccl.h>
 //==============================================================================
-#include "setu/ir/instructions/Copy.h"
-#include "setu/ir/instructions/InitComm.h"
-#include "setu/ir/instructions/Receive.h"
-#include "setu/ir/instructions/Send.h"
-#include "setu/ir/instructions/UseComm.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
-using setu::commons::DevicePtr;
-using setu::commons::ShardId;
-using setu::commons::TensorName;
-using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-enum class InstructionType : std::uint8_t {
-  kInitComm = 1,
-  kUseComm = 2,
-  kCopy = 3,
-  kSend = 4,
-  kReceive = 5,
-};
+struct UseCommInstruction {
+  explicit UseCommInstruction(ncclUniqueId comm_id)
+      : comm_id(std::move(comm_id)) {}
 
-using InstructionVariant =
-    std::variant<InitCommInstruction, UseCommInstruction, CopyInstruction,
-                 SendInstruction, ReceiveInstruction>;
-
-struct Instruction {
-  Instruction() = delete;
-
-  template <typename T>
-  explicit Instruction(T inst) : instr(std::move(inst)) {}
-
-  ~Instruction() = default;
-  Instruction(const Instruction&) = default;
-  Instruction& operator=(const Instruction&) = default;
-  Instruction(Instruction&&) = default;
-  Instruction& operator=(Instruction&&) = default;
+  ~UseCommInstruction() = default;
+  UseCommInstruction(const UseCommInstruction&) = default;
+  UseCommInstruction& operator=(const UseCommInstruction&) = default;
+  UseCommInstruction(UseCommInstruction&&) = default;
+  UseCommInstruction& operator=(UseCommInstruction&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static Instruction Deserialize(const BinaryRange& range);
+  static UseCommInstruction Deserialize(const BinaryRange& range);
 
-  void Embellish(
-      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
-
-  InstructionVariant instr;
+  ncclUniqueId comm_id;
 };
 
-using Program = std::vector<Instruction>;
 //==============================================================================
 }  // namespace setu::ir
 //==============================================================================

@@ -16,64 +16,44 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/utils/Serialization.h"
+#include <nccl.h>
 //==============================================================================
-#include "setu/ir/instructions/Copy.h"
-#include "setu/ir/instructions/InitComm.h"
-#include "setu/ir/instructions/Receive.h"
-#include "setu/ir/instructions/Send.h"
-#include "setu/ir/instructions/UseComm.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
-using setu::commons::DevicePtr;
-using setu::commons::ShardId;
-using setu::commons::TensorName;
-using setu::commons::datatypes::TensorShardIdentifier;
+using setu::commons::DeviceRank;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-enum class InstructionType : std::uint8_t {
-  kInitComm = 1,
-  kUseComm = 2,
-  kCopy = 3,
-  kSend = 4,
-  kReceive = 5,
-};
+struct InitCommInstruction {
+  InitCommInstruction(
+      ncclUniqueId comm_id,
+      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+      : comm_id(std::move(comm_id)),
+        device_to_rank(std::move(device_to_rank)) {}
 
-using InstructionVariant =
-    std::variant<InitCommInstruction, UseCommInstruction, CopyInstruction,
-                 SendInstruction, ReceiveInstruction>;
-
-struct Instruction {
-  Instruction() = delete;
-
-  template <typename T>
-  explicit Instruction(T inst) : instr(std::move(inst)) {}
-
-  ~Instruction() = default;
-  Instruction(const Instruction&) = default;
-  Instruction& operator=(const Instruction&) = default;
-  Instruction(Instruction&&) = default;
-  Instruction& operator=(Instruction&&) = default;
+  ~InitCommInstruction() = default;
+  InitCommInstruction(const InitCommInstruction&) = default;
+  InitCommInstruction& operator=(const InitCommInstruction&) = default;
+  InitCommInstruction(InitCommInstruction&&) = default;
+  InitCommInstruction& operator=(InitCommInstruction&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static Instruction Deserialize(const BinaryRange& range);
+  static InitCommInstruction Deserialize(const BinaryRange& range);
 
-  void Embellish(
-      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
-
-  InstructionVariant instr;
+  ncclUniqueId comm_id;
+  std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
 };
 
-using Program = std::vector<Instruction>;
 //==============================================================================
 }  // namespace setu::ir
 //==============================================================================
