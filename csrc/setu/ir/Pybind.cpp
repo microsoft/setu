@@ -20,33 +20,48 @@
 
 #include <boost/uuid/uuid_io.hpp>
 //==============================================================================
-#include "setu/commons/Logging.h"
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/TorchCommon.h"
-#include "setu/commons/datatypes/TensorShardIdentifier.h"
+#include "commons/Logging.h"
+#include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
+//==============================================================================
 #include "setu/ir/Instruction.h"
+#include "setu/ir/ShardRef.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
-using setu::commons::datatypes::TensorShardIdentifier;
+//==============================================================================
+void InitShardRefPybind(py::module_& m) {
+  py::class_<ShardRef>(m, "ShardRef")
+      .def(py::init<ShardId, std::optional<TensorName>>(), py::arg("shard_id"),
+           py::arg("tensor_name") = std::nullopt,
+           "Create a shard reference with UUID and optional tensor name")
+      .def_readonly("shard_id", &ShardRef::shard_id, "Unique UUID for the shard")
+      .def_readonly("node_id", &ShardRef::node_id,
+                    "Node where shard resides (debug)")
+      .def_readonly("tensor_name", &ShardRef::tensor_name,
+                    "Parent tensor name (debug)")
+      .def("__str__", &ShardRef::ToString)
+      .def("__repr__", &ShardRef::ToString)
+      .def("__eq__", &ShardRef::operator==);
+}
 //==============================================================================
 void InitCopyInstructionPybind(py::module_& m) {
   py::class_<CopyInstruction>(m, "CopyInstruction")
-      .def(py::init<TensorShardIdentifier, std::size_t, TensorShardIdentifier,
-                    std::size_t, torch::Dtype, std::size_t>(),
-           py::arg("src_tensor"), py::arg("src_memory_offset_bytes"),
-           py::arg("dst_tensor"), py::arg("dst_memory_offset_bytes"),
+      .def(py::init<ShardRef, std::size_t, ShardRef, std::size_t, torch::Dtype,
+                    std::size_t>(),
+           py::arg("src_shard"), py::arg("src_memory_offset_bytes"),
+           py::arg("dst_shard"), py::arg("dst_memory_offset_bytes"),
            py::arg("dtype"), py::arg("num_elements"),
            "Create a copy instruction for GPU memory transfer")
-      .def_readonly("src_tensor", &CopyInstruction::src_tensor,
-                    "Source tensor (name, shard_id) pair")
+      .def_readonly("src_shard", &CopyInstruction::src_shard,
+                    "Source shard reference")
       .def_readonly("src_memory_offset_bytes",
                     &CopyInstruction::src_memory_offset_bytes,
                     "Byte offset in source memory")
-      .def_readonly("dst_tensor", &CopyInstruction::dst_tensor,
-                    "Destination tensor (name, shard_id) pair")
+      .def_readonly("dst_shard", &CopyInstruction::dst_shard,
+                    "Destination shard reference")
       .def_readonly("dst_memory_offset_bytes",
                     &CopyInstruction::dst_memory_offset_bytes,
                     "Byte offset in destination memory")
@@ -59,15 +74,15 @@ void InitCopyInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitSendInstructionPybind(py::module_& m) {
   py::class_<SendInstruction>(m, "SendInstruction")
-      .def(py::init<DeviceRank, TensorShardIdentifier, torch::Dtype,
-                    std::size_t, std::size_t>(),
-           py::arg("dst_device_id"), py::arg("src_tensor"), py::arg("dtype"),
+      .def(py::init<DeviceRank, ShardRef, torch::Dtype, std::size_t,
+                    std::size_t>(),
+           py::arg("dst_device_id"), py::arg("src_shard"), py::arg("dtype"),
            py::arg("memory_offset_bytes"), py::arg("num_elements"),
            "Create a send instruction for NCCL point-to-point communication")
       .def_readonly("dst_device_id", &SendInstruction::dst_device_id,
                     "Destination device rank")
-      .def_readonly("src_tensor", &SendInstruction::src_tensor,
-                    "Source tensor (name, shard_id) pair")
+      .def_readonly("src_shard", &SendInstruction::src_shard,
+                    "Source shard reference")
       .def_readonly("dtype", &SendInstruction::dtype, "Data type of elements")
       .def_readonly("memory_offset_bytes",
                     &SendInstruction::memory_offset_bytes,
@@ -80,15 +95,15 @@ void InitSendInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitReceiveInstructionPybind(py::module_& m) {
   py::class_<ReceiveInstruction>(m, "ReceiveInstruction")
-      .def(py::init<DeviceRank, TensorShardIdentifier, torch::Dtype,
-                    std::size_t, std::size_t>(),
-           py::arg("src_device_id"), py::arg("dst_tensor"), py::arg("dtype"),
+      .def(py::init<DeviceRank, ShardRef, torch::Dtype, std::size_t,
+                    std::size_t>(),
+           py::arg("src_device_id"), py::arg("dst_shard"), py::arg("dtype"),
            py::arg("memory_offset_bytes"), py::arg("num_elements"),
            "Create a receive instruction for NCCL point-to-point communication")
       .def_readonly("src_device_id", &ReceiveInstruction::src_device_id,
                     "Source device rank")
-      .def_readonly("dst_tensor", &ReceiveInstruction::dst_tensor,
-                    "Destination tensor (name, shard_id) pair")
+      .def_readonly("dst_shard", &ReceiveInstruction::dst_shard,
+                    "Destination shard reference")
       .def_readonly("dtype", &ReceiveInstruction::dtype,
                     "Data type of elements")
       .def_readonly("memory_offset_bytes",
@@ -139,16 +154,16 @@ void InitInstructionPybind(py::module_& m) {
       .def(
           "embellish",
           [](Instruction& self, py::function py_resolver) {
-            self.Embellish([&py_resolver](const TensorShardIdentifier& id) {
+            self.Embellish([&py_resolver](const ShardRef& ref) {
               py::object result =
-                  py_resolver(py::cast(id.tensor_name),
-                              py::cast(boost::uuids::to_string(id.shard_id)));
+                  py_resolver(py::cast(boost::uuids::to_string(ref.shard_id)),
+                              py::cast(ref.tensor_name));
               auto ptr = reinterpret_cast<DevicePtr>(result.cast<intptr_t>());
               return ptr;
             });
           },
           py::arg("resolver"),
-          "Resolve (tensor_name, shard_id) to device pointer. Resolver must "
+          "Resolve (shard_id, tensor_name) to device pointer. Resolver must "
           "return int (e.g. tensor.data_ptr()).")
       .def("__str__", &Instruction::ToString)
       .def("__repr__", &Instruction::ToString);
@@ -178,6 +193,9 @@ void InitNcclUniqueIdPybind(py::module_& m) {
 void InitIrPybind(py::module_& m) {
   // Register ncclUniqueId type first (needed by InitCommInstruction)
   InitNcclUniqueIdPybind(m);
+
+  // Register ShardRef type (needed by instruction types)
+  InitShardRefPybind(m);
 
   // Utility function to generate NCCL unique IDs
   m.def("generate_nccl_id", &GenerateNcclUniqueId,

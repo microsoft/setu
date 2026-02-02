@@ -129,7 +129,7 @@ void Worker::Execute(const Program& program) {
 }
 
 void Worker::ExecuteInstruction(const Instruction& instruction) {
-  LOG_DEBUG("Executing instruction (type index: {})", instruction.index());
+  LOG_DEBUG("Executing instruction (type index: {})", instruction.instr.index());
   // TODO: Implement instruction execution logic
 }
 //==============================================================================

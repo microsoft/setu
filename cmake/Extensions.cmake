@@ -17,6 +17,15 @@ target_link_libraries(
             backtrace
             setu_python)
 
+# Add NCCL support (required)
+if(NOT NCCL_FOUND)
+  message(FATAL_ERROR "NCCL is required but was not found. "
+                      "Set NCCL_ROOT, CUDA_HOME, or CUDA_PATH environment variable.")
+endif()
+target_include_directories(setu_common INTERFACE ${NCCL_INCLUDE_DIRS})
+target_link_libraries(setu_common INTERFACE ${NCCL_LIBRARIES})
+message(STATUS "NCCL support enabled")
+
 # Function to configure common target properties
 function(setu_target_config target_name is_module)
   target_link_libraries(${target_name} PRIVATE setu_common)
@@ -37,7 +46,9 @@ endfunction()
 function(define_setu_extension name sources object_libs libs)
   python_add_library(${name} MODULE "${sources}" WITH_SOABI)
   if(object_libs)
-    target_sources(${name} PRIVATE $<TARGET_OBJECTS:${object_libs}>)
+    foreach(obj_lib IN LISTS object_libs)
+      target_sources(${name} PRIVATE $<TARGET_OBJECTS:${obj_lib}>)
+    endforeach()
   endif()
   target_link_libraries(${name} PRIVATE ${libs})
   setu_target_config(${name} TRUE)
@@ -47,7 +58,9 @@ endfunction()
 function(define_setu_static name sources object_libs libs)
   add_library(${name} STATIC ${sources})
   if(object_libs)
-    target_sources(${name} PRIVATE $<TARGET_OBJECTS:${object_libs}>)
+    foreach(obj_lib IN LISTS object_libs)
+      target_sources(${name} PRIVATE $<TARGET_OBJECTS:${obj_lib}>)
+    endforeach()
   endif()
   target_link_libraries(${name} PRIVATE ${libs})
   setu_target_config(${name} FALSE)
@@ -107,6 +120,17 @@ define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects
                    "${NCCL_LIBRARY};_metastore_static")
 target_include_directories(_coordinator PRIVATE ${NCCL_INCLUDE_DIR})
 target_include_directories(_coordinator_static PRIVATE ${NCCL_INCLUDE_DIR})
+
+# IR extension module (setu._ir)
+file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
+# Exclude Pybind.cpp from object library - it's added directly to _ir extension
+list(FILTER IR_SRC EXCLUDE REGEX ".*Pybind\\.cpp$")
+add_library(setu_ir_objects OBJECT ${IR_SRC})
+target_link_libraries(setu_ir_objects PRIVATE setu_common)
+set_target_properties(setu_ir_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(setu_ir_objects PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Werror>)
+
+define_setu_extension(_ir "csrc/setu/ir/Pybind.cpp" "setu_common_objects;setu_ir_objects" "")
 
 # OPTIMIZATION: Enhanced build graph and parallel compilation
 set_target_properties(setu_common_objects PROPERTIES INTERPROCEDURAL_OPTIMIZATION

@@ -69,7 +69,7 @@ Instruction Instruction::Deserialize(const BinaryRange& range) {
 }
 
 void Instruction::Embellish(
-    const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver) {
+    const std::function<DevicePtr(const ShardRef&)>& resolver) {
   std::visit(
       [&resolver](auto& inst) {
         // Use a compile-time check to see if the instruction has an Embellish

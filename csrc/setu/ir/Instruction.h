@@ -16,9 +16,10 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/utils/Serialization.h"
+#include "commons/StdCommon.h"
+#include "commons/utils/Serialization.h"
 //==============================================================================
+#include "setu/ir/ShardRef.h"
 #include "setu/ir/instructions/Copy.h"
 #include "setu/ir/instructions/InitComm.h"
 #include "setu/ir/instructions/Receive.h"
@@ -28,9 +29,6 @@
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
-using setu::commons::ShardId;
-using setu::commons::TensorName;
-using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -67,8 +65,7 @@ struct Instruction {
 
   static Instruction Deserialize(const BinaryRange& range);
 
-  void Embellish(
-      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
+  void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
   InstructionVariant instr;
 };

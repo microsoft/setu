@@ -16,18 +16,16 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/Types.h"
-#include "setu/commons/datatypes/TensorShardIdentifier.h"
-#include "setu/commons/enums/Enums.h"
-#include "setu/commons/utils/Serialization.h"
+#include "commons/StdCommon.h"
+#include "commons/Types.h"
+#include "commons/enums/Enums.h"
+#include "commons/utils/Serialization.h"
+//==============================================================================
+#include "setu/ir/ShardRef.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
-using setu::commons::ShardId;
-using setu::commons::TensorName;
-using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -35,15 +33,13 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 struct CopyInstruction {
-  CopyInstruction(TensorShardIdentifier src_tensor,
-                  std::size_t src_memory_offset_bytes,
-                  TensorShardIdentifier dst_tensor,
-                  std::size_t dst_memory_offset_bytes, torch::Dtype dtype,
-                  std::size_t num_elements, DevicePtr src_ptr = nullptr,
-                  DevicePtr dst_ptr = nullptr)
-      : src_tensor(std::move(src_tensor)),
+  CopyInstruction(ShardRef src_shard, std::size_t src_memory_offset_bytes,
+                  ShardRef dst_shard, std::size_t dst_memory_offset_bytes,
+                  torch::Dtype dtype, std::size_t num_elements,
+                  DevicePtr src_ptr = nullptr, DevicePtr dst_ptr = nullptr)
+      : src_shard(std::move(src_shard)),
         src_memory_offset_bytes(src_memory_offset_bytes),
-        dst_tensor(std::move(dst_tensor)),
+        dst_shard(std::move(dst_shard)),
         dst_memory_offset_bytes(dst_memory_offset_bytes),
         dtype(dtype),
         num_elements(num_elements),
@@ -63,16 +59,13 @@ struct CopyInstruction {
   static CopyInstruction Deserialize(const BinaryRange& range);
 
   /**
-   * @brief Populates the device pointers by looking up the base address
-   * @param resolver A callable that takes a TensorShardIdentifier and returns
-   * the base DevicePtr.
+   * @brief Populates the device pointers by looking up the base address.
    */
-  void Embellish(
-      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
+  void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
-  TensorShardIdentifier src_tensor;
+  ShardRef src_shard;
   std::size_t src_memory_offset_bytes;
-  TensorShardIdentifier dst_tensor;
+  ShardRef dst_shard;
   std::size_t dst_memory_offset_bytes;
   torch::Dtype dtype;
   std::size_t num_elements;

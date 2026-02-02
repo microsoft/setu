@@ -21,33 +21,33 @@ namespace setu::ir {
 
 std::string SendInstruction::ToString() const {
   return std::format(
-      "SendInstruction(dst_rank={}, tensor=({}, {}), dtype={}, "
+      "SendInstruction(dst_rank={}, shard={}, dtype={}, "
       "memory_offset={}, num_elements={}, src_device_ptr={})",
-      dst_device_id, src_tensor.tensor_name, src_tensor.shard_id,
-      static_cast<int>(dtype), memory_offset_bytes, num_elements, src_ptr);
+      dst_device_id, src_shard.ToString(), static_cast<int>(dtype),
+      memory_offset_bytes, num_elements, src_ptr);
 }
 
 void SendInstruction::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
-  writer.WriteFields(dst_device_id, src_tensor, dtype, memory_offset_bytes,
+  writer.WriteFields(dst_device_id, src_shard, dtype, memory_offset_bytes,
                      num_elements, src_ptr_value);
 }
 
 SendInstruction SendInstruction::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [dst_device_id, src_tensor, dtype, memory_offset_bytes, num_elements,
+  auto [dst_device_id, src_shard, dtype, memory_offset_bytes, num_elements,
         src_ptr_val] =
-      reader.ReadFields<DeviceRank, TensorShardIdentifier, torch::Dtype,
-                        std::size_t, std::size_t, std::uintptr_t>();
+      reader.ReadFields<DeviceRank, ShardRef, torch::Dtype, std::size_t,
+                        std::size_t, std::uintptr_t>();
   auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
-  return SendInstruction(dst_device_id, std::move(src_tensor), dtype,
+  return SendInstruction(dst_device_id, std::move(src_shard), dtype,
                          memory_offset_bytes, num_elements, src_ptr);
 }
 
 void SendInstruction::Embellish(
-    const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver) {
-  src_ptr = resolver(src_tensor);
+    const std::function<DevicePtr(const ShardRef&)>& resolver) {
+  src_ptr = resolver(src_shard);
 }
 
 //==============================================================================

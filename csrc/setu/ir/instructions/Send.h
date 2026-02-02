@@ -16,19 +16,17 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/Types.h"
-#include "setu/commons/datatypes/TensorShardIdentifier.h"
-#include "setu/commons/enums/Enums.h"
-#include "setu/commons/utils/Serialization.h"
+#include "commons/StdCommon.h"
+#include "commons/Types.h"
+#include "commons/enums/Enums.h"
+#include "commons/utils/Serialization.h"
+//==============================================================================
+#include "setu/ir/ShardRef.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
-using setu::commons::ShardId;
-using setu::commons::TensorName;
-using setu::commons::datatypes::TensorShardIdentifier;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -36,11 +34,11 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
 struct SendInstruction {
-  SendInstruction(DeviceRank dst_device_id, TensorShardIdentifier src_tensor,
+  SendInstruction(DeviceRank dst_device_id, ShardRef src_shard,
                   torch::Dtype dtype, std::size_t memory_offset_bytes,
                   std::size_t num_elements, DevicePtr src_ptr = nullptr)
       : dst_device_id(dst_device_id),
-        src_tensor(std::move(src_tensor)),
+        src_shard(std::move(src_shard)),
         dtype(dtype),
         memory_offset_bytes(memory_offset_bytes),
         num_elements(num_elements),
@@ -59,15 +57,12 @@ struct SendInstruction {
   static SendInstruction Deserialize(const BinaryRange& range);
 
   /**
-   * @brief Populates the device pointers by looking up the base address
-   * @param resolver A callable that takes a TensorShardIdentifier and returns
-   * the base DevicePtr.
+   * @brief Populates the device pointers by looking up the base address.
    */
-  void Embellish(
-      const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver);
+  void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
   DeviceRank dst_device_id;
-  TensorShardIdentifier src_tensor;
+  ShardRef src_shard;
   torch::Dtype dtype;
   std::size_t memory_offset_bytes;
   std::size_t num_elements;

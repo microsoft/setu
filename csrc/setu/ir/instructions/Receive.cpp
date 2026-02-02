@@ -21,34 +21,33 @@ namespace setu::ir {
 
 std::string ReceiveInstruction::ToString() const {
   return std::format(
-      "ReceiveInstruction(src_rank={}, tensor=({}, {}), dtype={}, "
-      "memory_offset={}, num_elements={}, dst_device_ptr = {})",
-      src_device_id, dst_tensor.tensor_name, dst_tensor.shard_id,
-      static_cast<int>(dtype), memory_offset_bytes, num_elements, dst_ptr);
+      "ReceiveInstruction(src_rank={}, shard={}, dtype={}, "
+      "memory_offset={}, num_elements={}, dst_device_ptr={})",
+      src_device_id, dst_shard.ToString(), static_cast<int>(dtype),
+      memory_offset_bytes, num_elements, dst_ptr);
 }
 
 void ReceiveInstruction::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  writer.WriteFields(src_device_id, dst_tensor.tensor_name, dst_tensor.shard_id,
-                     dtype, memory_offset_bytes, num_elements, dst_ptr_value);
+  writer.WriteFields(src_device_id, dst_shard, dtype, memory_offset_bytes,
+                     num_elements, dst_ptr_value);
 }
 
 ReceiveInstruction ReceiveInstruction::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [src_device_id, tensor_name, shard_id, dtype, memory_offset_bytes,
-        num_elements, dst_ptr_value] =
-      reader.ReadFields<DeviceRank, TensorName, ShardId, torch::Dtype,
-                        std::size_t, std::size_t, std::uintptr_t>();
+  auto [src_device_id, dst_shard, dtype, memory_offset_bytes, num_elements,
+        dst_ptr_value] =
+      reader.ReadFields<DeviceRank, ShardRef, torch::Dtype, std::size_t,
+                        std::size_t, std::uintptr_t>();
   const auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_value);
-  return ReceiveInstruction(src_device_id,
-                            {std::move(tensor_name), std::move(shard_id)},
-                            dtype, memory_offset_bytes, num_elements, dst_ptr);
+  return ReceiveInstruction(src_device_id, std::move(dst_shard), dtype,
+                            memory_offset_bytes, num_elements, dst_ptr);
 }
 
 void ReceiveInstruction::Embellish(
-    const std::function<DevicePtr(const TensorShardIdentifier&)>& resolver) {
-  dst_ptr = resolver(dst_tensor);
+    const std::function<DevicePtr(const ShardRef&)>& resolver) {
+  dst_ptr = resolver(dst_shard);
 }
 
 //==============================================================================
