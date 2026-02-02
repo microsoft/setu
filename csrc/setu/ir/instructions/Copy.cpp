@@ -33,8 +33,8 @@ void CopyInstruction::Serialize(BinaryBuffer& buffer) const {
   const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
   writer.WriteFields(src_shard, src_memory_offset_bytes, dst_shard,
-                     dst_memory_offset_bytes, dtype, num_elements, src_ptr_value,
-                     dst_ptr_value);
+                     dst_memory_offset_bytes, dtype, num_elements,
+                     src_ptr_value, dst_ptr_value);
 }
 
 CopyInstruction CopyInstruction::Deserialize(const BinaryRange& range) {

@@ -43,7 +43,9 @@ struct ShardRef {
    */
   ShardRef(ShardId id, std::optional<TensorName> name = std::nullopt,
            std::optional<NodeId> node = std::nullopt)
-      : shard_id(std::move(id)), node_id(std::move(node)), tensor_name(std::move(name)) {}
+      : shard_id(std::move(id)),
+        node_id(std::move(node)),
+        tensor_name(std::move(name)) {}
 
   [[nodiscard]] std::string ToString() const;
 
@@ -56,7 +58,7 @@ struct ShardRef {
            node_id == other.node_id;
   }
 
-  ShardId shard_id;                       ///< Unique UUID for the shard
+  ShardId shard_id;  ///< Unique UUID for the shard
 
   // Debug information
   std::optional<NodeId> node_id;          ///< Node where shard resides (debug)

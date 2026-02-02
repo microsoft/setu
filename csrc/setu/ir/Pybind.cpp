@@ -37,7 +37,8 @@ void InitShardRefPybind(py::module_& m) {
       .def(py::init<ShardId, std::optional<TensorName>>(), py::arg("shard_id"),
            py::arg("tensor_name") = std::nullopt,
            "Create a shard reference with UUID and optional tensor name")
-      .def_readonly("shard_id", &ShardRef::shard_id, "Unique UUID for the shard")
+      .def_readonly("shard_id", &ShardRef::shard_id,
+                    "Unique UUID for the shard")
       .def_readonly("node_id", &ShardRef::node_id,
                     "Node where shard resides (debug)")
       .def_readonly("tensor_name", &ShardRef::tensor_name,
