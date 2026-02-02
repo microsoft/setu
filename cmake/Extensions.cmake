@@ -105,10 +105,14 @@ file(GLOB_RECURSE CLIENT_SRC "csrc/setu/client/*.cpp")
 define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "")
 
+file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
+define_setu_static(_ir_static "${IR_SRC}" "setu_common_objects" "")
+
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")
-define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects" "_kernels_common")
+define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects"
+                      "_kernels_common;_ir_static")
 define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objects"
-                   "_kernels_common")
+                   "_kernels_common;_ir_static")
 
 file(GLOB_RECURSE METASTORE_SRC "csrc/setu/metastore/*.cpp")
 define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" "")
@@ -120,17 +124,6 @@ define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects
                    "${NCCL_LIBRARY};_metastore_static")
 target_include_directories(_coordinator PRIVATE ${NCCL_INCLUDE_DIR})
 target_include_directories(_coordinator_static PRIVATE ${NCCL_INCLUDE_DIR})
-
-# IR extension module (setu._ir)
-file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
-# Exclude Pybind.cpp from object library - it's added directly to _ir extension
-list(FILTER IR_SRC EXCLUDE REGEX ".*Pybind\\.cpp$")
-add_library(setu_ir_objects OBJECT ${IR_SRC})
-target_link_libraries(setu_ir_objects PRIVATE setu_common)
-set_target_properties(setu_ir_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_options(setu_ir_objects PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Werror>)
-
-define_setu_extension(_ir "csrc/setu/ir/Pybind.cpp" "setu_common_objects;setu_ir_objects" "")
 
 # OPTIMIZATION: Enhanced build graph and parallel compilation
 set_target_properties(setu_common_objects PROPERTIES INTERPROCEDURAL_OPTIMIZATION
