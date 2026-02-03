@@ -19,22 +19,21 @@
 namespace setu::ir {
 //==============================================================================
 
-std::string InitCommInstruction::ToString() const {
-  return std::format("InitCommInstruction(device_to_rank_size={})",
-                     device_to_rank.size());
+std::string InitComm::ToString() const {
+  return std::format("InitComm(device_to_rank_size={})", device_to_rank.size());
 }
 
-void InitCommInstruction::Serialize(BinaryBuffer& buffer) const {
+void InitComm::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   writer.WriteFields(comm_id, device_to_rank);
 }
 
-InitCommInstruction InitCommInstruction::Deserialize(const BinaryRange& range) {
+InitComm InitComm::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [comm_id, device_to_rank] =
       reader.ReadFields<ncclUniqueId,
                         std::unordered_map<DeviceRank, std::int32_t>>();
-  return InitCommInstruction(comm_id, std::move(device_to_rank));
+  return InitComm(comm_id, std::move(device_to_rank));
 }
 
 //==============================================================================

@@ -30,21 +30,20 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct UseCommInstruction {
-  explicit UseCommInstruction(ncclUniqueId comm_id)
-      : comm_id(std::move(comm_id)) {}
+struct UseComm {
+  explicit UseComm(ncclUniqueId comm_id) : comm_id(std::move(comm_id)) {}
 
-  ~UseCommInstruction() = default;
-  UseCommInstruction(const UseCommInstruction&) = default;
-  UseCommInstruction& operator=(const UseCommInstruction&) = default;
-  UseCommInstruction(UseCommInstruction&&) = default;
-  UseCommInstruction& operator=(UseCommInstruction&&) = default;
+  ~UseComm() = default;
+  UseComm(const UseComm&) = default;
+  UseComm& operator=(const UseComm&) = default;
+  UseComm(UseComm&&) = default;
+  UseComm& operator=(UseComm&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static UseCommInstruction Deserialize(const BinaryRange& range);
+  static UseComm Deserialize(const BinaryRange& range);
 
   ncclUniqueId comm_id;
 };
