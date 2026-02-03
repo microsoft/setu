@@ -14,29 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#include "setu/ir/instructions/UseComm.h"
 //==============================================================================
-namespace setu::commons::messages {
-//==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
+namespace setu::ir {
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
+std::string UseCommInstruction::ToString() const {
+  return std::format("UseCommInstruction(comm_id_present={})", true);
+}
+
+void UseCommInstruction::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, shard_ids);
+  writer.WriteFields(comm_id);
 }
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
-    const BinaryRange& range) {
+UseCommInstruction UseCommInstruction::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, shard_ids_val] =
-      reader.ReadFields<RequestId, std::vector<ShardId>>();
-  return AllocateTensorRequest(request_id_val, std::move(shard_ids_val));
+  auto [comm_id] = reader.ReadFields<ncclUniqueId>();
+  return UseCommInstruction(comm_id);
 }
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

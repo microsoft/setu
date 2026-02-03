@@ -23,11 +23,12 @@
 //==============================================================================
 namespace setu::client {
 //==============================================================================
+using setu::commons::datatypes::TensorShardRefPtr;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
-using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyRequest;
@@ -90,7 +91,8 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   ClientRequest request = RegisterTensorShardRequest(shard_spec);
   Comm::Send(request_socket_, request);
 
-  auto response = Comm::Recv<RegisterTensorShardResponse>(request_socket_);
+  auto response =
+      Comm::Recv<RegisterTensorShardNodeAgentResponse>(request_socket_);
 
   LOG_DEBUG("Client received response for tensor shard: {} with error code: {}",
             shard_spec.name, response.error_code);
@@ -98,6 +100,15 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   if (response.error_code != ErrorCode::kSuccess) {
     return std::nullopt;
   }
+
+  if (!response.shard_ref.has_value()) {
+    LOG_ERROR("Client receieved success response but shard_ref is missing {}",
+              shard_spec.name);
+    return std::nullopt;
+  }
+
+  client_shards_.push_back(
+      std::make_shared<TensorShardRef>(response.shard_ref.value()));
 
   return response.shard_ref;
 }
@@ -134,25 +145,32 @@ void Client::WaitForCopy(CopyOperationId copy_op_id) {
       copy_op_id, response.error_code);
 }
 
-TensorIPCSpec Client::GetTensorHandle(TensorName tensor_name) {
-  LOG_DEBUG("Client requesting tensor handle for: {}", tensor_name);
+TensorIPCSpec Client::GetTensorHandle(const TensorShardRef& shard_ref) {
+  LOG_DEBUG("Client requesting tensor handle for shard: {}",
+            shard_ref.shard_id);
 
-  ClientRequest request = GetTensorHandleRequest(tensor_name);
+  ClientRequest request = GetTensorHandleRequest(shard_ref.shard_id);
   Comm::Send(request_socket_, request);
 
   auto response = Comm::Recv<GetTensorHandleResponse>(request_socket_);
 
   LOG_DEBUG(
-      "Client received tensor handle response for: {} with error code: {}",
-      tensor_name, response.error_code);
+      "Client received tensor handle response for shard: {} with error code: "
+      "{}",
+      shard_ref.shard_id, response.error_code);
 
   ASSERT_VALID_RUNTIME(response.error_code == ErrorCode::kSuccess,
-                       "Failed to get tensor handle for {}: {}", tensor_name,
-                       response.error_code);
+                       "Failed to get tensor handle for shard {}: {}",
+                       shard_ref.shard_id, response.error_code);
   ASSERT_VALID_RUNTIME(response.tensor_ipc_spec.has_value(),
-                       "Tensor IPC spec is missing for {}", tensor_name);
+                       "Tensor IPC spec is missing for shard {}",
+                       shard_ref.shard_id);
 
   return response.tensor_ipc_spec.value();
+}
+
+const std::vector<TensorShardRefPtr>& Client::GetShards() const {
+  return client_shards_;
 }
 //==============================================================================
 }  // namespace setu::client

@@ -17,42 +17,60 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
-//==============================================================================
 #include "commons/Types.h"
-#include "commons/messages/BaseRequest.h"
+#include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::commons::messages {
+#include "setu/ir/ShardRef.h"
 //==============================================================================
-using setu::commons::ShardId;
+namespace setu::ir {
+//==============================================================================
+using setu::commons::DevicePtr;
+using setu::commons::DeviceRank;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct AllocateTensorRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(std::vector<ShardId> shard_ids_param)
-      : BaseRequest(), shard_ids(std::move(shard_ids_param)) {}
+struct SendInstruction {
+  SendInstruction(DeviceRank dst_device_id, ShardRef src_shard,
+                  torch::Dtype dtype, std::size_t memory_offset_bytes,
+                  std::size_t num_elements, DevicePtr src_ptr = nullptr)
+      : dst_device_id(dst_device_id),
+        src_shard(std::move(src_shard)),
+        dtype(dtype),
+        memory_offset_bytes(memory_offset_bytes),
+        num_elements(num_elements),
+        src_ptr(src_ptr) {}
 
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  AllocateTensorRequest(RequestId request_id_param,
-                        std::vector<ShardId> shard_ids_param)
-      : BaseRequest(request_id_param), shard_ids(std::move(shard_ids_param)) {}
+  ~SendInstruction() = default;
+  SendInstruction(const SendInstruction&) = default;
+  SendInstruction& operator=(const SendInstruction&) = default;
+  SendInstruction(SendInstruction&&) = default;
+  SendInstruction& operator=(SendInstruction&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, shard_ids={})",
-                       request_id, shard_ids);
-  }
+  [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static AllocateTensorRequest Deserialize(const BinaryRange& range);
+  static SendInstruction Deserialize(const BinaryRange& range);
 
-  const std::vector<ShardId> shard_ids;
+  /**
+   * @brief Populates the device pointers by looking up the base address.
+   */
+  void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
+
+  DeviceRank dst_device_id;
+  ShardRef src_shard;
+  torch::Dtype dtype;
+  std::size_t memory_offset_bytes;
+  std::size_t num_elements;
+
+  // Embellished pointers
+  DevicePtr src_ptr;
 };
-using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

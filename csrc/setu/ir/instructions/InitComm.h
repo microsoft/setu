@@ -16,43 +16,44 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include <nccl.h>
 //==============================================================================
-#include "commons/Types.h"
-#include "commons/datatypes/TensorShardRef.h"
-#include "commons/messages/BaseResponse.h"
-#include "commons/utils/Serialization.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::ir {
 //==============================================================================
-using setu::commons::RequestId;
-using setu::commons::datatypes::TensorShardRef;
+using setu::commons::DeviceRank;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct RegisterTensorShardResponse : public BaseResponse {
-  RegisterTensorShardResponse(
-      RequestId request_id_param,
-      ErrorCode error_code_param = ErrorCode::kSuccess,
-      std::optional<TensorShardRef> shard_ref_param = std::nullopt)
-      : BaseResponse(request_id_param, error_code_param),
-        shard_ref(std::move(shard_ref_param)) {}
+struct InitCommInstruction {
+  InitCommInstruction(
+      ncclUniqueId comm_id,
+      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+      : comm_id(std::move(comm_id)),
+        device_to_rank(std::move(device_to_rank)) {}
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("RegisterTensorShardResponse(error_code={})",
-                       error_code);
-  }
+  ~InitCommInstruction() = default;
+  InitCommInstruction(const InitCommInstruction&) = default;
+  InitCommInstruction& operator=(const InitCommInstruction&) = default;
+  InitCommInstruction(InitCommInstruction&&) = default;
+  InitCommInstruction& operator=(InitCommInstruction&&) = default;
+
+  [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static RegisterTensorShardResponse Deserialize(const BinaryRange& range);
+  static InitCommInstruction Deserialize(const BinaryRange& range);
 
-  const std::optional<TensorShardRef> shard_ref;
+  ncclUniqueId comm_id;
+  std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
 };
-using RegisterTensorShardResponsePtr =
-    std::shared_ptr<RegisterTensorShardResponse>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

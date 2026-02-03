@@ -19,39 +19,44 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/Types.h"
-#include "commons/messages/BaseRequest.h"
+#include "commons/datatypes/TensorShardMetadata.h"
+#include "commons/messages/BaseResponse.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::ShardId;
+using setu::commons::RequestId;
+using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-struct AllocateTensorRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(std::vector<ShardId> shard_ids_param)
-      : BaseRequest(), shard_ids(std::move(shard_ids_param)) {}
-
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  AllocateTensorRequest(RequestId request_id_param,
-                        std::vector<ShardId> shard_ids_param)
-      : BaseRequest(request_id_param), shard_ids(std::move(shard_ids_param)) {}
+/// @brief Response from Coordinator to NodeAgent for tensor shard registration.
+/// Contains TensorShardMetadata which the NodeAgent uses to reconstruct
+/// a TensorShardRef before forwarding to the client.
+struct RegisterTensorShardCoordinatorResponse : public BaseResponse {
+  RegisterTensorShardCoordinatorResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess,
+      std::optional<TensorShardMetadata> shard_metadata_param = std::nullopt)
+      : BaseResponse(request_id_param, error_code_param),
+        shard_metadata(std::move(shard_metadata_param)) {}
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, shard_ids={})",
-                       request_id, shard_ids);
+    return std::format(
+        "RegisterTensorShardCoordinatorResponse(request_id={}, error_code={})",
+        request_id, error_code);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static AllocateTensorRequest Deserialize(const BinaryRange& range);
+  static RegisterTensorShardCoordinatorResponse Deserialize(
+      const BinaryRange& range);
 
-  const std::vector<ShardId> shard_ids;
+  const std::optional<TensorShardMetadata> shard_metadata;
 };
-using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
+using RegisterTensorShardCoordinatorResponsePtr =
+    std::shared_ptr<RegisterTensorShardCoordinatorResponse>;
 
 //==============================================================================
 }  // namespace setu::commons::messages

@@ -14,29 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-// Precompiled Headers for Native Module
-// Contains heavy headers commonly used across native C++ functionality
-//==============================================================================
 #pragma once
-
-// Standard library common headers
-#include "commons/StdCommon.h"
-
-// Heavy PyTorch headers (major compilation cost)
-#include "commons/TorchCommon.h"
-
-// Boost headers (threading and UUID functionality)
-#include "commons/BoostCommon.h"
-
-// ZMQ headers (used in all ZMQ functionality)
-#include "commons/ZmqCommon.h"
-
-// CUDA headers (used in all CUDA functionality)
-#include <cuda_runtime_api.h>  // NOLINT
-
-// NCCL headers
-#include <nccl.h>
-
-// Common Setu headers (stable interfaces)
-#include "commons/Logging.h"
+//==============================================================================
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/TorchCommon.h"
+//==============================================================================
+namespace setu::ir {
+//==============================================================================
+void InitIrPybind(py::module_& m);
+//==============================================================================
+}  // namespace setu::ir
 //==============================================================================

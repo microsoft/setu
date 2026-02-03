@@ -14,29 +14,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#include "setu/ir/ShardRef.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::ir {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
-  BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, shard_ids);
+std::string ShardRef::ToString() const {
+  std::string name_str =
+      tensor_name.has_value() ? tensor_name.value() : "<none>";
+  std::string node_str =
+      node_id.has_value() ? boost::uuids::to_string(node_id.value()) : "<none>";
+  return std::format("ShardRef(shard_id={}, tensor_name={}, node_id={})",
+                     boost::uuids::to_string(shard_id), name_str, node_str);
 }
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
-    const BinaryRange& range) {
+void ShardRef::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(shard_id, node_id, tensor_name);
+}
+
+ShardRef ShardRef::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, shard_ids_val] =
-      reader.ReadFields<RequestId, std::vector<ShardId>>();
-  return AllocateTensorRequest(request_id_val, std::move(shard_ids_val));
+  auto [shard_id, node_id, tensor_name] =
+      reader.ReadFields<ShardId, std::optional<NodeId>,
+                        std::optional<TensorName>>();
+
+  ShardRef ref(std::move(shard_id), std::move(tensor_name));
+  ref.node_id = std::move(node_id);
+  return ref;
 }
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

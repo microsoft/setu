@@ -17,6 +17,15 @@ target_link_libraries(
             backtrace
             setu_python)
 
+# Add NCCL support (required)
+if(NOT NCCL_FOUND)
+  message(FATAL_ERROR "NCCL is required but was not found. "
+                      "Set NCCL_ROOT, CUDA_HOME, or CUDA_PATH environment variable.")
+endif()
+target_include_directories(setu_common INTERFACE ${NCCL_INCLUDE_DIRS})
+target_link_libraries(setu_common INTERFACE ${NCCL_LIBRARIES})
+message(STATUS "NCCL support enabled")
+
 # Function to configure common target properties
 function(setu_target_config target_name is_module)
   target_link_libraries(${target_name} PRIVATE setu_common)
@@ -37,7 +46,9 @@ endfunction()
 function(define_setu_extension name sources object_libs libs)
   python_add_library(${name} MODULE "${sources}" WITH_SOABI)
   if(object_libs)
-    target_sources(${name} PRIVATE $<TARGET_OBJECTS:${object_libs}>)
+    foreach(obj_lib IN LISTS object_libs)
+      target_sources(${name} PRIVATE $<TARGET_OBJECTS:${obj_lib}>)
+    endforeach()
   endif()
   target_link_libraries(${name} PRIVATE ${libs})
   setu_target_config(${name} TRUE)
@@ -47,7 +58,9 @@ endfunction()
 function(define_setu_static name sources object_libs libs)
   add_library(${name} STATIC ${sources})
   if(object_libs)
-    target_sources(${name} PRIVATE $<TARGET_OBJECTS:${object_libs}>)
+    foreach(obj_lib IN LISTS object_libs)
+      target_sources(${name} PRIVATE $<TARGET_OBJECTS:${obj_lib}>)
+    endforeach()
   endif()
   target_link_libraries(${name} PRIVATE ${libs})
   setu_target_config(${name} FALSE)
@@ -92,10 +105,14 @@ file(GLOB_RECURSE CLIENT_SRC "csrc/setu/client/*.cpp")
 define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "")
 
+file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
+define_setu_static(_ir_static "${IR_SRC}" "setu_common_objects" "")
+
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")
-define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects" "_kernels_common")
+define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects"
+                      "_kernels_common;_ir_static")
 define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objects"
-                   "_kernels_common")
+                   "_kernels_common;_ir_static")
 
 file(GLOB_RECURSE METASTORE_SRC "csrc/setu/metastore/*.cpp")
 define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" "")

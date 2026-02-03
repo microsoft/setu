@@ -25,8 +25,8 @@ using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShardMetadata;
 //==============================================================================
-TensorShardRef MetaStore::RegisterTensorShard(const TensorShardSpec& shard_spec,
-                                              const NodeId& owner_node_id) {
+TensorShardMetadataPtr MetaStore::RegisterTensorShard(
+    const TensorShardSpec& shard_spec, const NodeId& owner_node_id) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   auto& tensor_data = tensor_shards_data_[shard_spec.name];
@@ -38,14 +38,6 @@ TensorShardRef MetaStore::RegisterTensorShard(const TensorShardSpec& shard_spec,
 
   // Store the shard metadata
   tensor_data.shards.emplace(shard_id, shard_metadata);
-
-  // Convert TensorDimSpec vector to TensorDimMap for the reference
-  TensorDimMap dims;
-  for (const auto& dim_spec : shard_spec.dims) {
-    dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
-  }
-
-  TensorShardRef shard_ref(shard_spec.name, shard_id, dims);
 
   // Calculate and track sizes
   std::size_t shard_num_elements = shard_spec.GetNumElements();
@@ -64,10 +56,10 @@ TensorShardRef MetaStore::RegisterTensorShard(const TensorShardSpec& shard_spec,
   LOG_DEBUG(
       "Registered tensor shard: id={}, name={}, num_dims={}, "
       "shard_elements={}, registered={}/{}",
-      shard_id, shard_spec.name, dims.size(), shard_num_elements,
+      shard_id, shard_spec.name, shard_spec.dims.size(), shard_num_elements,
       tensor_data.registered_size, tensor_data.expected_size);
 
-  return shard_ref;
+  return shard_metadata;
 }
 //==============================================================================
 bool MetaStore::AllShardsRegistered(const TensorName& tensor_name) const {

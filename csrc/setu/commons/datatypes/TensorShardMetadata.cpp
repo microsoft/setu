@@ -23,8 +23,7 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 void TensorShardMetadata::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(id, owner);
-  spec.Serialize(buffer);
+  writer.WriteFields(id, owner, spec);
 }
 
 TensorShardMetadata TensorShardMetadata::Deserialize(const BinaryRange& range) {

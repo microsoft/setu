@@ -17,14 +17,11 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
+#include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 #include "setu/ir/ShardRef.h"
-#include "setu/ir/instructions/Copy.h"
-#include "setu/ir/instructions/InitComm.h"
-#include "setu/ir/instructions/Receive.h"
-#include "setu/ir/instructions/Send.h"
-#include "setu/ir/instructions/UseComm.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
@@ -35,42 +32,49 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-enum class InstructionType : std::uint8_t {
-  kInitComm = 1,
-  kUseComm = 2,
-  kCopy = 3,
-  kSend = 4,
-  kReceive = 5,
-};
+struct CopyInstruction {
+  CopyInstruction(ShardRef src_shard, std::size_t src_memory_offset_bytes,
+                  ShardRef dst_shard, std::size_t dst_memory_offset_bytes,
+                  torch::Dtype dtype, std::size_t num_elements,
+                  DevicePtr src_ptr = nullptr, DevicePtr dst_ptr = nullptr)
+      : src_shard(std::move(src_shard)),
+        src_memory_offset_bytes(src_memory_offset_bytes),
+        dst_shard(std::move(dst_shard)),
+        dst_memory_offset_bytes(dst_memory_offset_bytes),
+        dtype(dtype),
+        num_elements(num_elements),
+        src_ptr{src_ptr},
+        dst_ptr{dst_ptr} {}
 
-using InstructionVariant =
-    std::variant<InitCommInstruction, UseCommInstruction, CopyInstruction,
-                 SendInstruction, ReceiveInstruction>;
-
-struct Instruction {
-  Instruction() = delete;
-
-  template <typename T>
-  explicit Instruction(T inst) : instr(std::move(inst)) {}
-
-  ~Instruction() = default;
-  Instruction(const Instruction&) = default;
-  Instruction& operator=(const Instruction&) = default;
-  Instruction(Instruction&&) = default;
-  Instruction& operator=(Instruction&&) = default;
+  ~CopyInstruction() = default;
+  CopyInstruction(const CopyInstruction&) = default;
+  CopyInstruction& operator=(const CopyInstruction&) = default;
+  CopyInstruction(CopyInstruction&&) = default;
+  CopyInstruction& operator=(CopyInstruction&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static Instruction Deserialize(const BinaryRange& range);
+  static CopyInstruction Deserialize(const BinaryRange& range);
 
+  /**
+   * @brief Populates the device pointers by looking up the base address.
+   */
   void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
-  InstructionVariant instr;
+  ShardRef src_shard;
+  std::size_t src_memory_offset_bytes;
+  ShardRef dst_shard;
+  std::size_t dst_memory_offset_bytes;
+  torch::Dtype dtype;
+  std::size_t num_elements;
+
+  // Embellished pointers
+  DevicePtr src_ptr;
+  DevicePtr dst_ptr;
 };
 
-using Program = std::vector<Instruction>;
 //==============================================================================
 }  // namespace setu::ir
 //==============================================================================

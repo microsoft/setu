@@ -27,7 +27,6 @@ using setu::commons::RequestId;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
-using setu::commons::messages::RegisterTensorShardResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
@@ -129,7 +128,8 @@ void Worker::Execute(const Program& program) {
 }
 
 void Worker::ExecuteInstruction(const Instruction& instruction) {
-  LOG_DEBUG("Executing instruction (type index: {})", instruction.index());
+  LOG_DEBUG("Executing instruction (type index: {})",
+            instruction.instr.index());
   // TODO: Implement instruction execution logic
 }
 //==============================================================================

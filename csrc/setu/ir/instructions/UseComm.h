@@ -16,43 +16,39 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include <nccl.h>
 //==============================================================================
-#include "commons/Types.h"
-#include "commons/messages/BaseRequest.h"
-#include "commons/utils/Serialization.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::ir {
 //==============================================================================
-using setu::commons::ShardId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct AllocateTensorRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit AllocateTensorRequest(std::vector<ShardId> shard_ids_param)
-      : BaseRequest(), shard_ids(std::move(shard_ids_param)) {}
+struct UseCommInstruction {
+  explicit UseCommInstruction(ncclUniqueId comm_id)
+      : comm_id(std::move(comm_id)) {}
 
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  AllocateTensorRequest(RequestId request_id_param,
-                        std::vector<ShardId> shard_ids_param)
-      : BaseRequest(request_id_param), shard_ids(std::move(shard_ids_param)) {}
+  ~UseCommInstruction() = default;
+  UseCommInstruction(const UseCommInstruction&) = default;
+  UseCommInstruction& operator=(const UseCommInstruction&) = default;
+  UseCommInstruction(UseCommInstruction&&) = default;
+  UseCommInstruction& operator=(UseCommInstruction&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("AllocateTensorRequest(request_id={}, shard_ids={})",
-                       request_id, shard_ids);
-  }
+  [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static AllocateTensorRequest Deserialize(const BinaryRange& range);
+  static UseCommInstruction Deserialize(const BinaryRange& range);
 
-  const std::vector<ShardId> shard_ids;
+  ncclUniqueId comm_id;
 };
-using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::ir
 //==============================================================================

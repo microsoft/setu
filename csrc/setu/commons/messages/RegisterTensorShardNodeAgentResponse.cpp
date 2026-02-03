@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "commons/messages/AllocateTensorRequest.h"
+#include "commons/messages/RegisterTensorShardNodeAgentResponse.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -24,17 +24,19 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-void AllocateTensorRequest::Serialize(BinaryBuffer& buffer) const {
+void RegisterTensorShardNodeAgentResponse::Serialize(
+    BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, shard_ids);
+  writer.WriteFields(request_id, error_code, shard_ref);
 }
 
-AllocateTensorRequest AllocateTensorRequest::Deserialize(
-    const BinaryRange& range) {
+RegisterTensorShardNodeAgentResponse
+RegisterTensorShardNodeAgentResponse::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, shard_ids_val] =
-      reader.ReadFields<RequestId, std::vector<ShardId>>();
-  return AllocateTensorRequest(request_id_val, std::move(shard_ids_val));
+  auto [request_id_val, error_code_val, shard_ref_val] =
+      reader.ReadFields<RequestId, ErrorCode, std::optional<TensorShardRef>>();
+  return RegisterTensorShardNodeAgentResponse(request_id_val, error_code_val,
+                                              shard_ref_val);
 }
 
 //==============================================================================
