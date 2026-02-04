@@ -55,5 +55,12 @@ struct TensorShardWrapper {
   torch::Tensor tensor;
 };
 //==============================================================================
+/// @brief Allows multiple ptrs to the same wrapper
+using TensorShardWrapperPtr = std::shared_ptr<TensorShardWrapper>;
+
+/// @brief Lookup tensor shard given shard id
+using TensorShardsConcurrentMap = ConcurrentMap<ShardId, TensorShardWrapperPtr>;
+
+//==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

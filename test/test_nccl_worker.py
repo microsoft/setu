@@ -18,11 +18,11 @@ def _get_extensions():
         # Load setu package first so torch is in process (required for extension symbols)
         from setu._commons.datatypes import Device
         from setu._ir import (
-            CopyInstruction,
-            InitCommInstruction,
+            Copy,
+            InitComm,
             Instruction,
-            ReceiveInstruction,
-            SendInstruction,
+            Receive,
+            Send,
             ShardRef,
             generate_nccl_id,
         )
@@ -32,10 +32,10 @@ def _get_extensions():
             "NCCLWorker": NCCLWorker,
             "Device": Device,
             "Instruction": Instruction,
-            "CopyInstruction": CopyInstruction,
-            "SendInstruction": SendInstruction,
-            "ReceiveInstruction": ReceiveInstruction,
-            "InitCommInstruction": InitCommInstruction,
+            "Copy": Copy,
+            "Send": Send,
+            "Receive": Receive,
+            "InitComm": InitComm,
             "ShardRef": ShardRef,
             "generate_nccl_id": generate_nccl_id,
         }
@@ -54,7 +54,7 @@ def test_nccl_worker_copy_instruction():
     NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
     Instruction = ext["Instruction"]
-    CopyInstruction = ext["CopyInstruction"]
+    Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
     torch_device = torch.device("cuda:0")
@@ -70,13 +70,13 @@ def test_nccl_worker_copy_instruction():
     src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
     dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
-    copy_instr = CopyInstruction(
+    copy_instr = Copy(
         src_shard,
-        0,  # src_memory_offset_bytes
+        0,  # src_offset_bytes
         dst_shard,
-        0,  # dst_memory_offset_bytes
-        torch.float32,
+        0,  # dst_offset_bytes
         num_elements,
+        torch.float32,
     )
     program = [Instruction(copy_instr)]
 
@@ -104,7 +104,7 @@ def test_nccl_worker_copy_instruction_with_offset():
     NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
     Instruction = ext["Instruction"]
-    CopyInstruction = ext["CopyInstruction"]
+    Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
     torch_device = torch.device("cuda:0")
@@ -126,13 +126,13 @@ def test_nccl_worker_copy_instruction_with_offset():
     offset_bytes = offset_elements * elem_size
     num_elements = 8
 
-    copy_instr = CopyInstruction(
+    copy_instr = Copy(
         src_shard,
         offset_bytes,
         dst_shard,
         offset_bytes,
-        torch.float32,
         num_elements,
+        torch.float32,
     )
     program = [Instruction(copy_instr)]
 
@@ -183,9 +183,9 @@ def test_nccl_worker_send_receive():
     NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
     Instruction = ext["Instruction"]
-    SendInstruction = ext["SendInstruction"]
-    ReceiveInstruction = ext["ReceiveInstruction"]
-    InitCommInstruction = ext["InitCommInstruction"]
+    Send = ext["Send"]
+    Receive = ext["Receive"]
+    InitComm = ext["InitComm"]
     ShardRef = ext["ShardRef"]
     generate_nccl_id = ext["generate_nccl_id"]
 
@@ -210,25 +210,23 @@ def test_nccl_worker_send_receive():
     dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
     # Program for worker 0: InitComm, then Send to device 1
-    init_comm_0 = InitCommInstruction(nccl_id, device_to_rank)
-    send_instr = SendInstruction(
-        1,  # dst_device_id
+    init_comm_0 = InitComm(nccl_id, device_to_rank)
+    send_instr = Send(
         src_shard,
-        torch.float32,
-        0,  # memory_offset_bytes
+        0,  # offset_bytes
         num_elements,
+        torch.float32,
     )
 
     program_0 = [Instruction(init_comm_0), Instruction(send_instr)]
 
     # Program for worker 1: InitComm, then Receive from device 0
-    init_comm_1 = InitCommInstruction(nccl_id, device_to_rank)
-    recv_instr = ReceiveInstruction(
-        0,  # src_device_id
+    init_comm_1 = InitComm(nccl_id, device_to_rank)
+    recv_instr = Receive(
         dst_shard,
-        torch.float32,
-        0,  # memory_offset_bytes
+        0,  # offset_bytes
         num_elements,
+        torch.float32,
     )
 
     program_1 = [Instruction(init_comm_1), Instruction(recv_instr)]

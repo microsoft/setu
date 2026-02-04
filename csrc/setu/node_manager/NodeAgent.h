@@ -22,7 +22,6 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
-#include "commons/datatypes/TensorShardHandle.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
@@ -34,7 +33,6 @@
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
-using setu::commons::ConcurrentMap;
 using setu::commons::CopyOperationId;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
@@ -107,7 +105,7 @@ class NodeAgent {
     Handler(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
             std::size_t port, const std::string& coordinator_endpoint,
             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-            TensorShardsConcurrentMap& shard_ref_to_tensor);
+            TensorShardsConcurrentMap& shard_id_to_tensor);
     ~Handler();
 
     void Start();

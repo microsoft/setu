@@ -32,7 +32,6 @@ using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
-using setu::commons::datatypes::TensorShardReadHandle;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardWrapper;
 using setu::commons::enums::DeviceKind;
@@ -452,11 +451,9 @@ void NodeAgent::Handler::AllocateTensor(
       torch::TensorOptions().dtype(spec.dtype).device(spec.device.torch_device);
   torch::Tensor tensor = torch::empty(shape, options);
 
-  auto tensor_wrapper = TensorShardWrapper(std::move(tensor));
-  auto tensor_shard_ptr =
-      std::make_shared<TensorShard>(shard_metadata, std::move(tensor_wrapper));
+  auto wrapper_ptr = std::make_shared<TensorShardWrapper>(std::move(tensor));
   shard_id_to_tensor_.insert_or_assign(shard_metadata.id,
-                                       std::move(tensor_shard_ptr));
+                                       std::move(wrapper_ptr));
 
   LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
             shard_metadata.id, shape, spec.device.torch_device.str());

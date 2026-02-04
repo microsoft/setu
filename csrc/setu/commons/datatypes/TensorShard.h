@@ -40,9 +40,9 @@ struct TensorShard {
    * @throws std::invalid_argument if tensor_shard_wrapper_param is null
    */
   TensorShard(TensorShardMetadata metadata_param,
-              TensorShardWrapper tensor_shard_wrapper_param)
+              TensorShardWrapperPtr tensor_shard_wrapper_ptr_param)
       : metadata(std::move(metadata_param)),
-        tensor_shard_wrapper(tensor_shard_wrapper_param) {}
+        tensor_shard_wrapper_ptr(std::move(tensor_shard_wrapper_ptr_param)) {}
 
   /**
    * @brief Returns a string representation of the tensor shard
@@ -50,8 +50,8 @@ struct TensorShard {
    * @return String containing metadata and device pointer
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format("TensorShard(metadata={}, tensor_shard_wrapper={})",
-                       metadata.ToString(), tensor_shard_wrapper);
+    return std::format("TensorShard(metadata={}, tensor_shard_wrapper_ptr={})",
+                       metadata.ToString(), tensor_shard_wrapper_ptr);
   }
 
   /**
@@ -60,7 +60,7 @@ struct TensorShard {
    * @return Const pointer to device memory
    */
   [[nodiscard]] DevicePtr GetDevicePtr() const {
-    return tensor_shard_wrapper.GetDevicePtr();
+    return tensor_shard_wrapper_ptr->GetDevicePtr();
   }
 
   /**
@@ -69,18 +69,18 @@ struct TensorShard {
    * @return Const pointer to internal tensor store
    */
   [[nodiscard]] torch::Tensor GetTorchTensor() const {
-    return tensor_shard_wrapper.GetTorchTensor();
+    return tensor_shard_wrapper_ptr->GetTorchTensor();
   }
 
   const TensorShardMetadata metadata;  ///< Immutable metadata for this shard
-  const TensorShardWrapper
-      tensor_shard_wrapper;  ///< Pointer to setu tensor wrapper
+  const TensorShardWrapperPtr
+      tensor_shard_wrapper_ptr;  ///< Pointer to setu tensor wrapper
 
  private:
   friend class TensorShardReadHandle;
   friend class TensorShardWriteHandle;
   mutable std::shared_mutex
-      mutex;  ///< Mutex for thread-safe access to tensor_shard_wrapper
+      mutex;  ///< Mutex for thread-safe access to tensor_shard_wrapper_ptr
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorShard object
@@ -88,10 +88,6 @@ using TensorShardPtr = std::shared_ptr<TensorShard>;
 
 /// @brief Map of shard IDs to TensorShard objects
 using TensorShardsMap = std::unordered_map<ShardId, TensorShardPtr>;
-
-/// @brief Lookup tensor shard given shard id
-using TensorShardsConcurrentMap =
-    ConcurrentMap<ShardId, TensorShardPtr>;
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

@@ -36,13 +36,13 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::CopyInstruction;
-using setu::ir::InitCommInstruction;
+using setu::ir::Copy;
+using setu::ir::InitComm;
 using setu::ir::Instruction;
 using setu::ir::Program;
-using setu::ir::ReceiveInstruction;
-using setu::ir::SendInstruction;
-using setu::ir::UseCommInstruction;
+using setu::ir::Receive;
+using setu::ir::Send;
+using setu::ir::UseComm;
 //==============================================================================
 
 class NCCLWorker : public Worker {
@@ -56,11 +56,11 @@ class NCCLWorker : public Worker {
  private:
   void ExecuteInstruction(const Instruction& instruction, bool& group_started);
 
-  void ExecuteInitComm(const InitCommInstruction& inst);
-  void ExecuteUseComm(const UseCommInstruction& inst);
-  void ExecuteCopy(const CopyInstruction& inst);
-  void ExecuteSend(const SendInstruction& inst);
-  void ExecuteReceive(const ReceiveInstruction& inst);
+  void ExecuteInitComm(const InitComm& inst);
+  void ExecuteUseComm(const UseComm& inst);
+  void ExecuteCopy(const Copy& inst);
+  void ExecuteSend(const Send& inst);
+  void ExecuteReceive(const Receive& inst);
 
   [[nodiscard]] static std::string CommIdToString(const ncclUniqueId& id);
   [[nodiscard]] static ncclDataType_t ToNcclDataType(torch::Dtype dtype);

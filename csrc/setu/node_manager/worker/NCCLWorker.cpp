@@ -89,23 +89,23 @@ void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
       [this, &group_started](const auto& inst) {
         using T = std::decay_t<decltype(inst)>;
 
-        if constexpr (std::is_same_v<T, InitCommInstruction>) {
+        if constexpr (std::is_same_v<T, InitComm>) {
           ExecuteInitComm(inst);
-        } else if constexpr (std::is_same_v<T, UseCommInstruction>) {
+        } else if constexpr (std::is_same_v<T, UseComm>) {
           ExecuteUseComm(inst);
-        } else if constexpr (std::is_same_v<T, CopyInstruction>) {
+        } else if constexpr (std::is_same_v<T, Copy>) {
           if (!group_started) {
             NCCL_CHECK(ncclGroupStart());
             group_started = true;
           }
           ExecuteCopy(inst);
-        } else if constexpr (std::is_same_v<T, SendInstruction>) {
+        } else if constexpr (std::is_same_v<T, Send>) {
           if (!group_started) {
             NCCL_CHECK(ncclGroupStart());
             group_started = true;
           }
           ExecuteSend(inst);
-        } else if constexpr (std::is_same_v<T, ReceiveInstruction>) {
+        } else if constexpr (std::is_same_v<T, Receive>) {
           if (!group_started) {
             NCCL_CHECK(ncclGroupStart());
             group_started = true;
@@ -120,7 +120,7 @@ void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
 // Instruction Handlers
 //==============================================================================
 
-void NCCLWorker::ExecuteInitComm(const InitCommInstruction& inst) {
+void NCCLWorker::ExecuteInitComm(const InitComm& inst) {
   std::string key = CommIdToString(inst.comm_id);
 
   const std::int32_t num_ranks =
@@ -139,47 +139,45 @@ void NCCLWorker::ExecuteInitComm(const InitCommInstruction& inst) {
   LOG_DEBUG("InitComm complete: {} ranks, this rank={}", num_ranks, rank);
 }
 
-void NCCLWorker::ExecuteUseComm(const UseCommInstruction& inst) {
+void NCCLWorker::ExecuteUseComm(const UseComm& inst) {
   active_comm_key_ = CommIdToString(inst.comm_id);
   LOG_DEBUG("UseComm: switched to communicator");
 }
 
-void NCCLWorker::ExecuteCopy(const CopyInstruction& inst) {
-  const std::size_t bytes = inst.num_elements * GetDTypeSizeBytes(inst.dtype);
+void NCCLWorker::ExecuteCopy(const Copy& inst) {
+  const std::size_t bytes = inst.count * GetDTypeSizeBytes(inst.dtype);
 
-  CUDA_CHECK(cudaMemcpyAsync(
-      static_cast<char*>(inst.dst_ptr) + inst.dst_memory_offset_bytes,
-      static_cast<char*>(inst.src_ptr) + inst.src_memory_offset_bytes, bytes,
-      cudaMemcpyDeviceToDevice, stream_));
+  CUDA_CHECK(
+      cudaMemcpyAsync(static_cast<char*>(inst.dst_ptr) + inst.dst_offset_bytes,
+                      static_cast<char*>(inst.src_ptr) + inst.src_offset_bytes,
+                      bytes, cudaMemcpyDeviceToDevice, stream_));
 
   LOG_DEBUG("Copy: {} bytes from {} to {}", bytes, inst.src_shard.ToString(),
             inst.dst_shard.ToString());
 }
 
-void NCCLWorker::ExecuteSend(const SendInstruction& inst) {
+void NCCLWorker::ExecuteSend(const Send& inst) {
   auto& entry = comm_cache_.at(active_comm_key_);
-  const std::int32_t peer_rank = entry.device_to_rank.at(inst.dst_device_id);
+  const std::int32_t peer_rank = inst.GetPeerRank();
 
-  NCCL_CHECK(
-      ncclSend(static_cast<char*>(inst.src_ptr) + inst.memory_offset_bytes,
-               inst.num_elements, ToNcclDataType(inst.dtype), peer_rank,
-               entry.nccl_comm, stream_));
+  NCCL_CHECK(ncclSend(static_cast<char*>(inst.src_ptr) + inst.offset_bytes,
+                      inst.count, ToNcclDataType(inst.dtype), peer_rank,
+                      entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Send: {} elements from {} to device: {}", inst.num_elements,
+  LOG_DEBUG("Send: {} elements from {} to device: {}", inst.count,
             inst.src_shard.ToString(), peer_rank);
 }
 
-void NCCLWorker::ExecuteReceive(const ReceiveInstruction& inst) {
+void NCCLWorker::ExecuteReceive(const Receive& inst) {
   auto& entry = comm_cache_.at(active_comm_key_);
-  const std::int32_t peer_rank = entry.device_to_rank.at(inst.src_device_id);
+  const std::int32_t peer_rank = inst.GetPeerRank();
 
-  NCCL_CHECK(
-      ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.memory_offset_bytes,
-               inst.num_elements, ToNcclDataType(inst.dtype), peer_rank,
-               entry.nccl_comm, stream_));
+  NCCL_CHECK(ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.offset_bytes,
+                      inst.count, ToNcclDataType(inst.dtype), peer_rank,
+                      entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Receive: {} elements from device: {} from device: {}",
-            inst.num_elements, inst.dst_shard.ToString(), peer_rank);
+  LOG_DEBUG("Receive: {} elements from device: {} from device: {}", inst.count,
+            inst.dst_shard.ToString(), peer_rank);
 }
 
 //==============================================================================
