@@ -4,7 +4,14 @@ FetchContent_Declare(googletest
                      URL https://github.com/google/googletest/archive/refs/tags/v1.13.0.tar.gz)
 
 set(BOOST_ENABLE_CMAKE ON)
-set(BOOST_INCLUDE_LIBRARIES thread uuid heap container_hash stacktrace dynamic_bitset)
+set(BOOST_INCLUDE_LIBRARIES
+    thread
+    uuid
+    heap
+    container_hash
+    stacktrace
+    dynamic_bitset
+    unordered)
 
 FetchContent_Declare(
   Boost

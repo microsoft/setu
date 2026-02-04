@@ -24,6 +24,7 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/utils/Pybind.h"
 #include "node_manager/NodeAgent.h"
+#include "node_manager/worker/NCCLWorker.h"
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 namespace setu::node_manager {
@@ -34,20 +35,30 @@ using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
+using setu::node_manager::worker::NCCLWorker;
 using setu::node_manager::worker::Worker;
 //==============================================================================
 void InitWorkerPybindClass(py::module_& m) {
+  // Worker is abstract (has pure virtual Execute and Setup methods)
+  // so we don't provide py::init - it can only be used as a base class
   py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
-      .def(py::init<Device, std::size_t>(), py::arg("device"),
-           py::arg("reply_port"),
-           "Create a worker bound to a device and reply port")
       .def("start", &Worker::Start, "Start the worker executor loop")
       .def("stop", &Worker::Stop, "Stop the worker executor loop")
-      .def("execute", &Worker::Execute, py::arg("program"),
-           "Execute a program on the worker")
       .def("is_running", &Worker::IsRunning, "Check if worker is running")
       .def_property_readonly("device", &Worker::GetDevice,
                              "Get the device this worker is bound to");
+
+  py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
+      .def(py::init<Device, std::size_t>(), py::arg("device"),
+           py::arg("reply_port"),
+           "Create an NCCL worker for the given device and reply port")
+      .def("setup", &NCCLWorker::Setup,
+           py::call_guard<py::gil_scoped_release>(),
+           "Initialize CUDA device and stream (call before execute)")
+      .def("execute", &NCCLWorker::Execute, py::arg("program"),
+           py::call_guard<py::gil_scoped_release>(),
+           "Execute a program (instructions must be embellished with device "
+           "pointers)");
 }
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {

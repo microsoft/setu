@@ -17,50 +17,43 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
-#include "commons/datatypes/Device.h"
-#include "commons/enums/Enums.h"
-#include "commons/utils/ZmqHelper.h"
-#include "ir/Instruction.h"
 //==============================================================================
-namespace setu::node_manager::worker {
+namespace setu::commons::datatypes {
 //==============================================================================
-using setu::commons::datatypes::Device;
-using setu::commons::enums::ErrorCode;
-using setu::commons::utils::ZmqContextPtr;
-using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
-//==============================================================================
-class Worker {
- public:
-  Worker(Device device, std::size_t port);
-  ~Worker();
+/**
+ * @brief Setu's internal tensor representation
+ *  Wraps types such as torch::Tensor and provides access utility functions
+ */
+struct TensorShardWrapper {
+  TensorShardWrapper(torch::Tensor tensor_param)
+      : tensor(std::move(tensor_param)) {
+    if (!tensor.defined() || tensor.numel() <= 0)
+      RAISE_ERROR(std::invalid_argument, "Invalid tensor argument",
+                  "{} is not defined", tensor);
+  }
 
-  void Start();
-  void Stop();
+  /**
+   * @brief Get read-only pointer to device memory
+   *
+   * @return Const pointer to device memory
+   */
+  [[nodiscard]] DevicePtr GetDevicePtr() const { return tensor.data_ptr(); }
 
-  [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
-  [[nodiscard]] const Device& GetDevice() const { return device_; }
+  [[nodiscard]] torch::Tensor GetTorchTensor() const { return tensor; }
 
-  virtual void Execute(const Program& program) = 0;
-  virtual void Setup() = 0;
+  /**
+   * @brief Returns a string representation of the tensor shard
+   *
+   * @return String containing metadata and device pointer
+   */
+  [[nodiscard]] std::string ToString() const {
+    return std::format("Tensor={})", tensor);
+  }
 
- protected:
-  void InitZmqSockets();
-  void CloseZmqSockets();
-
-  void WorkerLoop();
-
-  Device device_;
-
-  std::size_t port_;
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr socket_;
-
-  std::atomic<bool> worker_running_;
-
-  std::thread worker_thread_;
+  torch::Tensor tensor;
 };
 //==============================================================================
-}  // namespace setu::node_manager::worker
+}  // namespace setu::commons::datatypes
 //==============================================================================

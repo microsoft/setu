@@ -22,6 +22,7 @@
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
+using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
@@ -29,10 +30,11 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
-using setu::commons::datatypes::TensorShardMetadataMap;
-using setu::commons::datatypes::TensorShardMetadataPtr;
+using setu::commons::datatypes::TensorShardReadHandle;
 using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardWrapper;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -56,6 +58,8 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
+using setu::ir::Instruction;
+using setu::ir::Program;
 using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
@@ -71,9 +75,11 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()) {
   handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
-                                       coordinator_endpoint_, executor_queue_);
-  executor_ = std::make_unique<Executor>(
-      node_id_, zmq_context_, coordinator_endpoint_, devices_, executor_queue_);
+                                       coordinator_endpoint_, executor_queue_,
+                                       shard_id_to_tensor_);
+  executor_ = std::make_unique<Executor>(node_id_, zmq_context_,
+                                         coordinator_endpoint_, devices_,
+                                         executor_queue_, shard_id_to_tensor_);
 }
 
 NodeAgent::~NodeAgent() {
@@ -134,12 +140,14 @@ void NodeAgent::Execute(Plan plan) {
 NodeAgent::Handler::Handler(
     NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
     std::size_t port, const std::string& coordinator_endpoint,
-    Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
+    Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+    TensorShardsConcurrentMap& shard_id_to_tensor)
     : node_id_(node_id),
       zmq_context_(zmq_context),
       port_(port),
       coordinator_endpoint_(coordinator_endpoint),
-      executor_queue_(executor_queue) {
+      executor_queue_(executor_queue),
+      shard_id_to_tensor_(shard_id_to_tensor) {
   InitSockets();
 }
 
@@ -290,8 +298,15 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
     const Identity& client_identity, const GetTensorHandleRequest& request) {
   LOG_DEBUG("Handling GetTensorHandleRequest for shard: {}", request.shard_id);
 
-  auto it = shard_id_to_tensor_.find(request.shard_id);
-  if (it == shard_id_to_tensor_.end()) {
+  // TODO: Think how this will change for a general tensor wrapper
+  std::optional<setu::commons::utils::TensorIPCSpec> tensor_ipc_spec;
+  bool found = shard_id_to_tensor_.visit(
+      request.shard_id, [&tensor_ipc_spec](const auto& entry) {
+        tensor_ipc_spec.emplace(
+            PrepareTensorIPCSpec(entry.second->GetTorchTensor()));
+      });
+
+  if (!found) {
     LOG_ERROR("Shard not found: {}", request.shard_id);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound);
@@ -300,9 +315,8 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
     return;
   }
 
-  auto tensor_ipc_spec = PrepareTensorIPCSpec(it->second);
   GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
-                                   std::move(tensor_ipc_spec));
+                                   std::move(*tensor_ipc_spec));
   Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
                                                   client_identity, response);
 
@@ -436,11 +450,13 @@ void NodeAgent::Handler::AllocateTensor(
   // Create tensor options with dtype and device from spec
   auto options =
       torch::TensorOptions().dtype(spec.dtype).device(spec.device.torch_device);
-
   torch::Tensor tensor = torch::empty(shape, options);
 
-  // Store the tensor by shard ID
-  shard_id_to_tensor_[shard_metadata.id] = std::move(tensor);
+  auto tensor_wrapper = TensorShardWrapper(std::move(tensor));
+  auto tensor_shard_ptr =
+      std::make_shared<TensorShard>(shard_metadata, std::move(tensor_wrapper));
+  shard_id_to_tensor_.insert_or_assign(shard_metadata.id,
+                                       std::move(tensor_shard_ptr));
 
   LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
             shard_metadata.id, shape, spec.device.torch_device.str());
@@ -452,12 +468,14 @@ void NodeAgent::Handler::AllocateTensor(
 NodeAgent::Executor::Executor(
     NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
     const std::string& coordinator_endpoint, const std::vector<Device>& devices,
-    Queue<std::pair<CopyOperationId, Plan>>& executor_queue)
+    Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+    TensorShardsConcurrentMap const& shard_id_to_tensor)
     : node_id_(node_id),
       zmq_context_(zmq_context),
       coordinator_endpoint_(coordinator_endpoint),
       devices_(devices),
-      executor_queue_(executor_queue) {
+      executor_queue_(executor_queue),
+      shard_id_to_tensor_(shard_id_to_tensor) {
   InitSockets();
 }
 
@@ -529,13 +547,16 @@ void NodeAgent::Executor::Loop() {
 
       // For each worker program in the plan, send it to the corresponding
       // worker
-      for (const auto& [participant, program] : plan.program) {
+      for (auto& [participant, program] : plan.program) {
         // Ensure worker is ready before sending
         auto device_rank = participant.LocalDeviceIndex();
         auto it = worker_sockets_.find(device_rank);
         ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
                              "No socket found for device_rank: {}",
                              device_rank);
+
+        // Populate device ptrs for instructions
+        EmbellishProgram(program);
 
         // Send ExecuteProgramRequest to worker
         LOG_DEBUG("Sending program with {} instructions to worker {}",
@@ -559,6 +580,26 @@ void NodeAgent::Executor::Loop() {
       LOG_DEBUG("Executor: executor_queue_ closed, exiting");
       return;
     }
+  }
+}
+
+void NodeAgent::Executor::EmbellishProgram(Program& program) {
+  auto const DevicePtrLookup = [this](const ShardRef& ref) -> DevicePtr {
+    DevicePtr result = nullptr;
+    bool found = this->shard_id_to_tensor_.visit(
+        ref.shard_id, [&result](const auto& entry) {
+          result = entry.second->GetDevicePtr();
+        });
+    ASSERT_VALID_RUNTIME(found,
+                         "Embellish failed: Tensor: {}, Shard: {} not found in "
+                         "NodeAgent registry.",
+                         ref.tensor_name ? *ref.tensor_name : "<unknown>",
+                         ref.shard_id);
+    return result;
+  };
+
+  for (auto& instr : program) {
+    instr.Embellish(DevicePtrLookup);
   }
 }
 //==============================================================================

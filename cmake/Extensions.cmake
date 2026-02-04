@@ -106,6 +106,7 @@ define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "")
 
 file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
+define_setu_extension(_ir "${IR_SRC}" "setu_common_objects" "")
 define_setu_static(_ir_static "${IR_SRC}" "setu_common_objects" "")
 
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")

@@ -22,6 +22,7 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
+#include "commons/datatypes/TensorShardHandle.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
@@ -33,6 +34,7 @@
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
+using setu::commons::ConcurrentMap;
 using setu::commons::CopyOperationId;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
@@ -47,6 +49,7 @@ using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardMetadataMap;
 using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardsConcurrentMap;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
@@ -63,6 +66,8 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::ir::Program;
+using setu::ir::ShardRef;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
 //==============================================================================
@@ -101,7 +106,8 @@ class NodeAgent {
   struct Handler {
     Handler(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
             std::size_t port, const std::string& coordinator_endpoint,
-            Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+            Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+            TensorShardsConcurrentMap& shard_ref_to_tensor);
     ~Handler();
 
     void Start();
@@ -164,9 +170,7 @@ class NodeAgent {
         pending_waits_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
-    /// TODO: Call torch::Tensor something like TensorStorage and probably move
-    /// to TensorShard (no raw device ptr in TensorShard?)
-    std::unordered_map<ShardId, torch::Tensor> shard_id_to_tensor_;
+    TensorShardsConcurrentMap& shard_id_to_tensor_;
   };
 
   //============================================================================
@@ -176,7 +180,8 @@ class NodeAgent {
     Executor(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
              const std::string& coordinator_endpoint,
              const std::vector<Device>& devices,
-             Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+             TensorShardsConcurrentMap const& shard_id_to_tensor);
     ~Executor();
 
     void Start();
@@ -186,6 +191,7 @@ class NodeAgent {
     void InitSockets();
     void CloseSockets();
     void Loop();
+    void EmbellishProgram(Program& program);
 
     NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
@@ -198,6 +204,7 @@ class NodeAgent {
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    TensorShardsConcurrentMap const& shard_id_to_tensor_;
   };
 
   NodeId node_id_;
@@ -215,6 +222,8 @@ class NodeAgent {
 
   std::unique_ptr<Handler> handler_;
   std::unique_ptr<Executor> executor_;
+
+  TensorShardsConcurrentMap shard_id_to_tensor_;
 };
 //==============================================================================
 }  // namespace setu::node_manager

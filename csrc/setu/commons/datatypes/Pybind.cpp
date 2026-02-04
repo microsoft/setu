@@ -16,9 +16,13 @@
 //==============================================================================
 #include "Pybind.h"
 //==============================================================================
+#include <boost/uuid/string_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
+#include "commons/Types.h"
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/Device.h"
 #include "commons/datatypes/TensorDim.h"
@@ -59,6 +63,13 @@ void InitTensorSlicePybind(py::module_& m) {
                     "Size of the slice (end - start)")
       .def("__str__", &TensorSlice::ToString)
       .def("__repr__", &TensorSlice::ToString);
+}
+//==============================================================================
+void InitUuidPybind(py::module_& m) {
+  py::class_<boost::uuids::uuid>(m, "ShardId", py::module_local())
+      .def("__str__", [](const boost::uuids::uuid& id) {
+        return boost::uuids::to_string(id);
+      });
 }
 //==============================================================================
 void InitTensorDimPybind(py::module_& m) {
@@ -181,12 +192,14 @@ void InitTensorShardMetadataPybind(py::module_& m) {
 //==============================================================================
 void InitTensorShardPybind(py::module_& m) {
   py::class_<TensorShard, TensorShardPtr>(m, "TensorShard", py::module_local())
-      .def(py::init<TensorShardMetadata, DevicePtr>(), py::arg("metadata"),
-           py::arg("device_ptr"))
+      .def(py::init<TensorShardMetadata, TensorShardWrapper>(),
+           py::arg("metadata"), py::arg("tensor_shard_wrapper"))
       .def_readonly("metadata", &TensorShard::metadata,
                     "Metadata describing this shard")
-      .def_readonly("device_ptr", &TensorShard::device_ptr,
-                    "Pointer to device memory location")
+      .def("get_device_ptr", &TensorShard::GetDevicePtr,
+           "Get pointer to device memory location")
+      .def("get_torch_tensor", &TensorShard::GetTorchTensor,
+           "Get the underlying torch tensor")
       .def("__str__", &TensorShard::ToString)
       .def("__repr__", &TensorShard::ToString);
 }
@@ -257,6 +270,7 @@ void InitTensorShardWriteHandlePybind(py::module_& m) {
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Datatypes submodule");
 
+  InitUuidPybind(m);
   InitDevicePybind(m);
   InitTensorSlicePybind(m);
   InitTensorDimPybind(m);
