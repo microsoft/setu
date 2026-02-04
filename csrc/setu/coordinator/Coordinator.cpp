@@ -43,38 +43,57 @@ constexpr std::chrono::milliseconds kExecutorLoopSleepMs(10);
 //==============================================================================
 // Coordinator Implementation
 //==============================================================================
-Coordinator::Coordinator(std::size_t port)
-    : port_(port), zmq_context_(std::make_shared<zmq::context_t>()) {
+Coordinator::Coordinator(std::size_t port) : port_(port) {}
+
+Coordinator::~Coordinator() { Stop(); }
+
+void Coordinator::Start() {
+  if (running_.exchange(true)) {
+    return;
+  }
+
+  LOG_DEBUG("Starting Coordinator");
+
+  // Create ZMQ context and components
+  zmq_context_ = std::make_shared<zmq::context_t>();
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
                                        planner_queue_);
   executor_ = std::make_unique<Executor>(outbox_queue_);
-}
 
-Coordinator::~Coordinator() {
-  Stop();
-  if (zmq_context_) {
-    zmq_context_->close();
-  }
-}
-
-void Coordinator::Start() {
-  LOG_DEBUG("Starting Coordinator");
   gateway_->Start();
   handler_->Start();
   executor_->Start();
 }
 
 void Coordinator::Stop() {
+  if (!running_.exchange(false)) {
+    return;  // Already stopped
+  }
+
   LOG_DEBUG("Stopping Coordinator");
 
   inbox_queue_.close();
   outbox_queue_.close();
 
-  gateway_->Stop();
-  handler_->Stop();
-  executor_->Stop();
+  if (gateway_) {
+    gateway_->Stop();
+    gateway_ = nullptr;
+  }
+  if (handler_) {
+    handler_->Stop();
+    handler_ = nullptr;
+  }
+  if (executor_) {
+    executor_->Stop();
+    executor_ = nullptr;
+  }
+
+  if (zmq_context_) {
+    zmq_context_->close();
+    zmq_context_ = nullptr;
+  }
 }
 
 std::optional<TensorShardMetadata> Coordinator::RegisterTensorShard(
