@@ -19,33 +19,38 @@
 namespace setu::ir {
 //==============================================================================
 
-std::string ReceiveInstruction::ToString() const {
+std::string Receive::ToString() const {
   return std::format(
-      "ReceiveInstruction(src_rank={}, shard={}, dtype={}, "
-      "memory_offset={}, num_elements={}, dst_device_ptr={})",
-      src_device_id, dst_shard.ToString(), static_cast<int>(dtype),
-      memory_offset_bytes, num_elements, dst_ptr);
+      "Receive(peer_rank={}, shard={}, offset_bytes={}, count={}, dtype={}, "
+      "dst_device_ptr={})",
+      peer_rank.has_value() ? std::to_string(peer_rank.value()) : "unset",
+      dst_shard.ToString(), offset_bytes, count, static_cast<int>(dtype),
+      dst_ptr);
 }
 
-void ReceiveInstruction::Serialize(BinaryBuffer& buffer) const {
+void Receive::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  writer.WriteFields(src_device_id, dst_shard, dtype, memory_offset_bytes,
-                     num_elements, dst_ptr_value);
+  // Serialize peer_rank as optional (bool + value if present)
+  writer.WriteFields(peer_rank.has_value(), peer_rank.value_or(0), dst_shard,
+                     offset_bytes, count, dtype, dst_ptr_value);
 }
 
-ReceiveInstruction ReceiveInstruction::Deserialize(const BinaryRange& range) {
+Receive Receive::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [src_device_id, dst_shard, dtype, memory_offset_bytes, num_elements,
+  auto [has_peer_rank, peer_rank_val, dst_shard, offset_bytes, count, dtype,
         dst_ptr_value] =
-      reader.ReadFields<DeviceRank, ShardRef, torch::Dtype, std::size_t,
-                        std::size_t, std::uintptr_t>();
+      reader.ReadFields<bool, DeviceRank, ShardRef, std::size_t, std::size_t,
+                        torch::Dtype, std::uintptr_t>();
   const auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_value);
-  return ReceiveInstruction(src_device_id, std::move(dst_shard), dtype,
-                            memory_offset_bytes, num_elements, dst_ptr);
+  Receive recv(std::move(dst_shard), offset_bytes, count, dtype, dst_ptr);
+  if (has_peer_rank) {
+    recv.SetPeerRank(peer_rank_val);
+  }
+  return recv;
 }
 
-void ReceiveInstruction::Embellish(
+void Receive::Embellish(
     const std::function<DevicePtr(const ShardRef&)>& resolver) {
   dst_ptr = resolver(dst_shard);
 }

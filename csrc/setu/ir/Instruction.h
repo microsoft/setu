@@ -43,9 +43,7 @@ enum class InstructionType : std::uint8_t {
   kReceive = 5,
 };
 
-using InstructionVariant =
-    std::variant<InitCommInstruction, UseCommInstruction, CopyInstruction,
-                 SendInstruction, ReceiveInstruction>;
+using InstructionVariant = std::variant<InitComm, UseComm, Copy, Send, Receive>;
 
 struct Instruction {
   Instruction() = delete;

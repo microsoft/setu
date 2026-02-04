@@ -33,39 +33,57 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct SendInstruction {
-  SendInstruction(DeviceRank dst_device_id, ShardRef src_shard,
-                  torch::Dtype dtype, std::size_t memory_offset_bytes,
-                  std::size_t num_elements, DevicePtr src_ptr = nullptr)
-      : dst_device_id(dst_device_id),
-        src_shard(std::move(src_shard)),
-        dtype(dtype),
-        memory_offset_bytes(memory_offset_bytes),
-        num_elements(num_elements),
-        src_ptr(src_ptr) {}
+struct Send {
+  Send(ShardRef src_shard_param, std::size_t offset_bytes_param,
+       std::size_t count_param, torch::Dtype dtype_param,
+       DevicePtr src_ptr_param = nullptr)
+      : peer_rank(std::nullopt),
+        src_shard(std::move(src_shard_param)),
+        offset_bytes(offset_bytes_param),
+        count(count_param),
+        dtype(dtype_param),
+        src_ptr(src_ptr_param) {}
 
-  ~SendInstruction() = default;
-  SendInstruction(const SendInstruction&) = default;
-  SendInstruction& operator=(const SendInstruction&) = default;
-  SendInstruction(SendInstruction&&) = default;
-  SendInstruction& operator=(SendInstruction&&) = default;
+  ~Send() = default;
+  Send(const Send&) = default;
+  Send& operator=(const Send&) = default;
+  Send(Send&&) = default;
+  Send& operator=(Send&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static SendInstruction Deserialize(const BinaryRange& range);
+  static Send Deserialize(const BinaryRange& range);
 
   /**
    * @brief Populates the device pointers by looking up the base address.
    */
   void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
-  DeviceRank dst_device_id;
+  /**
+   * @brief Sets the peer rank for this send operation.
+   *
+   * @param rank The rank of the destination device in the communicator
+   */
+  void SetPeerRank(DeviceRank rank) { peer_rank = rank; }
+
+  /**
+   * @brief Gets the peer rank, asserting that it has been set.
+   *
+   * @return The destination device rank
+   */
+  [[nodiscard]] DeviceRank GetPeerRank() const {
+    ASSERT_VALID_RUNTIME(peer_rank.has_value(),
+                         "Peer rank has not been set for Send");
+    return peer_rank.value();
+  }
+
+  std::optional<DeviceRank> peer_rank;
   ShardRef src_shard;
+  std::size_t offset_bytes;
+  std::size_t count;
   torch::Dtype dtype;
-  std::size_t memory_offset_bytes;
-  std::size_t num_elements;
 
   // Embellished pointers
   DevicePtr src_ptr;

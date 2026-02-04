@@ -32,31 +32,31 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct CopyInstruction {
-  CopyInstruction(ShardRef src_shard, std::size_t src_memory_offset_bytes,
-                  ShardRef dst_shard, std::size_t dst_memory_offset_bytes,
-                  torch::Dtype dtype, std::size_t num_elements,
-                  DevicePtr src_ptr = nullptr, DevicePtr dst_ptr = nullptr)
-      : src_shard(std::move(src_shard)),
-        src_memory_offset_bytes(src_memory_offset_bytes),
-        dst_shard(std::move(dst_shard)),
-        dst_memory_offset_bytes(dst_memory_offset_bytes),
-        dtype(dtype),
-        num_elements(num_elements),
-        src_ptr{src_ptr},
-        dst_ptr{dst_ptr} {}
+struct Copy {
+  Copy(ShardRef src_shard_param, std::size_t src_offset_bytes_param,
+       ShardRef dst_shard_param, std::size_t dst_offset_bytes_param,
+       std::size_t count_param, torch::Dtype dtype_param,
+       DevicePtr src_ptr_param = nullptr, DevicePtr dst_ptr_param = nullptr)
+      : src_shard(std::move(src_shard_param)),
+        src_offset_bytes(src_offset_bytes_param),
+        dst_shard(std::move(dst_shard_param)),
+        dst_offset_bytes(dst_offset_bytes_param),
+        count(count_param),
+        dtype(dtype_param),
+        src_ptr(src_ptr_param),
+        dst_ptr(dst_ptr_param) {}
 
-  ~CopyInstruction() = default;
-  CopyInstruction(const CopyInstruction&) = default;
-  CopyInstruction& operator=(const CopyInstruction&) = default;
-  CopyInstruction(CopyInstruction&&) = default;
-  CopyInstruction& operator=(CopyInstruction&&) = default;
+  ~Copy() = default;
+  Copy(const Copy&) = default;
+  Copy& operator=(const Copy&) = default;
+  Copy(Copy&&) = default;
+  Copy& operator=(Copy&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static CopyInstruction Deserialize(const BinaryRange& range);
+  static Copy Deserialize(const BinaryRange& range);
 
   /**
    * @brief Populates the device pointers by looking up the base address.
@@ -64,11 +64,11 @@ struct CopyInstruction {
   void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
   ShardRef src_shard;
-  std::size_t src_memory_offset_bytes;
+  std::size_t src_offset_bytes;
   ShardRef dst_shard;
-  std::size_t dst_memory_offset_bytes;
+  std::size_t dst_offset_bytes;
+  std::size_t count;
   torch::Dtype dtype;
-  std::size_t num_elements;
 
   // Embellished pointers
   DevicePtr src_ptr;

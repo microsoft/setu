@@ -31,24 +31,23 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-struct InitCommInstruction {
-  InitCommInstruction(
-      ncclUniqueId comm_id,
-      std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
+struct InitComm {
+  InitComm(ncclUniqueId comm_id,
+           std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
       : comm_id(std::move(comm_id)),
         device_to_rank(std::move(device_to_rank)) {}
 
-  ~InitCommInstruction() = default;
-  InitCommInstruction(const InitCommInstruction&) = default;
-  InitCommInstruction& operator=(const InitCommInstruction&) = default;
-  InitCommInstruction(InitCommInstruction&&) = default;
-  InitCommInstruction& operator=(InitCommInstruction&&) = default;
+  ~InitComm() = default;
+  InitComm(const InitComm&) = default;
+  InitComm& operator=(const InitComm&) = default;
+  InitComm(InitComm&&) = default;
+  InitComm& operator=(InitComm&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static InitCommInstruction Deserialize(const BinaryRange& range);
+  static InitComm Deserialize(const BinaryRange& range);
 
   ncclUniqueId comm_id;
   std::unordered_map<DeviceRank, std::int32_t> device_to_rank;

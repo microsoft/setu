@@ -19,19 +19,19 @@
 namespace setu::ir {
 //==============================================================================
 
-std::string UseCommInstruction::ToString() const {
-  return std::format("UseCommInstruction(comm_id_present={})", true);
+std::string UseComm::ToString() const {
+  return std::format("UseComm(comm_id_present={})", true);
 }
 
-void UseCommInstruction::Serialize(BinaryBuffer& buffer) const {
+void UseComm::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   writer.WriteFields(comm_id);
 }
 
-UseCommInstruction UseCommInstruction::Deserialize(const BinaryRange& range) {
+UseComm UseComm::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [comm_id] = reader.ReadFields<ncclUniqueId>();
-  return UseCommInstruction(comm_id);
+  return UseComm(comm_id);
 }
 
 //==============================================================================
