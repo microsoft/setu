@@ -89,6 +89,8 @@ void InitSendInstructionPybind(py::module_& m) {
                     "Byte offset in source memory")
       .def_readonly("count", &Send::count, "Number of elements to send")
       .def_readonly("dtype", &Send::dtype, "Data type of elements")
+      .def("set_peer_rank", &Send::SetPeerRank, py::arg("rank"),
+           "Set the destination device rank for this send operation")
       .def("__str__", &Send::ToString)
       .def("__repr__", &Send::ToString);
 }
@@ -105,6 +107,8 @@ void InitReceiveInstructionPybind(py::module_& m) {
                     "Byte offset in destination memory")
       .def_readonly("count", &Receive::count, "Number of elements to receive")
       .def_readonly("dtype", &Receive::dtype, "Data type of elements")
+      .def("set_peer_rank", &Receive::SetPeerRank, py::arg("rank"),
+           "Set the source device rank for this receive operation")
       .def("__str__", &Receive::ToString)
       .def("__repr__", &Receive::ToString);
 }

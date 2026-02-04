@@ -217,6 +217,8 @@ def test_nccl_worker_send_receive():
         num_elements,
         torch.float32,
     )
+    # Set peer rank: worker 0 sends to worker 1 (rank 1)
+    send_instr.set_peer_rank(1)
 
     program_0 = [Instruction(init_comm_0), Instruction(send_instr)]
 
@@ -228,6 +230,8 @@ def test_nccl_worker_send_receive():
         num_elements,
         torch.float32,
     )
+    # Set peer rank: worker 1 receives from worker 0 (rank 0)
+    recv_instr.set_peer_rank(0)
 
     program_1 = [Instruction(init_comm_1), Instruction(recv_instr)]
 
