@@ -33,7 +33,6 @@ using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardRef;
-using setu::commons::datatypes::TensorShardWrapper;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -301,8 +300,7 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
   std::optional<setu::commons::utils::TensorIPCSpec> tensor_ipc_spec;
   bool found = shard_id_to_tensor_.visit(
       request.shard_id, [&tensor_ipc_spec](const auto& entry) {
-        tensor_ipc_spec.emplace(
-            PrepareTensorIPCSpec(entry.second->GetTorchTensor()));
+        tensor_ipc_spec.emplace(PrepareTensorIPCSpec(entry.second));
       });
 
   if (!found) {
@@ -451,9 +449,7 @@ void NodeAgent::Handler::AllocateTensor(
       torch::TensorOptions().dtype(spec.dtype).device(spec.device.torch_device);
   torch::Tensor tensor = torch::empty(shape, options);
 
-  auto wrapper_ptr = std::make_shared<TensorShardWrapper>(std::move(tensor));
-  shard_id_to_tensor_.insert_or_assign(shard_metadata.id,
-                                       std::move(wrapper_ptr));
+  shard_id_to_tensor_.insert_or_assign(shard_metadata.id, std::move(tensor));
 
   LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
             shard_metadata.id, shape, spec.device.torch_device.str());
@@ -584,9 +580,8 @@ void NodeAgent::Executor::EmbellishProgram(Program& program) {
   auto const DevicePtrLookup = [this](const ShardRef& ref) -> DevicePtr {
     DevicePtr result = nullptr;
     bool found = this->shard_id_to_tensor_.visit(
-        ref.shard_id, [&result](const auto& entry) {
-          result = entry.second->GetDevicePtr();
-        });
+        ref.shard_id,
+        [&result](const auto& entry) { result = entry.second.data_ptr(); });
     ASSERT_VALID_RUNTIME(found,
                          "Embellish failed: Tensor: {}, Shard: {} not found in "
                          "NodeAgent registry.",

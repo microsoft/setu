@@ -16,10 +16,11 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/Logging.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/TensorShardMetadata.h"
-#include "commons/datatypes/TensorShardWrapper.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
@@ -32,17 +33,18 @@ namespace setu::commons::datatypes {
  */
 struct TensorShard {
   /**
-   * @brief Constructs a tensor shard with metadata and device pointer
+   * @brief Constructs a tensor shard with metadata and tensor
    *
    * @param metadata_param Metadata describing this shard
-   * @param tensor_shard_wrapper_param Setu tensor shard wrapper
+   * @param tensor_param The torch tensor holding the shard data
    *
-   * @throws std::invalid_argument if tensor_shard_wrapper_param is null
+   * @throws std::invalid_argument if tensor_param is not defined
    */
-  TensorShard(TensorShardMetadata metadata_param,
-              TensorShardWrapperPtr tensor_shard_wrapper_ptr_param)
-      : metadata(std::move(metadata_param)),
-        tensor_shard_wrapper_ptr(std::move(tensor_shard_wrapper_ptr_param)) {}
+  TensorShard(TensorShardMetadata metadata_param, torch::Tensor tensor_param)
+      : metadata(std::move(metadata_param)), tensor(std::move(tensor_param)) {
+    ASSERT_VALID_ARGUMENTS(tensor.defined() && tensor.numel() > 0,
+                           "Invalid tensor argument: tensor is not defined");
+  }
 
   /**
    * @brief Returns a string representation of the tensor shard
@@ -50,8 +52,8 @@ struct TensorShard {
    * @return String containing metadata and device pointer
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format("TensorShard(metadata={}, tensor_shard_wrapper_ptr={})",
-                       metadata.ToString(), tensor_shard_wrapper_ptr);
+    return std::format("TensorShard(metadata={}, tensor={})",
+                       metadata.ToString(), tensor);
   }
 
   /**
@@ -59,28 +61,15 @@ struct TensorShard {
    *
    * @return Const pointer to device memory
    */
-  [[nodiscard]] DevicePtr GetDevicePtr() const {
-    return tensor_shard_wrapper_ptr->GetDevicePtr();
-  }
-
-  /**
-   * @brief Get internal tensor store
-   * TODO: Add a method to cast to torch::Tensor
-   * @return Const pointer to internal tensor store
-   */
-  [[nodiscard]] torch::Tensor GetTorchTensor() const {
-    return tensor_shard_wrapper_ptr->GetTorchTensor();
-  }
+  [[nodiscard]] DevicePtr GetDevicePtr() const { return tensor.data_ptr(); }
 
   const TensorShardMetadata metadata;  ///< Immutable metadata for this shard
-  const TensorShardWrapperPtr
-      tensor_shard_wrapper_ptr;  ///< Pointer to setu tensor wrapper
+  const torch::Tensor tensor;          ///< The torch tensor holding shard data
 
  private:
   friend class TensorShardReadHandle;
   friend class TensorShardWriteHandle;
-  mutable std::shared_mutex
-      mutex;  ///< Mutex for thread-safe access to tensor_shard_wrapper_ptr
+  mutable std::shared_mutex mutex;  ///< Mutex for thread-safe access to tensor
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorShard object
