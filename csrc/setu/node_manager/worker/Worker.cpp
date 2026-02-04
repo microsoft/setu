@@ -35,25 +35,31 @@ using setu::ir::Instruction;
 //==============================================================================
 constexpr std::chrono::milliseconds kHandleLoopSleepMs(10);
 //==============================================================================
-Worker::Worker(Device device, std::size_t port) : device_(device), port_(port) {
-  InitZmqSockets();
-}
+Worker::Worker(Device device, std::size_t port)
+    : device_(device), port_(port) {}
 
-Worker::~Worker() {
-  Stop();
-  CloseZmqSockets();
-}
+Worker::~Worker() { Stop(); }
 
 void Worker::Start() {
-  LOG_DEBUG("Starting Worker");
-  if (!worker_running_.load()) {
-    StartExecutorLoop();
+  if (worker_running_.exchange(true)) {
+    return;  // Already running
   }
+
+  LOG_DEBUG("Starting Worker");
+
+  InitZmqSockets();
+  StartExecutorLoop();
 }
 
 void Worker::Stop() {
+  if (!worker_running_.exchange(false)) {
+    return;  // Already stopped
+  }
+
   LOG_DEBUG("Stopping Worker");
+
   StopExecutorLoop();
+  CloseZmqSockets();
 }
 
 void Worker::InitZmqSockets() {
@@ -70,8 +76,14 @@ void Worker::InitZmqSockets() {
 void Worker::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
-  if (socket_) socket_->close();
-  if (zmq_context_) zmq_context_->close();
+  if (socket_) {
+    socket_->close();
+    socket_ = nullptr;
+  }
+  if (zmq_context_) {
+    zmq_context_->close();
+    zmq_context_ = nullptr;
+  }
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
 }
@@ -85,8 +97,6 @@ void Worker::StartExecutorLoop() {
 
 void Worker::StopExecutorLoop() {
   LOG_DEBUG("Stopping executor loop");
-
-  worker_running_ = false;
 
   if (executor_thread_.joinable()) {
     executor_thread_.join();

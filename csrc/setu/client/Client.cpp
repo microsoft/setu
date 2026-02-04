@@ -36,14 +36,11 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
-Client::Client() { zmq_context_ = std::make_shared<zmq::context_t>(); }
+Client::Client() {}
 
 Client::~Client() {
   if (is_connected_) {
     Disconnect();
-  }
-  if (zmq_context_) {
-    zmq_context_->close();
   }
 }
 
@@ -54,6 +51,9 @@ void Client::Connect(const std::string& endpoint) {
   ASSERT_VALID_ARGUMENTS(!endpoint.empty(), "Endpoint cannot be empty");
 
   LOG_DEBUG("Client connecting to {}", endpoint);
+
+  // Create ZMQ context
+  zmq_context_ = std::make_shared<zmq::context_t>();
 
   request_socket_ = ZmqHelper::CreateAndConnectSocket(
       zmq_context_, zmq::socket_type::req, endpoint);
@@ -71,7 +71,12 @@ void Client::Disconnect() {
 
   if (request_socket_) {
     request_socket_->close();
-    request_socket_.reset();
+    request_socket_ = nullptr;
+  }
+
+  if (zmq_context_) {
+    zmq_context_->close();
+    zmq_context_ = nullptr;
   }
 
   endpoint_.clear();

@@ -205,6 +205,7 @@ class NodeAgent {
   std::size_t port_;
   std::string coordinator_endpoint_;
   std::vector<Device> devices_;
+  std::atomic<bool> running_{false};
 
   std::shared_ptr<zmq::context_t> zmq_context_;
 

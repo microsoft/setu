@@ -68,33 +68,50 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
     : node_id_(node_id),
       port_(port),
       coordinator_endpoint_(std::move(coordinator_endpoint)),
-      devices_(devices),
-      zmq_context_(std::make_shared<zmq::context_t>()) {
+      devices_(devices) {}
+
+NodeAgent::~NodeAgent() { Stop(); }
+
+void NodeAgent::Start() {
+  if (running_.exchange(true)) {
+    return;
+  }
+
+  LOG_DEBUG("Starting NodeAgent");
+
+  // Create ZMQ context and components
+  zmq_context_ = std::make_shared<zmq::context_t>();
   handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
                                        coordinator_endpoint_, executor_queue_);
   executor_ = std::make_unique<Executor>(
       node_id_, zmq_context_, coordinator_endpoint_, devices_, executor_queue_);
-}
 
-NodeAgent::~NodeAgent() {
-  Stop();
-  if (zmq_context_) {
-    zmq_context_->close();
-  }
-}
-
-void NodeAgent::Start() {
-  LOG_DEBUG("Starting NodeAgent");
   handler_->Start();
   executor_->Start();
 }
 
 void NodeAgent::Stop() {
+  if (!running_.exchange(false)) {
+    return;  // Already stopped
+  }
+
   LOG_DEBUG("Stopping NodeAgent");
 
   executor_queue_.close();
-  handler_->Stop();
-  executor_->Stop();
+
+  if (handler_) {
+    handler_->Stop();
+    handler_ = nullptr;
+  }
+  if (executor_) {
+    executor_->Stop();
+    executor_ = nullptr;
+  }
+
+  if (zmq_context_) {
+    zmq_context_->close();
+    zmq_context_ = nullptr;
+  }
 }
 
 std::optional<TensorShardRef> NodeAgent::RegisterTensorShard(

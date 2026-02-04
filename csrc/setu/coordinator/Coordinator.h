@@ -214,6 +214,7 @@ class Coordinator {
   };
 
   std::size_t port_;
+  std::atomic<bool> running_{false};
 
   std::shared_ptr<zmq::context_t> zmq_context_;
 
