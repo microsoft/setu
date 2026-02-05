@@ -367,7 +367,7 @@ def test_multiple_shards_same_client_get_handles(infrastructure):
     client.disconnect()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def multi_node_infrastructure():
     """Start Coordinator and two NodeAgents for distributed tensor tests."""
     if not torch.cuda.is_available():
@@ -441,6 +441,199 @@ def multi_node_infrastructure():
         if proc.is_alive():
             proc.terminate()
             proc.join(timeout=1)
+
+
+@pytest.mark.gpu
+def test_register_overlapping_shard_returns_none(multi_node_infrastructure):
+    """Test that registering overlapping shards returns None."""
+    from setu._commons.datatypes import TensorDimSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "overlapping_tensor"
+
+    # Register first shard covering rows [0, 600)
+    dims_0 = [
+        TensorDimSpec("rows", 1024, 0, 600),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_0 = _register_tensor(
+        infra["client_endpoint_0"],
+        tensor_name,
+        dims_0,
+        infra["node_id_0"],
+        0,
+    )
+    assert shard_ref_0 is not None, "First shard should register successfully"
+
+    # Attempt to register overlapping shard covering rows [400, 1024)
+    # This overlaps with [400, 600)
+    dims_1 = [
+        TensorDimSpec("rows", 1024, 400, 1024),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_1 = _register_tensor(
+        infra["client_endpoint_1"],
+        tensor_name,
+        dims_1,
+        infra["node_id_1"],
+        1,
+    )
+    assert shard_ref_1 is None, "Overlapping shard should return None"
+
+
+@pytest.mark.gpu
+def test_register_dtype_mismatch_returns_none(multi_node_infrastructure):
+    """Test that registering shards with mismatched dtypes returns None."""
+    from setu._client import Client
+    from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "dtype_mismatch_tensor"
+
+    # Register first shard with float32
+    dims = [
+        TensorDimSpec("rows", 1024, 0, 512),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+
+    client_0 = Client()
+    client_0.connect(infra["client_endpoint_0"])
+    device_0 = Device(torch_device=torch.device("cuda:0"))
+    shard_spec_0 = TensorShardSpec(
+        name=tensor_name,
+        dims=dims,
+        dtype=torch.float32,
+        device=device_0,
+    )
+    shard_ref_0 = client_0.register_tensor_shard(shard_spec_0)
+    client_0.disconnect()
+    assert shard_ref_0 is not None, "First shard should register successfully"
+
+    # Attempt to register second shard with float16 (dtype mismatch)
+    dims_1 = [
+        TensorDimSpec("rows", 1024, 512, 1024),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+
+    client_1 = Client()
+    client_1.connect(infra["client_endpoint_1"])
+    device_1 = Device(torch_device=torch.device("cuda:1"))
+    shard_spec_1 = TensorShardSpec(
+        name=tensor_name,
+        dims=dims_1,
+        dtype=torch.float16,  # Different dtype
+        device=device_1,
+    )
+    shard_ref_1 = client_1.register_tensor_shard(shard_spec_1)
+    client_1.disconnect()
+    assert shard_ref_1 is None, "Dtype mismatch shard should return None"
+
+
+@pytest.mark.gpu
+def test_register_dimension_size_mismatch_returns_none(multi_node_infrastructure):
+    """Test that registering shards with mismatched dimension sizes returns None."""
+    from setu._commons.datatypes import TensorDimSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "dim_size_mismatch_tensor"
+
+    # Register first shard with rows total size 1024
+    dims_0 = [
+        TensorDimSpec("rows", 1024, 0, 512),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_0 = _register_tensor(
+        infra["client_endpoint_0"],
+        tensor_name,
+        dims_0,
+        infra["node_id_0"],
+        0,
+    )
+    assert shard_ref_0 is not None, "First shard should register successfully"
+
+    # Attempt to register shard with rows total size 2048 (size mismatch)
+    dims_1 = [
+        TensorDimSpec("rows", 2048, 512, 1024),  # Different total size
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_1 = _register_tensor(
+        infra["client_endpoint_1"],
+        tensor_name,
+        dims_1,
+        infra["node_id_1"],
+        1,
+    )
+    assert shard_ref_1 is None, "Dimension size mismatch shard should return None"
+
+
+@pytest.mark.gpu
+def test_register_dimension_name_mismatch_returns_none(multi_node_infrastructure):
+    """Test that registering shards with mismatched dimension names returns None."""
+    from setu._commons.datatypes import TensorDimSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "dim_name_mismatch_tensor"
+
+    # Register first shard with dimension names "rows" and "cols"
+    dims_0 = [
+        TensorDimSpec("rows", 1024, 0, 512),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_0 = _register_tensor(
+        infra["client_endpoint_0"],
+        tensor_name,
+        dims_0,
+        infra["node_id_0"],
+        0,
+    )
+    assert shard_ref_0 is not None, "First shard should register successfully"
+
+    # Attempt to register shard with different dimension names
+    dims_1 = [
+        TensorDimSpec("height", 1024, 512, 1024),  # Different name
+        TensorDimSpec("width", 768, 0, 768),  # Different name
+    ]
+    shard_ref_1 = _register_tensor(
+        infra["client_endpoint_1"],
+        tensor_name,
+        dims_1,
+        infra["node_id_1"],
+        1,
+    )
+    assert shard_ref_1 is None, "Dimension name mismatch shard should return None"
+
+
+@pytest.mark.gpu
+def test_register_identical_shard_returns_none(multi_node_infrastructure):
+    """Test that registering an identical (fully overlapping) shard returns None."""
+    from setu._commons.datatypes import TensorDimSpec
+
+    infra = multi_node_infrastructure
+    tensor_name = "identical_shard_tensor"
+
+    # Register first shard
+    dims = [
+        TensorDimSpec("rows", 1024, 0, 512),
+        TensorDimSpec("cols", 768, 0, 768),
+    ]
+    shard_ref_0 = _register_tensor(
+        infra["client_endpoint_0"],
+        tensor_name,
+        dims,
+        infra["node_id_0"],
+        0,
+    )
+    assert shard_ref_0 is not None, "First shard should register successfully"
+
+    # Attempt to register identical shard (same ranges)
+    shard_ref_1 = _register_tensor(
+        infra["client_endpoint_1"],
+        tensor_name,
+        dims,  # Same dimensions and ranges
+        infra["node_id_1"],
+        1,
+    )
+    assert shard_ref_1 is None, "Identical shard should return None (fully overlapping)"
 
 
 @pytest.mark.gpu

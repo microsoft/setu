@@ -92,15 +92,31 @@ class MetaStore {
       const TensorName& tensor_name /*[in]*/);
 
  private:
-  /// Tensor shard data: expected size, registered size, and shard metadata
-  struct TensorShardsData {
+  /// Registered shard data: expected size, registered size, and shard metadata
+  struct RegisteredShardsData {
     std::size_t expected_size{0};
     std::size_t registered_size{0};
     TensorShardMetadataMap shards;
   };
 
+  /**
+   * @brief Validates a shard registration against existing shards
+   *
+   * Checks:
+   * 1. Dtype matches existing shards
+   * 2. Dimension count, names, and sizes match
+   * 3. No overlap with any existing shard
+   *
+   * @param shard_spec The shard specification to validate
+   * @param registered_data Existing registered data to validate against
+   * @return true if validation passes, false otherwise
+   */
+  [[nodiscard]] bool ValidateShardRegistration(
+      const TensorShardSpec& shard_spec /*[in]*/,
+      const RegisteredShardsData& registered_data /*[in]*/) const;
+
   mutable std::recursive_mutex mutex_;
-  std::unordered_map<TensorName, TensorShardsData> tensor_shards_data_;
+  std::unordered_map<TensorName, RegisteredShardsData> registered_shards_data_;
   TensorMetadataMap tensor_metadata_cache_;
 };
 //==============================================================================

@@ -29,7 +29,12 @@ TensorShardMetadataPtr MetaStore::RegisterTensorShard(
     const TensorShardSpec& shard_spec, const NodeId& owner_node_id) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-  auto& tensor_data = tensor_shards_data_[shard_spec.name];
+  auto& registered_data = registered_shards_data_[shard_spec.name];
+
+  // Validate shard against existing registrations
+  if (!ValidateShardRegistration(shard_spec, registered_data)) {
+    return nullptr;
+  }
 
   // Create TensorShardMetadata with auto-generated ID
   auto shard_metadata =
@@ -37,36 +42,94 @@ TensorShardMetadataPtr MetaStore::RegisterTensorShard(
   ShardId shard_id = shard_metadata->id;
 
   // Store the shard metadata
-  tensor_data.shards.emplace(shard_id, shard_metadata);
+  registered_data.shards.emplace(shard_id, shard_metadata);
 
   // Calculate and track sizes
   std::size_t shard_num_elements = shard_spec.GetNumElements();
 
   // Initialize expected size on first shard registration
-  if (tensor_data.expected_size == 0) {
+  if (registered_data.expected_size == 0) {
     std::size_t total_tensor_size = 1;
     for (const auto& dim_spec : shard_spec.dims) {
       total_tensor_size *= dim_spec.size;
     }
-    tensor_data.expected_size = total_tensor_size;
+    registered_data.expected_size = total_tensor_size;
   }
 
-  tensor_data.registered_size += shard_num_elements;
+  registered_data.registered_size += shard_num_elements;
 
   LOG_DEBUG(
       "Registered tensor shard: id={}, name={}, num_dims={}, "
       "shard_elements={}, registered={}/{}",
       shard_id, shard_spec.name, shard_spec.dims.size(), shard_num_elements,
-      tensor_data.registered_size, tensor_data.expected_size);
+      registered_data.registered_size, registered_data.expected_size);
 
   return shard_metadata;
+}
+//==============================================================================
+bool MetaStore::ValidateShardRegistration(
+    const TensorShardSpec& shard_spec,
+    const RegisteredShardsData& registered_data) const {
+  // First shard for this tensor - nothing to validate against
+  if (registered_data.shards.empty()) {
+    return true;
+  }
+
+  // Get reference shard for metadata comparison
+  const auto& ref_spec = registered_data.shards.begin()->second->spec;
+
+  // Check dtype matches
+  if (shard_spec.dtype != ref_spec.dtype) {
+    LOG_WARNING("Dtype mismatch for tensor '{}': new shard has {}, expected {}",
+                shard_spec.name, shard_spec.dtype, ref_spec.dtype);
+    return false;
+  }
+
+  // Check dimension count matches
+  if (shard_spec.dims.size() != ref_spec.dims.size()) {
+    LOG_WARNING(
+        "Dimension count mismatch for tensor '{}': new shard has {}, expected "
+        "{}",
+        shard_spec.name, shard_spec.dims.size(), ref_spec.dims.size());
+    return false;
+  }
+
+  // Check dimension names and sizes match
+  auto [shard_it, ref_it] = std::ranges::mismatch(
+      shard_spec.dims, ref_spec.dims, [](const auto& a, const auto& b) {
+        return a.name == b.name && a.size == b.size;
+      });
+
+  if (shard_it != shard_spec.dims.end()) {
+    auto idx = std::distance(shard_spec.dims.begin(), shard_it);
+    LOG_WARNING(
+        "Dimension mismatch for tensor '{}' at index {}: "
+        "provided (name={}, size={}) vs expected (name={}, size={})",
+        shard_spec.name, idx, shard_it->name, shard_it->size, ref_it->name,
+        ref_it->size);
+    return false;
+  }
+
+  // Check for overlaps with all existing shards
+  auto overlap_it = std::ranges::find_if(
+      registered_data.shards, [&shard_spec](const auto& pair) {
+        return shard_spec.Overlaps(pair.second->spec);
+      });
+
+  if (overlap_it != registered_data.shards.end()) {
+    LOG_WARNING("Shard for tensor '{}' overlaps with existing shard {}",
+                shard_spec.name, overlap_it->first);
+    return false;
+  }
+
+  return true;
 }
 //==============================================================================
 bool MetaStore::AllShardsRegistered(const TensorName& tensor_name) const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-  auto it = tensor_shards_data_.find(tensor_name);
-  if (it == tensor_shards_data_.end()) {
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it == registered_shards_data_.end()) {
     return false;
   }
   return it->second.registered_size == it->second.expected_size;
@@ -76,8 +139,8 @@ std::size_t MetaStore::GetNumShardsForTensor(
     const TensorName& tensor_name) const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-  auto it = tensor_shards_data_.find(tensor_name);
-  if (it != tensor_shards_data_.end()) {
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it != registered_shards_data_.end()) {
     return it->second.shards.size();
   }
   return 0;
@@ -97,8 +160,8 @@ TensorMetadataPtr MetaStore::GetTensorMetadata(const TensorName& tensor_name) {
     return nullptr;
   }
 
-  auto tensor_it = tensor_shards_data_.find(tensor_name);
-  ASSERT_VALID_RUNTIME(tensor_it != tensor_shards_data_.end(),
+  auto tensor_it = registered_shards_data_.find(tensor_name);
+  ASSERT_VALID_RUNTIME(tensor_it != registered_shards_data_.end(),
                        "Tensor {} should exist if all shards are registered",
                        tensor_name);
 

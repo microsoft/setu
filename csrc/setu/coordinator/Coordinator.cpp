@@ -264,9 +264,17 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
       metastore_.RegisterTensorShard(request.tensor_shard_spec, owner_node_id);
 
   // Send response with TensorShardMetadata
-  RegisterTensorShardCoordinatorResponse response(
-      request.request_id, ErrorCode::kSuccess, *shard_metadata_ptr);
-  outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+  if (shard_metadata_ptr) {
+    RegisterTensorShardCoordinatorResponse response(
+        request.request_id, ErrorCode::kSuccess, *shard_metadata_ptr);
+    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+  } else {
+    LOG_ERROR("Failed to register tensor shard: {}", request.tensor_shard_spec);
+    RegisterTensorShardCoordinatorResponse response(
+        request.request_id, ErrorCode::kInvalidArguments);
+    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    return;
+  }
 
   // Check if all shards for this tensor are registered
   if (metastore_.AllShardsRegistered(request.tensor_shard_spec.name)) {
