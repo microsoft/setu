@@ -35,6 +35,7 @@ using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::utils::ZmqContextPtr;
 using setu::node_manager::worker::NCCLWorker;
 using setu::node_manager::worker::Worker;
 //==============================================================================
@@ -49,9 +50,11 @@ void InitWorkerPybindClass(py::module_& m) {
                              "Get the device this worker is bound to");
 
   py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
-      .def(py::init<NodeId, Device, std::size_t>(), py::arg("node_id"),
-           py::arg("device"), py::arg("reply_port"),
-           "Create an NCCL worker for the given node ID, device and reply port")
+      .def(py::init<NodeId, Device, ZmqContextPtr, std::string>(),
+           py::arg("node_id"), py::arg("device"), py::arg("zmq_context"),
+           py::arg("inproc_endpoint"),
+           "Create an NCCL worker for the given node ID, device, shared ZMQ "
+           "context, and inproc endpoint")
       .def("setup", &NCCLWorker::Setup,
            py::call_guard<py::gil_scoped_release>(),
            "Initialize CUDA device and stream (call before execute)")

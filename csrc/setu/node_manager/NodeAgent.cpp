@@ -19,6 +19,7 @@
 #include "commons/Logging.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
+#include "node_manager/worker/NCCLWorker.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -61,6 +62,7 @@ using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
 using setu::ir::Instruction;
 using setu::ir::Program;
+using setu::node_manager::worker::NCCLWorker;
 using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
@@ -541,11 +543,48 @@ void NodeAgent::Executor::InitSockets() {
       zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_,
       identity + "_executor");
 
-  // TODO: Initialize worker sockets based on devices
-  LOG_DEBUG("Executor: devices={}", devices_);
+  CreateWorkers();
 
   LOG_DEBUG("Executor: Initialized ZMQ sockets with identity={}",
             identity + "_executor");
+}
+
+void NodeAgent::Executor::CreateWorkers() {
+  LOG_DEBUG("Executor: Creating workers for {} devices", devices_.size());
+
+  for (const auto& device : devices_) {
+    auto device_rank = device.LocalDeviceIndex();
+    std::string endpoint = std::format("inproc://worker_{}_{}", to_string(node_id_),
+                                       device_rank);
+
+    auto worker = std::make_unique<NCCLWorker>(node_id_, device, zmq_context_,
+                                               endpoint);
+    worker->Start();
+
+    auto req_socket = ZmqHelper::CreateAndConnectSocket(
+        zmq_context_, zmq::socket_type::req, endpoint);
+
+    worker_sockets_[device_rank] = std::move(req_socket);
+    workers_[device_rank] = std::move(worker);
+
+    LOG_DEBUG("Executor: Created and started worker for device_rank {}",
+              device_rank);
+  }
+
+  LOG_DEBUG("Executor: All workers created and started");
+}
+
+void NodeAgent::Executor::StopWorkers() {
+  LOG_DEBUG("Executor: Stopping workers");
+
+  for (auto& [device_rank, worker] : workers_) {
+    if (worker) {
+      worker->Stop();
+    }
+  }
+  workers_.clear();
+
+  LOG_DEBUG("Executor: All workers stopped");
 }
 
 void NodeAgent::Executor::CloseSockets() {
@@ -582,6 +621,9 @@ void NodeAgent::Executor::Stop() {
   if (thread_.joinable()) {
     thread_.join();
   }
+
+  StopWorkers();
+
   LOG_DEBUG("Executor loop stopped");
 }
 

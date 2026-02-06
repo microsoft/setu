@@ -34,7 +34,8 @@ using setu::ir::Program;
 //==============================================================================
 class Worker {
  public:
-  Worker(NodeId node_id, Device device, std::size_t port);
+  Worker(NodeId node_id, Device device, ZmqContextPtr zmq_context,
+         std::string inproc_endpoint);
   ~Worker();
 
   void Start();
@@ -55,7 +56,7 @@ class Worker {
   NodeId node_id_;
   Device device_;
 
-  std::size_t port_;
+  std::string inproc_endpoint_;
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr socket_;
 

@@ -33,8 +33,14 @@ using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 using setu::ir::Instruction;
 //==============================================================================
-Worker::Worker(NodeId node_id, Device device, std::size_t port)
-    : node_id_(node_id), device_(device), port_(port), worker_running_{false} {
+Worker::Worker(NodeId node_id, Device device, ZmqContextPtr zmq_context,
+               std::string inproc_endpoint)
+    : node_id_(node_id),
+      device_(device),
+      inproc_endpoint_(std::move(inproc_endpoint)),
+      zmq_context_(std::move(zmq_context)),
+      worker_running_{false} {
+  ASSERT_VALID_POINTER_ARGUMENT(zmq_context_);
   InitZmqSockets();
 }
 
@@ -65,12 +71,10 @@ void Worker::Stop() {
 }
 
 void Worker::InitZmqSockets() {
-  LOG_DEBUG("Initializing ZMQ sockets");
+  LOG_DEBUG("Initializing ZMQ sockets for endpoint {}", inproc_endpoint_);
 
-  zmq_context_ = std::make_shared<zmq::context_t>();
-
-  socket_ = ZmqHelper::CreateAndBindSocket(zmq_context_, zmq::socket_type::rep,
-                                           port_);
+  socket_ = ZmqHelper::CreateAndBindInprocSocket(
+      zmq_context_, zmq::socket_type::rep, inproc_endpoint_);
 
   LOG_DEBUG("Initialized ZMQ sockets successfully");
 }
@@ -79,7 +83,7 @@ void Worker::CloseZmqSockets() {
   LOG_DEBUG("Closing ZMQ sockets");
 
   if (socket_) socket_->close();
-  if (zmq_context_) zmq_context_->close();
+  // Note: zmq_context_ is shared and not owned by Worker, so don't close it
 
   LOG_DEBUG("Closed ZMQ sockets successfully");
 }

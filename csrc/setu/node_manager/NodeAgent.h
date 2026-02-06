@@ -201,6 +201,8 @@ class NodeAgent {
    private:
     void InitSockets();
     void CloseSockets();
+    void CreateWorkers();
+    void StopWorkers();
     void Loop();
     void EmbellishProgram(Program& program);
 
@@ -212,6 +214,7 @@ class NodeAgent {
 
     ZmqSocketPtr coordinator_socket_;
     std::unordered_map<DeviceRank, ZmqSocketPtr> worker_sockets_;
+    std::unordered_map<DeviceRank, std::unique_ptr<Worker>> workers_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
@@ -225,8 +228,6 @@ class NodeAgent {
   std::vector<Device> devices_;
 
   std::shared_ptr<zmq::context_t> zmq_context_;
-
-  std::unordered_map<DeviceRank, std::unique_ptr<Worker>> workers_;
 
   // Executor queue: (copy_op_id, node_plan) pairs for execution
   Queue<std::pair<CopyOperationId, Plan>> executor_queue_;

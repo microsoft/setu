@@ -51,8 +51,11 @@ using setu::planner::Participant;
 // NCCLWorker
 //==============================================================================
 
-NCCLWorker::NCCLWorker(NodeId node_id, Device device, std::size_t reply_port)
-    : Worker(node_id, device, reply_port), stream_(nullptr) {}
+NCCLWorker::NCCLWorker(NodeId node_id, Device device, ZmqContextPtr zmq_context,
+                       std::string inproc_endpoint)
+    : Worker(node_id, device, std::move(zmq_context),
+             std::move(inproc_endpoint)),
+      stream_(nullptr) {}
 
 NCCLWorker::~NCCLWorker() {
   if (stream_) {

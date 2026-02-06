@@ -285,6 +285,33 @@ class ZmqHelper : public NonCopyableNonMovable {
     return socket;
   }
 
+  /**
+   * @brief Create and bind a ZMQ socket to an inproc endpoint
+   *
+   * Unlike TCP bind, inproc does not need retry logic (no port conflicts).
+   * Configures linger=0.
+   *
+   * @param context [in] ZMQ context to create socket in
+   * @param socket_type [in] Type of ZMQ socket to create
+   * @param endpoint [in] Inproc endpoint to bind to (must start with
+   * "inproc://")
+   * @return Created and configured socket
+   */
+  [[nodiscard]] static ZmqSocketPtr CreateAndBindInprocSocket(
+      ZmqContextPtr context /*[in]*/, zmq::socket_type socket_type /*[in]*/,
+      const std::string& endpoint /*[in]*/) {
+    ASSERT_VALID_POINTER_ARGUMENT(context);
+    ASSERT_VALID_ARGUMENTS(endpoint.starts_with("inproc://"),
+                           "Endpoint must start with 'inproc://': {}",
+                           endpoint);
+
+    auto socket = std::make_shared<zmq::socket_t>(*context, socket_type);
+    socket->set(zmq::sockopt::linger, 0);
+    socket->bind(endpoint);
+
+    return socket;
+  }
+
  private:
   ZmqHelper() = delete;
   ~ZmqHelper() = delete;
