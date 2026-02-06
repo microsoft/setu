@@ -103,46 +103,6 @@ void NodeAgent::Stop() {
   executor_->Stop();
 }
 
-std::optional<TensorShardRef> NodeAgent::RegisterTensorShard(
-    const TensorShardSpec& shard_spec) {
-  LOG_DEBUG("Registering tensor shard: {}", shard_spec.name);
-
-  // TODO: Implement
-  return std::nullopt;
-}
-
-std::optional<CopyOperationId> NodeAgent::SubmitCopy(
-    const CopySpec& copy_spec) {
-  LOG_DEBUG("Submitting copy operation from {} to {}", copy_spec.src_name,
-            copy_spec.dst_name);
-
-  // TODO: Implement copy submission
-  return std::nullopt;
-}
-
-std::optional<CopyOperationId> NodeAgent::SubmitPull(
-    const CopySpec& copy_spec) {
-  LOG_DEBUG("Submitting pull operation from {} to {}", copy_spec.src_name,
-            copy_spec.dst_name);
-
-  // TODO: Implement pull submission
-  return std::nullopt;
-}
-
-void NodeAgent::WaitForCopy(CopyOperationId copy_op_id) {
-  LOG_DEBUG("Waiting for copy operation ID: {}", copy_op_id);
-
-  // TODO: Implement wait for copy
-}
-
-void NodeAgent::CopyOperationFinished(CopyOperationId copy_op_id) {
-  LOG_DEBUG("Marking copy operation ID: {} as finished", copy_op_id);
-}
-
-void NodeAgent::Execute(Plan plan) {
-  LOG_DEBUG("Executing Plan {}", plan.ToString());
-}
-
 //==============================================================================
 // Handler Implementation
 //==============================================================================

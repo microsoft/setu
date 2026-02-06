@@ -19,9 +19,6 @@
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
-#include "commons/datatypes/CopySpec.h"
-#include "commons/datatypes/TensorShardRef.h"
-#include "commons/datatypes/TensorShardSpec.h"
 #include "commons/utils/Pybind.h"
 #include "node_manager/NodeAgent.h"
 #include "node_manager/worker/NCCLWorker.h"
@@ -29,12 +26,8 @@
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
-using setu::commons::CopyOperationId;
 using setu::commons::NodeId;
-using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
-using setu::commons::datatypes::TensorShardRef;
-using setu::commons::datatypes::TensorShardSpec;
 using setu::node_manager::worker::NCCLWorker;
 using setu::node_manager::worker::Worker;
 //==============================================================================
@@ -70,21 +63,7 @@ void InitNodeAgentPybindClass(py::module_& m) {
            "Create a NodeAgent with specified port, coordinator endpoint, and "
            "devices")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
-      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop")
-      .def("register_tensor_shard", &NodeAgent::RegisterTensorShard,
-           py::arg("shard_spec"),
-           "Register a tensor shard and return a reference to it")
-      .def("submit_copy", &NodeAgent::SubmitCopy, py::arg("copy_spec"),
-           "Submit a copy operation and return an operation ID")
-      .def("submit_pull", &NodeAgent::SubmitPull, py::arg("copy_spec"),
-           "Submit a pull operation (destination-initiated) and return an "
-           "operation ID")
-      .def("wait_for_copy", &NodeAgent::WaitForCopy, py::arg("copy_op_id"),
-           "Wait for a copy operation to complete")
-      .def("copy_operation_finished", &NodeAgent::CopyOperationFinished,
-           py::arg("copy_op_id"), "Notify that a copy operation has completed")
-      .def("execute", &NodeAgent::Execute, py::arg("plan"),
-           "Execute a coordinator plan");
+      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop");
 }
 //==============================================================================
 }  // namespace setu::node_manager
