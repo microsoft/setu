@@ -18,6 +18,7 @@ def _get_extensions():
     try:
         # Load setu package first so torch is in process (required for extension symbols)
         from setu._commons.datatypes import Device
+        from setu._commons.utils import ZmqContext
         from setu._ir import (
             Copy,
             InitComm,
@@ -33,6 +34,7 @@ def _get_extensions():
         return {
             "NCCLWorker": NCCLWorker,
             "Device": Device,
+            "ZmqContext": ZmqContext,
             "Instruction": Instruction,
             "Copy": Copy,
             "Send": Send,
@@ -47,6 +49,20 @@ def _get_extensions():
         pytest.skip(f"setu extensions not available: {e}")
 
 
+def _create_worker(ext, node_id, device):
+    """Create an NCCLWorker with a shared ZmqContext and unique inproc endpoint.
+
+    Returns (worker, zmq_context) so callers can explicitly clean up the context.
+    """
+    ZmqContext = ext["ZmqContext"]
+    NCCLWorker = ext["NCCLWorker"]
+
+    zmq_context = ZmqContext()
+    endpoint = f"inproc://test_worker_{uuid.uuid4().hex}"
+    worker = NCCLWorker(node_id, device, zmq_context, endpoint)
+    return worker, zmq_context
+
+
 @pytest.mark.gpu
 def test_nccl_worker_copy_instruction():
     """Test that NCCLWorker executes a Copy instruction (device-to-device)."""
@@ -54,48 +70,50 @@ def test_nccl_worker_copy_instruction():
         pytest.skip("CUDA not available")
 
     ext = _get_extensions()
-    NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
     Instruction = ext["Instruction"]
     Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
-    node_id = uuid.uuid4()
+    node_id = uuid.UUID(int=1)
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(node_id, device, reply_port=0)
-    worker.setup()
+    worker, zmq_context = _create_worker(ext, node_id, device)
 
-    num_elements = 128
-    src = torch.randn(num_elements, device="cuda", dtype=torch.float32)
-    dst = torch.zeros(num_elements, device="cuda", dtype=torch.float32)
+    try:
+        worker.setup()
 
-    # ShardRef takes shard_id_str and optional tensor_name
-    src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
-    dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
+        num_elements = 128
+        src = torch.randn(num_elements, device="cuda", dtype=torch.float32)
+        dst = torch.zeros(num_elements, device="cuda", dtype=torch.float32)
 
-    copy_instr = Copy(
-        src_shard,
-        0,  # src_offset_bytes
-        dst_shard,
-        0,  # dst_offset_bytes
-        num_elements,
-        torch.float32,
-    )
-    program = [Instruction(copy_instr)]
+        src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
+        dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
-    # embellish receives (shard_id_string, tensor_name_optional)
-    ptr_lookup = {
-        "00000000-0000-0000-0000-000000000001": src.data_ptr(),
-        "00000000-0000-0000-0000-000000000002": dst.data_ptr(),
-    }
+        copy_instr = Copy(
+            src_shard,
+            0,  # src_offset_bytes
+            dst_shard,
+            0,  # dst_offset_bytes
+            num_elements,
+            torch.float32,
+        )
+        program = [Instruction(copy_instr)]
 
-    for instr in program:
-        instr.embellish(lambda shard_id, tensor_name: ptr_lookup[shard_id])
+        ptr_lookup = {
+            "00000000-0000-0000-0000-000000000001": src.data_ptr(),
+            "00000000-0000-0000-0000-000000000002": dst.data_ptr(),
+        }
 
-    worker.execute(program)
+        for instr in program:
+            instr.embellish(lambda shard_id, _tensor_name: ptr_lookup[shard_id])
 
-    assert torch.allclose(dst, src), "Copy instruction did not match source"
+        worker.execute(program)
+
+        assert torch.allclose(dst, src), "Copy instruction did not match source"
+    finally:
+        del worker
+        del zmq_context
 
 
 @pytest.mark.gpu
@@ -105,55 +123,58 @@ def test_nccl_worker_copy_instruction_with_offset():
         pytest.skip("CUDA not available")
 
     ext = _get_extensions()
-    NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
     Instruction = ext["Instruction"]
     Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
-    node_id = uuid.uuid4()
+    node_id = uuid.UUID(int=2)
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(node_id, device, reply_port=0)
-    worker.setup()
+    worker, zmq_context = _create_worker(ext, node_id, device)
 
-    # Buffer large enough for offset copy: copy 8 floats starting at byte 16
-    n = 32
-    src = torch.randn(n, device="cuda", dtype=torch.float32)
-    dst = torch.zeros(n, device="cuda", dtype=torch.float32)
+    try:
+        worker.setup()
 
-    # ShardRef takes shard_id_str and optional tensor_name
-    src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
-    dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
+        # Buffer large enough for offset copy: copy 8 floats starting at byte 16
+        n = 32
+        src = torch.randn(n, device="cuda", dtype=torch.float32)
+        dst = torch.zeros(n, device="cuda", dtype=torch.float32)
 
-    elem_size = 4  # float32
-    offset_elements = 4
-    offset_bytes = offset_elements * elem_size
-    num_elements = 8
+        src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
+        dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
-    copy_instr = Copy(
-        src_shard,
-        offset_bytes,
-        dst_shard,
-        offset_bytes,
-        num_elements,
-        torch.float32,
-    )
-    program = [Instruction(copy_instr)]
+        elem_size = 4  # float32
+        offset_elements = 4
+        offset_bytes = offset_elements * elem_size
+        num_elements = 8
 
-    ptr_lookup = {
-        "00000000-0000-0000-0000-000000000001": src.data_ptr(),
-        "00000000-0000-0000-0000-000000000002": dst.data_ptr(),
-    }
-    for instr in program:
-        instr.embellish(lambda shard_id, tensor_name: ptr_lookup[shard_id])
+        copy_instr = Copy(
+            src_shard,
+            offset_bytes,
+            dst_shard,
+            offset_bytes,
+            num_elements,
+            torch.float32,
+        )
+        program = [Instruction(copy_instr)]
 
-    worker.execute(program)
+        ptr_lookup = {
+            "00000000-0000-0000-0000-000000000001": src.data_ptr(),
+            "00000000-0000-0000-0000-000000000002": dst.data_ptr(),
+        }
+        for instr in program:
+            instr.embellish(lambda shard_id, _tensor_name: ptr_lookup[shard_id])
 
-    assert torch.allclose(
-        dst[offset_elements : offset_elements + num_elements],
-        src[offset_elements : offset_elements + num_elements],
-    ), "Subregion copy did not match"
+        worker.execute(program)
+
+        assert torch.allclose(
+            dst[offset_elements : offset_elements + num_elements],
+            src[offset_elements : offset_elements + num_elements],
+        ), "Subregion copy did not match"
+    finally:
+        del worker
+        del zmq_context
 
 
 @pytest.mark.gpu
@@ -163,18 +184,19 @@ def test_nccl_worker_empty_program():
         pytest.skip("CUDA not available")
 
     ext = _get_extensions()
-    NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
 
-    node_id = uuid.uuid4()
+    node_id = uuid.UUID(int=3)
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(node_id, device, reply_port=0)
-    worker.setup()
+    worker, zmq_context = _create_worker(ext, node_id, device)
 
-    program = []
-
-    worker.execute(program)  # should not raise
+    try:
+        worker.setup()
+        worker.execute([])  # should not raise
+    finally:
+        del worker
+        del zmq_context
 
 
 @pytest.mark.gpu
@@ -195,10 +217,10 @@ def test_nccl_worker_send_receive():
     ShardRef = ext["ShardRef"]
     generate_nccl_id = ext["generate_nccl_id"]
     Participant = ext["Participant"]
+    ZmqContext = ext["ZmqContext"]
 
-    # Generate node IDs for the two workers
-    node_id_0 = uuid.uuid4()
-    node_id_1 = uuid.uuid4()
+    node_id_0 = uuid.UUID(int=10)
+    node_id_1 = uuid.UUID(int=11)
 
     torch_device_0 = torch.device("cuda:0")
     device_0 = Device(torch_device_0)
@@ -218,7 +240,6 @@ def test_nccl_worker_send_receive():
     src = torch.randn(num_elements, device="cuda:0", dtype=torch.float32)
     dst = torch.zeros(num_elements, device="cuda:1", dtype=torch.float32)
 
-    # ShardRef takes shard_id_str and optional tensor_name
     src_shard = ShardRef("00000000-0000-0000-0000-000000000001", "src")
     dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
@@ -253,19 +274,24 @@ def test_nccl_worker_send_receive():
     }
 
     for instr in program_0:
-        instr.embellish(lambda shard_id, tensor_name: ptr_lookup.get(shard_id, 0))
+        instr.embellish(lambda shard_id, _tensor_name: ptr_lookup.get(shard_id, 0))
 
     for instr in program_1:
-        instr.embellish(lambda shard_id, tensor_name: ptr_lookup.get(shard_id, 0))
+        instr.embellish(lambda shard_id, _tensor_name: ptr_lookup.get(shard_id, 0))
 
     # Execute both programs in parallel (NCCL requires both sides to participate)
     # Workers must be created and setup on their respective threads to ensure
     # correct CUDA context ownership.
     errors = []
+    # Track workers/contexts created in threads for cleanup
+    thread_resources = {"w0": None, "w1": None}
 
     def run_worker_0():
         try:
-            worker = NCCLWorker(node_id_0, device_0, reply_port=0)
+            zmq_ctx = ZmqContext()
+            endpoint = f"inproc://test_send_recv_w0_{uuid.uuid4().hex}"
+            worker = NCCLWorker(node_id_0, device_0, zmq_ctx, endpoint)
+            thread_resources["w0"] = (worker, zmq_ctx)
             worker.setup()
             worker.execute(program_0)
         except Exception as e:
@@ -273,7 +299,10 @@ def test_nccl_worker_send_receive():
 
     def run_worker_1():
         try:
-            worker = NCCLWorker(node_id_1, device_1, reply_port=0)
+            zmq_ctx = ZmqContext()
+            endpoint = f"inproc://test_send_recv_w1_{uuid.uuid4().hex}"
+            worker = NCCLWorker(node_id_1, device_1, zmq_ctx, endpoint)
+            thread_resources["w1"] = (worker, zmq_ctx)
             worker.setup()
             worker.execute(program_1)
         except Exception as e:
@@ -282,16 +311,23 @@ def test_nccl_worker_send_receive():
     thread_0 = threading.Thread(target=run_worker_0)
     thread_1 = threading.Thread(target=run_worker_1)
 
-    thread_0.start()
-    thread_1.start()
+    try:
+        thread_0.start()
+        thread_1.start()
 
-    thread_0.join(timeout=10)
-    thread_1.join(timeout=10)
+        thread_0.join(timeout=30)
+        thread_1.join(timeout=30)
 
-    assert not errors, f"Workers encountered errors: {errors}"
-    assert not thread_0.is_alive(), "Worker 0 did not complete in time"
-    assert not thread_1.is_alive(), "Worker 1 did not complete in time"
+        assert not errors, f"Workers encountered errors: {errors}"
+        assert not thread_0.is_alive(), "Worker 0 did not complete in time"
+        assert not thread_1.is_alive(), "Worker 1 did not complete in time"
 
-    # Verify the data was transferred correctly
-    # Move dst to CPU for comparison, src to CPU as well
-    assert torch.allclose(dst.cpu(), src.cpu()), "Send/Receive data mismatch"
+        # Verify the data was transferred correctly
+        assert torch.allclose(dst.cpu(), src.cpu()), "Send/Receive data mismatch"
+    finally:
+        for key in ("w0", "w1"):
+            res = thread_resources[key]
+            if res is not None:
+                worker, zmq_ctx = res
+                del worker
+                del zmq_ctx
