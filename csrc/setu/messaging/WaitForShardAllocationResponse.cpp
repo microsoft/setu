@@ -14,30 +14,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "setu/ir/instructions/UseComm.h"
+#include "messaging/WaitForShardAllocationResponse.h"
 //==============================================================================
-namespace setu::ir {
+namespace setu::commons::messages {
+//==============================================================================
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-std::string UseComm::ToString() const {
-  std::string hex;
-  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
-    hex += std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
-  }
-  return std::format("UseComm(comm_id={})", hex);
-}
-
-void UseComm::Serialize(BinaryBuffer& buffer) const {
+void WaitForShardAllocationResponse::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(comm_id);
+  writer.WriteFields(request_id, error_code);
 }
 
-UseComm UseComm::Deserialize(const BinaryRange& range) {
+WaitForShardAllocationResponse WaitForShardAllocationResponse::Deserialize(
+    const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [comm_id] = reader.ReadFields<ncclUniqueId>();
-  return UseComm(comm_id);
+  auto [request_id_val, error_code_val] =
+      reader.ReadFields<RequestId, ErrorCode>();
+  return WaitForShardAllocationResponse(request_id_val, error_code_val);
 }
 
 //==============================================================================
-}  // namespace setu::ir
+}  // namespace setu::commons::messages
 //==============================================================================

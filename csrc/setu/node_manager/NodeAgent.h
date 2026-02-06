@@ -25,7 +25,7 @@
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "commons/messages/Messages.h"
+#include "messaging/Messages.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
 #include "node_manager/worker/Worker.h"

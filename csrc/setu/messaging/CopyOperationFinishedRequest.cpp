@@ -14,30 +14,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "setu/ir/instructions/UseComm.h"
+#include "messaging/CopyOperationFinishedRequest.h"
 //==============================================================================
-namespace setu::ir {
+namespace setu::commons::messages {
+//==============================================================================
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-std::string UseComm::ToString() const {
-  std::string hex;
-  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
-    hex += std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
-  }
-  return std::format("UseComm(comm_id={})", hex);
-}
-
-void UseComm::Serialize(BinaryBuffer& buffer) const {
+void CopyOperationFinishedRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(comm_id);
+  writer.WriteFields(request_id, copy_operation_id);
 }
 
-UseComm UseComm::Deserialize(const BinaryRange& range) {
+CopyOperationFinishedRequest CopyOperationFinishedRequest::Deserialize(
+    const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [comm_id] = reader.ReadFields<ncclUniqueId>();
-  return UseComm(comm_id);
+  auto [request_id_val, copy_operation_id_val] =
+      reader.ReadFields<RequestId, CopyOperationId>();
+  return CopyOperationFinishedRequest(request_id_val, copy_operation_id_val);
 }
 
 //==============================================================================
-}  // namespace setu::ir
+}  // namespace setu::commons::messages
 //==============================================================================

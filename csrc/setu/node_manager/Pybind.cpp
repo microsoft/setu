@@ -43,6 +43,9 @@ void InitWorkerPybindClass(py::module_& m) {
   // Worker is abstract (has pure virtual Execute and Setup methods)
   // so we don't provide py::init - it can only be used as a base class
   py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
+      .def("connect", &Worker::Connect, py::arg("zmq_context"),
+           py::arg("endpoint"),
+           "Connect the worker to an inproc endpoint on a shared ZMQ context")
       .def("start", &Worker::Start, "Start the worker executor loop")
       .def("stop", &Worker::Stop, "Stop the worker executor loop")
       .def("is_running", &Worker::IsRunning, "Check if worker is running")

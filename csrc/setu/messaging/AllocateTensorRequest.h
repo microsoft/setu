@@ -17,56 +17,42 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+//==============================================================================
 #include "commons/Types.h"
-#include "commons/datatypes/Device.h"
-#include "commons/enums/Enums.h"
-#include "commons/utils/ZmqHelper.h"
-#include "ir/Instruction.h"
+#include "messaging/BaseRequest.h"
+#include "commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::node_manager::worker {
+namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::NodeId;
-using setu::commons::datatypes::Device;
-using setu::commons::enums::ErrorCode;
-using setu::commons::utils::ZmqContextPtr;
-using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
+using setu::commons::ShardId;
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
 //==============================================================================
-class Worker {
- public:
-  Worker(NodeId node_id, Device device, ZmqContextPtr zmq_context,
-         std::string inproc_endpoint);
-  ~Worker();
 
-  void Connect(ZmqContextPtr zmq_context, std::string endpoint);
+struct AllocateTensorRequest : public BaseRequest {
+  /// @brief Constructs a request with auto-generated request ID.
+  explicit AllocateTensorRequest(std::vector<ShardId> shard_ids_param)
+      : BaseRequest(), shard_ids(std::move(shard_ids_param)) {}
 
-  void Start();
-  void Stop();
+  /// @brief Constructs a request with explicit request ID (for
+  /// deserialization).
+  AllocateTensorRequest(RequestId request_id_param,
+                        std::vector<ShardId> shard_ids_param)
+      : BaseRequest(request_id_param), shard_ids(std::move(shard_ids_param)) {}
 
-  [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
-  [[nodiscard]] const Device& GetDevice() const { return device_; }
-  [[nodiscard]] const std::string& GetEndpoint() const { return endpoint_; }
+  [[nodiscard]] std::string ToString() const {
+    return std::format("AllocateTensorRequest(request_id={}, shard_ids={})",
+                       request_id, shard_ids);
+  }
 
-  virtual void Execute(const Program& program) = 0;
-  virtual void Setup() = 0;
+  void Serialize(BinaryBuffer& buffer) const;
 
- protected:
-  void InitZmqSockets();
-  void CloseZmqSockets();
+  static AllocateTensorRequest Deserialize(const BinaryRange& range);
 
-  void WorkerLoop();
-
-  NodeId node_id_;
-  Device device_;
-
-  std::string inproc_endpoint_;
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr socket_;
-
-  std::atomic<bool> worker_running_;
-
-  std::thread worker_thread_;
+  const std::vector<ShardId> shard_ids;
 };
+using AllocateTensorRequestPtr = std::shared_ptr<AllocateTensorRequest>;
+
 //==============================================================================
-}  // namespace setu::node_manager::worker
+}  // namespace setu::commons::messages
 //==============================================================================

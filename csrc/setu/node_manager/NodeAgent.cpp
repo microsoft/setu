@@ -77,6 +77,16 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       coordinator_endpoint_(std::move(coordinator_endpoint)),
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()) {
+  // Create workers and connect them via inproc sockets on the shared context
+  for (const auto& device : devices_) {
+    auto device_rank = device.LocalDeviceIndex();
+    auto endpoint =
+        std::format("inproc://node_{}_worker_{}", node_id_, device_rank);
+    auto worker = std::make_unique<worker::NCCLWorker>(node_id_, device);
+    worker->Connect(zmq_context_, endpoint);
+    workers_.emplace(device_rank, std::move(worker));
+  }
+
   handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
                                        coordinator_endpoint_, executor_queue_,
                                        shard_id_to_tensor_);
@@ -94,6 +104,9 @@ NodeAgent::~NodeAgent() {
 
 void NodeAgent::Start() {
   LOG_DEBUG("Starting NodeAgent");
+  for (auto& [device_rank, worker] : workers_) {
+    worker->Start();
+  }
   handler_->Start();
   executor_->Start();
 }
@@ -104,6 +117,9 @@ void NodeAgent::Stop() {
   executor_queue_.close();
   handler_->Stop();
   executor_->Stop();
+  for (auto& [device_rank, worker] : workers_) {
+    worker->Stop();
+  }
 }
 
 std::optional<TensorShardRef> NodeAgent::RegisterTensorShard(
@@ -397,9 +413,8 @@ void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
 }
 
 void NodeAgent::Handler::HandleExecuteRequest(const ExecuteRequest& request) {
-  LOG_DEBUG("Handling ExecuteRequest for request: {}", request);
+  LOG_DEBUG("Handling ExecuteRequest for request: {}, request.node_plan: {}", request, request.node_plan);
 
-  // Put (copy_op_id, node_plan) into executor queue
   executor_queue_.push(std::make_pair(request.copy_op_id, request.node_plan));
 }
 
@@ -636,12 +651,13 @@ void NodeAgent::Executor::Loop() {
     try {
       auto [copy_op_id, plan] = executor_queue_.pull();
 
-      LOG_DEBUG("Executor received plan for copy_op_id: {}", copy_op_id);
+      LOG_DEBUG("Executor received plan {} for copy_op_id: {}", plan, copy_op_id);
 
       // For each worker program in the plan, send it to the corresponding
-      // worker
+      // worker. We send all programs first so workers can execute in parallel,
+      // then collect all responses.
+      std::vector<std::int32_t> sent_device_ranks;
       for (auto& [participant, program] : plan.program) {
-        // Ensure worker is ready before sending
         auto device_rank = participant.LocalDeviceIndex();
         auto it = worker_sockets_.find(device_rank);
         ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
@@ -656,8 +672,12 @@ void NodeAgent::Executor::Loop() {
                   program.size(), device_rank);
         ExecuteProgramRequest request(program);
         Comm::Send(it->second, request);
+        sent_device_ranks.push_back(device_rank);
+      }
 
-        // Wait for acknowledgment from worker
+      // Wait for acknowledgment from all workers
+      for (auto device_rank : sent_device_ranks) {
+        auto it = worker_sockets_.find(device_rank);
         auto response = Comm::Recv<ExecuteProgramResponse>(it->second);
         LOG_DEBUG("Received acknowledgment from worker {}: {}", device_rank,
                   response);

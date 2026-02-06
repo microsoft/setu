@@ -19,7 +19,7 @@
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/messages/Messages.h"
+#include "messaging/Messages.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
 //==============================================================================
@@ -73,7 +73,7 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
-  LOG_DEBUG("Executing program with {} instructions", program.size());
+  LOG_DEBUG("Executing program:\n{}", program);
 
   bool group_started = false;
 
@@ -89,6 +89,7 @@ void NCCLWorker::Execute(const Program& program) {
 
 void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
                                     bool& group_started) {
+  LOG_DEBUG("Executing instruction: {}", instruction.ToString());
   std::visit(
       [this, &group_started](const auto& inst) {
         using T = std::decay_t<decltype(inst)>;

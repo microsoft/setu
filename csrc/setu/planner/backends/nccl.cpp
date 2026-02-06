@@ -179,9 +179,9 @@ Plan NCCLPlanner::Compile(CopySpec& copy_spec, MetaStore& metastore) {
       program[src_part].emplace_back(ir::Copy(src_ref, src_offset_bytes, dst_ref, dst_offset_bytes, to_copy, dtype));
     } else {
       program[src_part].emplace_back(
-          ir::Send(src_ref, src_offset_bytes, to_copy, dtype, entry.ranks[src_part]));
+          ir::Send(src_ref, src_offset_bytes, to_copy, dtype, entry.ranks[dst_part]));
       program[dst_part].emplace_back(
-          ir::Receive(dst_ref, dst_offset_bytes, to_copy, dtype, entry.ranks[dst_part]));
+          ir::Receive(dst_ref, dst_offset_bytes, to_copy, dtype, entry.ranks[src_part]));
     }
   }
 

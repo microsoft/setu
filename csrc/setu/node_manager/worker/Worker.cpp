@@ -17,7 +17,7 @@
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/messages/Messages.h"
+#include "messaging/Messages.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
 //==============================================================================
@@ -76,16 +76,16 @@ void Worker::InitZmqSockets() {
   socket_ = ZmqHelper::CreateAndBindInprocSocket(
       zmq_context_, zmq::socket_type::rep, inproc_endpoint_);
 
-  LOG_DEBUG("Initialized ZMQ sockets successfully");
+  LOG_DEBUG("Worker: Initialized ZMQ socket on {}", endpoint_);
 }
 
 void Worker::CloseZmqSockets() {
-  LOG_DEBUG("Closing ZMQ sockets");
+  LOG_DEBUG("Worker: Closing ZMQ socket on {}", endpoint_);
 
   if (socket_) socket_->close();
   // Note: zmq_context_ is shared and not owned by Worker, so don't close it
 
-  LOG_DEBUG("Closed ZMQ sockets successfully");
+  LOG_DEBUG("Worker: Closed ZMQ socket on {}", endpoint_);
 }
 
 void Worker::WorkerLoop() {

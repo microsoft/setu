@@ -22,8 +22,12 @@ namespace setu::ir {
 //==============================================================================
 
 std::string InitComm::ToString() const {
-  return std::format("InitComm(participant_to_rank_size={})",
-                     participant_to_rank.size());
+  std::string hex;
+  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
+    hex += std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
+  }
+  return std::format("InitComm(comm_id={}, participant_to_rank={})", hex,
+                     participant_to_rank);
 }
 
 void InitComm::Serialize(BinaryBuffer& buffer) const {

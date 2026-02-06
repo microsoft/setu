@@ -603,10 +603,10 @@ void Coordinator::Executor::Loop() {
       for (auto& [node_id, node_plan] : fragments) {
         Identity node_identity = boost::uuids::to_string(node_id);
 
-        ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
+        LOG_DEBUG("Sending ExecuteRequest to node {} for fragment {} with copy_op_id: {}",
+                  node_identity, node_plan, task.copy_op_id);
 
-        LOG_DEBUG("Sending ExecuteRequest to node {} for copy_op_id: {}",
-                  node_identity, task.copy_op_id);
+        ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
 
         outbox_queue_.push(OutboxMessage{node_identity, execute_request});
       }

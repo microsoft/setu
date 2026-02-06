@@ -17,56 +17,41 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+//==============================================================================
 #include "commons/Types.h"
-#include "commons/datatypes/Device.h"
-#include "commons/enums/Enums.h"
-#include "commons/utils/ZmqHelper.h"
-#include "ir/Instruction.h"
+#include "messaging/BaseResponse.h"
+#include "commons/utils/Serialization.h"
+#include "commons/utils/TorchTensorIPC.h"
 //==============================================================================
-namespace setu::node_manager::worker {
+namespace setu::commons::messages {
 //==============================================================================
-using setu::commons::NodeId;
-using setu::commons::datatypes::Device;
-using setu::commons::enums::ErrorCode;
-using setu::commons::utils::ZmqContextPtr;
-using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
+using setu::commons::RequestId;
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::TensorIPCSpec;
 //==============================================================================
-class Worker {
- public:
-  Worker(NodeId node_id, Device device, ZmqContextPtr zmq_context,
-         std::string inproc_endpoint);
-  ~Worker();
 
-  void Connect(ZmqContextPtr zmq_context, std::string endpoint);
+struct GetTensorHandleResponse : public BaseResponse {
+  GetTensorHandleResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess,
+      std::optional<TensorIPCSpec> tensor_ipc_spec_param = std::nullopt)
+      : BaseResponse(request_id_param, error_code_param),
+        tensor_ipc_spec(std::move(tensor_ipc_spec_param)) {}
 
-  void Start();
-  void Stop();
+  [[nodiscard]] std::string ToString() const {
+    return std::format("GetTensorHandleResponse(request_id={}, error_code={})",
+                       request_id, error_code);
+  }
 
-  [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
-  [[nodiscard]] const Device& GetDevice() const { return device_; }
-  [[nodiscard]] const std::string& GetEndpoint() const { return endpoint_; }
+  void Serialize(BinaryBuffer& buffer) const;
 
-  virtual void Execute(const Program& program) = 0;
-  virtual void Setup() = 0;
+  static GetTensorHandleResponse Deserialize(const BinaryRange& range);
 
- protected:
-  void InitZmqSockets();
-  void CloseZmqSockets();
-
-  void WorkerLoop();
-
-  NodeId node_id_;
-  Device device_;
-
-  std::string inproc_endpoint_;
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr socket_;
-
-  std::atomic<bool> worker_running_;
-
-  std::thread worker_thread_;
+  const std::optional<TensorIPCSpec> tensor_ipc_spec;
 };
+using GetTensorHandleResponsePtr = std::shared_ptr<GetTensorHandleResponse>;
+
 //==============================================================================
-}  // namespace setu::node_manager::worker
+}  // namespace setu::commons::messages
 //==============================================================================

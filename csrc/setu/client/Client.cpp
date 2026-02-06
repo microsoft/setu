@@ -17,7 +17,7 @@
 #include "client/Client.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/messages/Messages.h"
+#include "messaging/Messages.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ZmqHelper.h"
 //==============================================================================
