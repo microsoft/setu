@@ -44,6 +44,7 @@ using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
+using setu::commons::messages::SubmitPullRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
@@ -60,6 +61,8 @@ class Coordinator {
       const TensorShardSpec& shard_spec);
 
   std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
+
+  std::optional<CopyOperationId> SubmitPull(const CopySpec& copy_spec);
 
   void PlanExecuted(CopyOperationId copy_op_id);
 
@@ -152,6 +155,8 @@ class Coordinator {
         const RegisterTensorShardRequest& request);
     void HandleSubmitCopyRequest(const Identity& node_agent_identity,
                                  const SubmitCopyRequest& request);
+    void HandleSubmitPullRequest(const Identity& node_agent_identity,
+                                 const SubmitPullRequest& request);
 
     /// Key for tracking copy operations by (src, dst) tensor pair
     struct CopyKey {
@@ -190,6 +195,11 @@ class Coordinator {
     /// Maps CopyOperationId to CopySpec
     /// TODO: cleanup after copy finished
     std::map<CopyOperationId, CopySpec> copy_operations_;
+
+    /// Pull operation tracking (keyed by dst tensor, waits for dst shard count)
+    std::map<CopyKey, std::size_t> pulls_received_;
+    std::map<CopyKey, CopySpec> pending_pull_specs_;
+    std::map<CopyKey, std::vector<PendingNodeAgent>> pending_pull_node_agents_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};

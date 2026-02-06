@@ -76,6 +76,9 @@ void InitNodeAgentPybindClass(py::module_& m) {
            "Register a tensor shard and return a reference to it")
       .def("submit_copy", &NodeAgent::SubmitCopy, py::arg("copy_spec"),
            "Submit a copy operation and return an operation ID")
+      .def("submit_pull", &NodeAgent::SubmitPull, py::arg("copy_spec"),
+           "Submit a pull operation (destination-initiated) and return an "
+           "operation ID")
       .def("wait_for_copy", &NodeAgent::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
       .def("copy_operation_finished", &NodeAgent::CopyOperationFinished,

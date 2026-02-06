@@ -51,6 +51,8 @@ using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
+using setu::commons::messages::SubmitPullResponse;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
@@ -115,6 +117,15 @@ std::optional<CopyOperationId> NodeAgent::SubmitCopy(
             copy_spec.dst_name);
 
   // TODO: Implement copy submission
+  return std::nullopt;
+}
+
+std::optional<CopyOperationId> NodeAgent::SubmitPull(
+    const CopySpec& copy_spec) {
+  LOG_DEBUG("Submitting pull operation from {} to {}", copy_spec.src_name,
+            copy_spec.dst_name);
+
+  // TODO: Implement pull submission
   return std::nullopt;
 }
 
@@ -229,6 +240,8 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
           HandleRegisterTensorShardRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
           HandleSubmitCopyRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, SubmitPullRequest>) {
+          HandleSubmitPullRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, WaitForCopyRequest>) {
           HandleWaitForCopyRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, GetTensorHandleRequest>) {
@@ -254,6 +267,8 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
           HandleRegisterTensorShardCoordinatorResponse(msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
           HandleSubmitCopyResponse(msg);
+        } else if constexpr (std::is_same_v<T, SubmitPullResponse>) {
+          HandleSubmitPullResponse(msg);
         } else if constexpr (std::is_same_v<T, WaitForCopyResponse>) {
           HandleWaitForCopyResponse(msg);
         }
@@ -275,6 +290,16 @@ void NodeAgent::Handler::HandleRegisterTensorShardRequest(
 void NodeAgent::Handler::HandleSubmitCopyRequest(
     const Identity& client_identity, const SubmitCopyRequest& request) {
   LOG_DEBUG("Handling SubmitCopyRequest from {} to {}",
+            request.copy_spec.src_name, request.copy_spec.dst_name);
+
+  request_id_to_client_identity_[request.request_id] = client_identity;
+
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
+}
+
+void NodeAgent::Handler::HandleSubmitPullRequest(
+    const Identity& client_identity, const SubmitPullRequest& request) {
+  LOG_DEBUG("Handling SubmitPullRequest from {} to {}",
             request.copy_spec.src_name, request.copy_spec.dst_name);
 
   request_id_to_client_identity_[request.request_id] = client_identity;
@@ -409,6 +434,23 @@ void NodeAgent::Handler::HandleSubmitCopyResponse(
   const auto& client_identity = it->second;
 
   Comm::SendWithIdentity<SubmitCopyResponse>(client_socket_, client_identity,
+                                             response);
+
+  request_id_to_client_identity_.erase(it);
+}
+
+void NodeAgent::Handler::HandleSubmitPullResponse(
+    const SubmitPullResponse& response) {
+  auto it = request_id_to_client_identity_.find(response.request_id);
+  if (it == request_id_to_client_identity_.end()) {
+    LOG_WARNING(
+        "Received SubmitPullResponse for unknown request_id: {}, ignoring",
+        response.request_id);
+    return;
+  }
+  const auto& client_identity = it->second;
+
+  Comm::SendWithIdentity<SubmitPullResponse>(client_socket_, client_identity,
                                              response);
 
   request_id_to_client_identity_.erase(it);

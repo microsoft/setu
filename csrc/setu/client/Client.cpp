@@ -31,6 +31,8 @@ using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
+using setu::commons::messages::SubmitPullResponse;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
@@ -123,6 +125,25 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
   auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
 
   LOG_DEBUG("Client received copy operation ID: {}",
+            response.copy_operation_id);
+
+  if (response.error_code != ErrorCode::kSuccess) {
+    return std::nullopt;
+  }
+
+  return response.copy_operation_id;
+}
+
+std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
+  LOG_DEBUG("Client submitting pull operation from {} to {}",
+            copy_spec.src_name, copy_spec.dst_name);
+
+  ClientRequest request = SubmitPullRequest(copy_spec);
+  Comm::Send(request_socket_, request);
+
+  auto response = Comm::Recv<SubmitPullResponse>(request_socket_);
+
+  LOG_DEBUG("Client received pull operation ID: {}",
             response.copy_operation_id);
 
   if (response.error_code != ErrorCode::kSuccess) {

@@ -56,6 +56,8 @@ class Client {
 
   std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
 
+  std::optional<CopyOperationId> SubmitPull(const CopySpec& copy_spec);
+
   void WaitForCopy(CopyOperationId copy_op_id);
 
   TensorIPCSpec GetTensorHandle(const TensorShardRef& shard_ref);
