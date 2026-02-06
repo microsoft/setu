@@ -55,6 +55,9 @@ void InitClientPybindClass(py::module_& m) {
            "Register a tensor shard and return a reference to it")
       .def("submit_copy", &Client::SubmitCopy, py::arg("copy_spec"),
            "Submit a copy operation and return an operation ID")
+      .def("submit_pull", &Client::SubmitPull, py::arg("copy_spec"),
+           "Submit a pull operation (destination-initiated) and return an "
+           "operation ID")
       .def("wait_for_copy", &Client::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
       .def("get_tensor_handle", &Client::GetTensorHandle, py::arg("shard_ref"),

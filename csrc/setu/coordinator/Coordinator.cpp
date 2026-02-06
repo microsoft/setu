@@ -35,6 +35,8 @@ using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
+using setu::commons::messages::SubmitPullResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
@@ -91,6 +93,15 @@ std::optional<CopyOperationId> Coordinator::SubmitCopy(
             copy_spec.dst_name);
 
   // TODO: Implement copy submission and plan generation
+  return std::nullopt;
+}
+
+std::optional<CopyOperationId> Coordinator::SubmitPull(
+    const CopySpec& copy_spec) {
+  LOG_DEBUG("Submitting pull operation from {} to {}", copy_spec.src_name,
+            copy_spec.dst_name);
+
+  // TODO: Implement pull submission and plan generation
   return std::nullopt;
 }
 
@@ -239,6 +250,8 @@ void Coordinator::Handler::Loop() {
                                                msg);
             } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
               HandleSubmitCopyRequest(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, SubmitPullRequest>) {
+              HandleSubmitPullRequest(inbox_msg.node_agent_identity, msg);
             }
           },
           inbox_msg.request);
@@ -373,6 +386,79 @@ void Coordinator::Handler::HandleSubmitCopyRequest(
     copies_received_.erase(copy_key);
     pending_copy_specs_.erase(copy_key);
     pending_node_agents_.erase(copy_key);
+  }
+}
+
+void Coordinator::Handler::HandleSubmitPullRequest(
+    const Identity& node_agent_identity, const SubmitPullRequest& request) {
+  LOG_INFO("Coordinator received SubmitPullRequest from {} to {}",
+           request.copy_spec.src_name, request.copy_spec.dst_name);
+
+  CopyKey copy_key{request.copy_spec.src_name, request.copy_spec.dst_name};
+
+  // Check if this is the first request for this (src, dst) pair
+  auto pending_it = pending_pull_specs_.find(copy_key);
+  if (pending_it == pending_pull_specs_.end()) {
+    // First request - store the CopySpec for validation
+    pending_pull_specs_.emplace(copy_key, request.copy_spec);
+    pulls_received_[copy_key] = 1;
+  } else {
+    // Subsequent request - verify TensorSelections match
+    const CopySpec& first_spec = pending_it->second;
+
+    /// TODO: need to handle errors differently
+    ASSERT_VALID_RUNTIME(
+        *request.copy_spec.src_selection == *first_spec.src_selection,
+        "SubmitPull {} -> {}: source selection mismatch",
+        request.copy_spec.src_name, request.copy_spec.dst_name);
+
+    ASSERT_VALID_RUNTIME(
+        *request.copy_spec.dst_selection == *first_spec.dst_selection,
+        "SubmitPull {} -> {}: destination selection mismatch",
+        request.copy_spec.src_name, request.copy_spec.dst_name);
+
+    pulls_received_[copy_key]++;
+  }
+
+  // Track this node agent for later response
+  pending_pull_node_agents_[copy_key].push_back(
+      PendingNodeAgent{node_agent_identity, request.request_id});
+
+  // Pull only waits for destination shard owners (not source)
+  std::size_t expected_clients =
+      metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
+
+  LOG_DEBUG("SubmitPull {} -> {}: received {}/{} requests",
+            request.copy_spec.src_name, request.copy_spec.dst_name,
+            pulls_received_[copy_key], expected_clients);
+
+  // Check if all destination clients have sent the request
+  if (pulls_received_[copy_key] == expected_clients) {
+    // Generate CopyOperationId
+    CopyOperationId copy_op_id = GenerateUUID();
+
+    LOG_INFO(
+        "All destination clients submitted pull request {} -> {}, "
+        "copy_op_id={}, adding to planner queue",
+        request.copy_spec.src_name, request.copy_spec.dst_name, copy_op_id);
+
+    // Store the mapping
+    copy_operations_.emplace(copy_op_id, request.copy_spec);
+
+    // Add to planner queue
+    planner_queue_.push(request.copy_spec);
+
+    // Send responses to all waiting destination clients with copy_op_id
+    for (const auto& client : pending_pull_node_agents_[copy_key]) {
+      SubmitPullResponse response(client.request_id, copy_op_id,
+                                  ErrorCode::kSuccess);
+      outbox_queue_.push(OutboxMessage{client.identity, response});
+    }
+
+    // Clean up maps
+    pulls_received_.erase(copy_key);
+    pending_pull_specs_.erase(copy_key);
+    pending_pull_node_agents_.erase(copy_key);
   }
 }
 
