@@ -44,7 +44,6 @@ Worker::~Worker() {
 void Worker::Start() {
   if (worker_running_) return;
 
-  LOG_DEBUG("Starting Worker");
   if (!worker_running_.load()) {
     worker_running_ = true;
     worker_thread_ = std::thread(
@@ -70,22 +69,14 @@ void Worker::Connect(ZmqContextPtr zmq_context, std::string endpoint) {
 }
 
 void Worker::InitZmqSockets() {
-  LOG_DEBUG("Worker: Binding REP socket on {}", endpoint_);
-
   socket_ =
       std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::rep);
   socket_->set(zmq::sockopt::linger, 0);
   socket_->bind(endpoint_);
-
-  LOG_DEBUG("Worker: Initialized ZMQ socket on {}", endpoint_);
 }
 
 void Worker::CloseZmqSockets() {
-  LOG_DEBUG("Worker: Closing ZMQ socket on {}", endpoint_);
-
   if (socket_) socket_->close();
-
-  LOG_DEBUG("Worker: Closed ZMQ socket on {}", endpoint_);
 }
 
 void Worker::WorkerLoop() {
@@ -97,12 +88,8 @@ void Worker::WorkerLoop() {
     auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
     const auto& program = request.program;
 
-    LOG_DEBUG("Worker received program with {} instructions", program.size());
-
     // Execute each instruction in the program
     this->Execute(program);
-
-    LOG_DEBUG("Worker completed executing all instructions");
 
     // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);

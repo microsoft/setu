@@ -70,8 +70,6 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
-  LOG_DEBUG("Executing program:\n{}", program);
-
   bool group_started = false;
 
   for (const auto& instruction : program) {
@@ -86,7 +84,6 @@ void NCCLWorker::Execute(const Program& program) {
 
 void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
                                     bool& group_started) {
-  LOG_DEBUG("Executing instruction: {}", instruction.ToString());
   std::visit(
       [this, &group_started](const auto& inst) {
         using T = std::decay_t<decltype(inst)>;

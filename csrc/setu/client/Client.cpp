@@ -55,8 +55,6 @@ void Client::Connect(const std::string& endpoint) {
                          endpoint_);
   ASSERT_VALID_ARGUMENTS(!endpoint.empty(), "Endpoint cannot be empty");
 
-  LOG_DEBUG("Client connecting to {}", endpoint);
-
   request_socket_ = ZmqHelper::CreateAndConnectSocket(
       zmq_context_, zmq::socket_type::req, endpoint);
 
@@ -68,8 +66,6 @@ void Client::Connect(const std::string& endpoint) {
 
 void Client::Disconnect() {
   ASSERT_VALID_RUNTIME(is_connected_, "Client is not connected");
-
-  LOG_DEBUG("Client disconnecting from {}", endpoint_);
 
   if (request_socket_) {
     request_socket_->close();
@@ -88,8 +84,6 @@ const std::string& Client::GetEndpoint() const { return endpoint_; }
 
 std::optional<TensorShardRef> Client::RegisterTensorShard(
     const TensorShardSpec& shard_spec) {
-  LOG_DEBUG("Client registering tensor shard: {}", shard_spec.name);
-
   ClientRequest request = RegisterTensorShardRequest(shard_spec);
   Comm::Send(request_socket_, request);
 
@@ -117,9 +111,6 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
 }
 
 std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
-  LOG_DEBUG("Client submitting copy operation from {} to {}",
-            copy_spec.src_name, copy_spec.dst_name);
-
   // Find all shards owned by this client that are involved in the copy
   // (either as source or destination)
   std::vector<ShardId> involved_shards;
@@ -143,8 +134,6 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
   // Submit a request for each involved shard
   std::optional<CopyOperationId> copy_op_id;
   for (const auto& shard_id : involved_shards) {
-    LOG_DEBUG("Client submitting SubmitCopyRequest for shard {}", shard_id);
-
     ClientRequest request = SubmitCopyRequest(shard_id, copy_spec);
     Comm::Send(request_socket_, request);
 
@@ -164,9 +153,6 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
 }
 
 std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
-  LOG_DEBUG("Client submitting pull operation from {} to {}",
-            copy_spec.src_name, copy_spec.dst_name);
-
   // For Pull: only destination shards submit (one-sided operation)
   auto it = tensor_shards_.find(copy_spec.dst_name);
   ASSERT_VALID_RUNTIME(it != tensor_shards_.end(),
@@ -176,7 +162,6 @@ std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
   std::optional<CopyOperationId> copy_op_id;
   for (const auto& shard_ref : it->second) {
     const auto shard_id = shard_ref->shard_id;
-    LOG_DEBUG("Client submitting SubmitPullRequest for shard {}", shard_id);
 
     ClientRequest request = SubmitPullRequest(shard_id, copy_spec);
     Comm::Send(request_socket_, request);
@@ -197,8 +182,6 @@ std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
 }
 
 void Client::WaitForCopy(CopyOperationId copy_op_id) {
-  LOG_DEBUG("Client waiting for copy operation ID: {}", copy_op_id);
-
   ClientRequest request = WaitForCopyRequest(copy_op_id);
   Comm::Send(request_socket_, request);
 
@@ -210,8 +193,6 @@ void Client::WaitForCopy(CopyOperationId copy_op_id) {
 }
 
 void Client::WaitForShardAllocation(ShardId shard_id) {
-  LOG_DEBUG("Client waiting for shard allocation: {}", shard_id);
-
   ClientRequest request = WaitForShardAllocationRequest(shard_id);
   Comm::Send(request_socket_, request);
 
@@ -223,9 +204,6 @@ void Client::WaitForShardAllocation(ShardId shard_id) {
 }
 
 TensorIPCSpec Client::GetTensorHandle(const TensorShardRef& shard_ref) {
-  LOG_DEBUG("Client requesting tensor handle for shard: {}",
-            shard_ref.shard_id);
-
   ClientRequest request = GetTensorHandleRequest(shard_ref.shard_id);
   Comm::Send(request_socket_, request);
 
