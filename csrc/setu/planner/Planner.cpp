@@ -31,7 +31,6 @@ std::unordered_map<NodeId, Plan> Plan::Fragments() {
     fragment.program[participant] = prog;
   }
 
-  LOG_DEBUG("Fragmented plan into {} node-specific plans", fragments.size());
   return fragments;
 }
 

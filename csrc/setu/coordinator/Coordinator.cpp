@@ -125,46 +125,33 @@ Coordinator::Gateway::~Gateway() {
 }
 
 void Coordinator::Gateway::InitSockets() {
-  LOG_DEBUG("Gateway: Initializing ZMQ sockets");
-
   node_agent_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
-
-  LOG_DEBUG("Gateway: Initialized ZMQ sockets successfully");
 }
 
 void Coordinator::Gateway::CloseSockets() {
-  LOG_DEBUG("Gateway: Closing ZMQ sockets");
-
   if (node_agent_socket_) {
     node_agent_socket_->close();
   }
-
-  LOG_DEBUG("Gateway: Closed ZMQ sockets successfully");
 }
 
 void Coordinator::Gateway::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting gateway loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorGatewayThread"));
 }
 
 void Coordinator::Gateway::Stop() {
-  LOG_DEBUG("Stopping gateway loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Gateway loop stopped");
 }
 
 void Coordinator::Gateway::Loop() {
-  LOG_DEBUG("Entering gateway loop");
-
   running_ = true;
   while (running_) {
     // Poll for incoming messages from NodeAgents
@@ -174,12 +161,9 @@ void Coordinator::Gateway::Loop() {
       if (socket == node_agent_socket_) {
         auto [node_agent_identity, request] =
             Comm::RecvWithIdentity<NodeAgentRequest, false>(socket);
-        LOG_DEBUG("Gateway: Received message from {} (variant index={})",
-                  node_agent_identity, request.index());
         auto status =
             inbox_queue_.try_push(InboxMessage{node_agent_identity, request});
         if (status == boost::queue_op_status::closed) {
-          LOG_DEBUG("Gateway: inbox_queue_ closed, exiting");
           return;
         }
       }
@@ -194,7 +178,6 @@ void Coordinator::Gateway::Loop() {
             outbox_msg.message);
       }
     } catch (const boost::concurrent::sync_queue_is_closed&) {
-      LOG_DEBUG("Gateway: outbox_queue_ closed, exiting");
       return;
     }
   }
@@ -216,45 +199,34 @@ void Coordinator::Handler::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting handler loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorHandlerThread"));
 }
 
 void Coordinator::Handler::Stop() {
-  LOG_DEBUG("Stopping handler loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Handler loop stopped");
 }
 
 void Coordinator::Handler::Loop() {
-  LOG_DEBUG("Entering handler loop");
-
   running_ = true;
   while (running_) {
     try {
       InboxMessage inbox_msg = inbox_queue_.pull();
-      LOG_DEBUG("Handler: Processing message from {} (variant index={})",
-                inbox_msg.node_agent_identity, inbox_msg.request.index());
       std::visit(
           [&](const auto& msg) {
             using T = std::decay_t<decltype(msg)>;
             if constexpr (std::is_same_v<T, RegisterTensorShardRequest>) {
-              LOG_DEBUG("Handler: Dispatching RegisterTensorShardRequest");
               HandleRegisterTensorShardRequest(inbox_msg.node_agent_identity,
                                                msg);
             } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
-              LOG_DEBUG("Handler: Dispatching SubmitCopyRequest");
               HandleSubmitCopyRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, SubmitPullRequest>) {
-              LOG_DEBUG("Handler: Dispatching SubmitPullRequest");
               HandleSubmitPullRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, ExecuteResponse>) {
-              LOG_DEBUG("Handler: Dispatching ExecuteResponse");
               HandleExecuteResponse(inbox_msg.node_agent_identity, msg);
             } else {
               LOG_WARNING("Handler: Unknown message type (index={})",
@@ -263,7 +235,6 @@ void Coordinator::Handler::Loop() {
           },
           inbox_msg.request);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
-      LOG_DEBUG("Handler: inbox_queue_ closed, exiting");
       return;
     }
   }
@@ -332,91 +303,13 @@ void Coordinator::Handler::HandleSubmitCopyRequest(
            request.copy_spec.src_name, request.copy_spec.dst_name,
            request.shard_id);
 
-  CopyKey copy_key{request.copy_spec.src_name, request.copy_spec.dst_name};
-
-  // Track which shards have submitted
-  auto& shards = shards_received_[copy_key];
-
-  // Check for duplicate shard submission
-  ASSERT_VALID_RUNTIME(
-      !shards.contains(request.shard_id),
-      "SubmitCopy {} -> {}: duplicate submission from shard {}",
-      request.copy_spec.src_name, request.copy_spec.dst_name, request.shard_id);
-
-  // Check if this is the first request for this (src, dst) pair
-  auto pending_it = pending_copy_specs_.find(copy_key);
-  if (pending_it == pending_copy_specs_.end()) {
-    // First request - store the CopySpec for validation
-    pending_copy_specs_.emplace(copy_key, request.copy_spec);
-  } else {
-    // Subsequent request - verify TensorSelections match
-    const CopySpec& first_spec = pending_it->second;
-
-    /// TODO: need to handle errors differently
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.src_selection == *first_spec.src_selection,
-        "SubmitCopy {} -> {}: source selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
-
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.dst_selection == *first_spec.dst_selection,
-        "SubmitCopy {} -> {}: destination selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
-  }
-
-  shards.insert(request.shard_id);
-
-  // Track this node agent for later response
-  pending_node_agents_[copy_key].push_back(
-      PendingNodeAgent{node_agent_identity, request.request_id});
-
   // Expected = all src shards + all dst shards
   std::size_t expected_shards =
       metastore_.GetNumShardsForTensor(request.copy_spec.src_name) +
       metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
-  LOG_DEBUG("SubmitCopy {} -> {}: received {}/{} shards",
-            request.copy_spec.src_name, request.copy_spec.dst_name,
-            shards.size(), expected_shards);
-
-  // Check if all shards have submitted
-  if (shards.size() == expected_shards) {
-    // Generate CopyOperationId
-    CopyOperationId copy_op_id = GenerateUUID();
-
-    LOG_INFO(
-        "All shards submitted copy request {} -> {}, "
-        "copy_op_id={}, adding to planner queue",
-        request.copy_spec.src_name, request.copy_spec.dst_name, copy_op_id);
-
-    // Collect submitter identities before cleaning up pending_node_agents_
-    std::vector<Identity> submitters;
-    for (const auto& client : pending_node_agents_[copy_key]) {
-      submitters.push_back(client.identity);
-    }
-
-    // Create shared state with submitter identities
-    auto state = std::make_shared<CopyOperationState>(request.copy_spec,
-                                                      std::move(submitters));
-
-    // Store the shared state (will be accessed by HandleExecuteResponse)
-    copy_operations_.emplace(copy_op_id, state);
-
-    // Add to planner queue with copy_op_id and shared state
-    planner_queue_.push(PlannerTask{copy_op_id, request.copy_spec, state});
-
-    // Send responses to all waiting clients with copy_op_id
-    for (const auto& client : pending_node_agents_[copy_key]) {
-      SubmitCopyResponse response(client.request_id, copy_op_id,
-                                  ErrorCode::kSuccess);
-      outbox_queue_.push(OutboxMessage{client.identity, response});
-    }
-
-    // Clean up maps
-    shards_received_.erase(copy_key);
-    pending_copy_specs_.erase(copy_key);
-    pending_node_agents_.erase(copy_key);
-  }
+  HandleShardSubmission(node_agent_identity, request.request_id,
+                        request.shard_id, request.copy_spec, expected_shards);
 }
 
 void Coordinator::Handler::HandleSubmitPullRequest(
@@ -425,97 +318,76 @@ void Coordinator::Handler::HandleSubmitPullRequest(
            request.copy_spec.src_name, request.copy_spec.dst_name,
            request.shard_id);
 
-  CopyKey copy_key{request.copy_spec.src_name, request.copy_spec.dst_name};
-
-  // Track which shards have submitted
-  auto& shards = shards_received_[copy_key];
-
-  // Check for duplicate shard submission
-  ASSERT_VALID_RUNTIME(
-      !shards.contains(request.shard_id),
-      "SubmitPull {} -> {}: duplicate submission from shard {}",
-      request.copy_spec.src_name, request.copy_spec.dst_name, request.shard_id);
-
-  // Check if this is the first request for this (src, dst) pair
-  auto pending_it = pending_copy_specs_.find(copy_key);
-  if (pending_it == pending_copy_specs_.end()) {
-    // First request - store the CopySpec for validation
-    pending_copy_specs_.emplace(copy_key, request.copy_spec);
-  } else {
-    // Subsequent request - verify TensorSelections match
-    const CopySpec& first_spec = pending_it->second;
-
-    /// TODO: need to handle errors differently
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.src_selection == *first_spec.src_selection,
-        "SubmitPull {} -> {}: source selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
-
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.dst_selection == *first_spec.dst_selection,
-        "SubmitPull {} -> {}: destination selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
-  }
-
-  shards.insert(request.shard_id);
-
-  // Track this node agent for later response
-  pending_node_agents_[copy_key].push_back(
-      PendingNodeAgent{node_agent_identity, request.request_id});
-
   // For Pull: expected shards = number of DESTINATION shards only (one-sided)
   std::size_t expected_shards =
       metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
-  LOG_DEBUG("SubmitPull {} -> {}: received {}/{} shards",
-            request.copy_spec.src_name, request.copy_spec.dst_name,
-            shards.size(), expected_shards);
+  HandleShardSubmission(node_agent_identity, request.request_id,
+                        request.shard_id, request.copy_spec, expected_shards);
+}
 
-  // Check if all shards have submitted
-  if (shards.size() == expected_shards) {
-    // Generate CopyOperationId
-    CopyOperationId copy_op_id = GenerateUUID();
+void Coordinator::Handler::HandleShardSubmission(
+    const Identity& node_agent_identity, const RequestId& request_id,
+    const ShardId& shard_id, const CopySpec& copy_spec,
+    std::size_t expected_shards) {
+  using setu::commons::utils::AggregationParticipant;
 
-    LOG_INFO(
-        "All shards submitted pull request {} -> {}, "
-        "copy_op_id={}, adding to planner queue",
-        request.copy_spec.src_name, request.copy_spec.dst_name, copy_op_id);
+  CopyKey copy_key{copy_spec.src_name, copy_spec.dst_name};
 
-    // Collect submitter identities before cleaning up pending_node_agents_
-    std::vector<Identity> submitters;
-    for (const auto& client : pending_node_agents_[copy_key]) {
-      submitters.push_back(client.identity);
-    }
+  auto result = shard_aggregator_.Submit(
+      copy_key, shard_id, copy_spec,
+      AggregationParticipant{node_agent_identity, request_id}, expected_shards,
+      [](const CopySpec& stored, const CopySpec& incoming) {
+        /// TODO: need to handle errors differently
+        ASSERT_VALID_RUNTIME(
+            *incoming.src_selection == *stored.src_selection,
+            "Shard submission {} -> {}: source selection mismatch",
+            incoming.src_name, incoming.dst_name);
+        ASSERT_VALID_RUNTIME(
+            *incoming.dst_selection == *stored.dst_selection,
+            "Shard submission {} -> {}: destination selection mismatch",
+            incoming.src_name, incoming.dst_name);
+      });
 
-    // Create shared state with submitter identities
-    auto state = std::make_shared<CopyOperationState>(request.copy_spec,
-                                                      std::move(submitters));
+  if (!result.has_value()) {
+    return;
+  }
 
-    // Store the shared state (will be accessed by HandleExecuteResponse)
-    copy_operations_.emplace(copy_op_id, state);
+  // All shards submitted — generate CopyOperationId and dispatch
+  CopyOperationId copy_op_id = GenerateUUID();
 
-    // Add to planner queue with copy_op_id and shared state
-    planner_queue_.push(PlannerTask{copy_op_id, request.copy_spec, state});
+  LOG_INFO(
+      "All shards submitted for {} -> {}, "
+      "copy_op_id={}, adding to planner queue",
+      copy_spec.src_name, copy_spec.dst_name, copy_op_id);
 
-    // Send responses to all waiting clients with copy_op_id
-    for (const auto& client : pending_node_agents_[copy_key]) {
-      SubmitCopyResponse response(client.request_id, copy_op_id,
-                                  ErrorCode::kSuccess);
-      outbox_queue_.push(OutboxMessage{client.identity, response});
-    }
+  // Collect submitter identities
+  std::vector<Identity> submitters;
+  submitters.reserve(result->participants.size());
+  for (const auto& participant : result->participants) {
+    submitters.push_back(participant.identity);
+  }
 
-    // Clean up maps
-    shards_received_.erase(copy_key);
-    pending_copy_specs_.erase(copy_key);
-    pending_node_agents_.erase(copy_key);
+  // Create shared state with submitter identities
+  auto state = std::make_shared<CopyOperationState>(result->payload,
+                                                    std::move(submitters));
+
+  // Store the shared state (will be accessed by HandleExecuteResponse)
+  copy_operations_.emplace(copy_op_id, state);
+
+  // Add to planner queue with copy_op_id and shared state
+  planner_queue_.push(PlannerTask{copy_op_id, result->payload, state});
+
+  // Send responses to all waiting participants with copy_op_id
+  for (const auto& participant : result->participants) {
+    SubmitCopyResponse response(participant.request_id, copy_op_id,
+                                ErrorCode::kSuccess);
+    outbox_queue_.push(OutboxMessage{participant.identity, response});
   }
 }
 
 void Coordinator::Handler::HandleExecuteResponse(
-    const Identity& node_identity, const ExecuteResponse& response) {
-  LOG_DEBUG("Handling ExecuteResponse from {} for copy_op_id: {}",
-            node_identity, response.copy_op_id);
-
+    const Identity& /*node_identity*/, const ExecuteResponse& response) {
   auto it = copy_operations_.find(response.copy_op_id);
   if (it == copy_operations_.end()) {
     LOG_WARNING("ExecuteResponse for unknown copy_op_id: {}, ignoring",
@@ -563,24 +435,19 @@ void Coordinator::Executor::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting executor loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorExecutorThread"));
 }
 
 void Coordinator::Executor::Stop() {
-  LOG_DEBUG("Stopping executor loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Executor loop stopped");
 }
 
 void Coordinator::Executor::Loop() {
-  LOG_DEBUG("Entering executor loop");
-
   running_ = true;
   while (running_) {
     try {
@@ -597,14 +464,9 @@ void Coordinator::Executor::Loop() {
       // Fragment the plan by NodeId
       auto fragments = plan.Fragments();
 
-      LOG_DEBUG("Fragmented plan into {} node-specific plans", fragments.size());
-
       // Send ExecuteRequest to each node agent
       for (auto& [node_id, node_plan] : fragments) {
         Identity node_identity = boost::uuids::to_string(node_id);
-
-        LOG_DEBUG("Sending ExecuteRequest to node {} for fragment {} with copy_op_id: {}",
-                  node_identity, node_plan, task.copy_op_id);
 
         ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
 
@@ -619,7 +481,6 @@ void Coordinator::Executor::Loop() {
                 fragments.size(), task.copy_op_id);
 
     } catch (const boost::concurrent::sync_queue_is_closed&) {
-      LOG_DEBUG("Executor: planner_queue_ closed, exiting");
       return;
     }
   }

@@ -25,6 +25,7 @@
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "messaging/Messages.h"
+#include "commons/utils/ShardAggregator.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
 #include "coordinator/datatypes/CopyOperation.h"
@@ -197,6 +198,13 @@ class Coordinator {
                                const setu::commons::messages::ExecuteResponse&
                                    response);
 
+    /// @brief Unified shard submission logic for both Copy and Pull.
+    void HandleShardSubmission(const Identity& node_agent_identity,
+                               const RequestId& request_id,
+                               const ShardId& shard_id,
+                               const CopySpec& copy_spec,
+                               std::size_t expected_shards);
+
     /// Key for tracking copy operations by (src, dst) tensor pair
     struct CopyKey {
       TensorName src_name;
@@ -208,28 +216,16 @@ class Coordinator {
       }
     };
 
-    /// NodeAgent waiting for a copy response
-    struct PendingNodeAgent {
-      Identity identity;
-      RequestId request_id;
-    };
-
     Queue<InboxMessage>& inbox_queue_;
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Queue<PlannerTask>& planner_queue_;
 
-    /// Tracks which shards have submitted per (src, dst) pair
-    std::map<CopyKey, std::set<ShardId>> shards_received_;
-
-    /// Stores the first CopySpec received for each (src, dst) pair for
-    /// validation
+    /// Aggregates shard submissions per (src, dst) pair until all expected
+    /// shards arrive
     /// TODO: we might have copies with distinct TensorSelections, we need to
     /// address that
-    std::map<CopyKey, CopySpec> pending_copy_specs_;
-
-    /// Tracks NodeAgents waiting for SubmitCopy response
-    std::map<CopyKey, std::vector<PendingNodeAgent>> pending_node_agents_;
+    setu::commons::utils::ShardAggregator<CopyKey, CopySpec> shard_aggregator_;
 
     /// Maps CopyOperationId to shared CopyOperationState (includes submitters
     /// and completion tracking)
