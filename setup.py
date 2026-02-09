@@ -335,7 +335,7 @@ setup(
     install_requires=get_requirements(),
     entry_points={
         "console_scripts": [
-            "setu-cluster=setu.ray.cli:main",
+            "setu-cluster=setu.ray.__main__:main",
         ],
     },
     ext_modules=ext_modules,

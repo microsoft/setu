@@ -5,6 +5,7 @@ Usage::
 
     setu-cluster
     setu-cluster --ray-address ray://10.0.0.1:10001
+    python -m setu.ray
 """
 
 import argparse
