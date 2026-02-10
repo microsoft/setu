@@ -18,6 +18,7 @@
 //==============================================================================
 #include <nccl.h>
 
+#include <boost/uuid/string_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 //==============================================================================
 #include "commons/Logging.h"
@@ -31,12 +32,20 @@ namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
+using setu::commons::ShardId;
 //==============================================================================
 void InitShardRefPybind(py::module_& m) {
   py::class_<ShardRef>(m, "ShardRef")
       .def(py::init<ShardId, std::optional<TensorName>>(), py::arg("shard_id"),
            py::arg("tensor_name") = std::nullopt,
            "Create a shard reference with UUID and optional tensor name")
+      .def(py::init([](const std::string& shard_id_str,
+                       std::optional<TensorName> tensor_name) {
+             boost::uuids::string_generator gen;
+             return ShardRef(gen(shard_id_str), std::move(tensor_name));
+           }),
+           py::arg("shard_id_str"), py::arg("tensor_name") = std::nullopt,
+           "Create a shard reference from UUID string and optional tensor name")
       .def_readonly("shard_id", &ShardRef::shard_id,
                     "Unique UUID for the shard")
       .def_readonly("node_id", &ShardRef::node_id,
@@ -80,6 +89,8 @@ void InitSendInstructionPybind(py::module_& m) {
                     "Byte offset in source memory")
       .def_readonly("count", &Send::count, "Number of elements to send")
       .def_readonly("dtype", &Send::dtype, "Data type of elements")
+      .def("set_peer_rank", &Send::SetPeerRank, py::arg("rank"),
+           "Set the destination device rank for this send operation")
       .def("__str__", &Send::ToString)
       .def("__repr__", &Send::ToString);
 }
@@ -96,6 +107,8 @@ void InitReceiveInstructionPybind(py::module_& m) {
                     "Byte offset in destination memory")
       .def_readonly("count", &Receive::count, "Number of elements to receive")
       .def_readonly("dtype", &Receive::dtype, "Data type of elements")
+      .def("set_peer_rank", &Receive::SetPeerRank, py::arg("rank"),
+           "Set the source device rank for this receive operation")
       .def("__str__", &Receive::ToString)
       .def("__repr__", &Receive::ToString);
 }

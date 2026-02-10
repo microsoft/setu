@@ -41,6 +41,7 @@ using setu::commons::Queue;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
+using setu::commons::TensorShardsConcurrentMap;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardMetadata;
@@ -63,6 +64,8 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::ir::Program;
+using setu::ir::ShardRef;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
 //==============================================================================
@@ -101,7 +104,8 @@ class NodeAgent {
   struct Handler {
     Handler(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
             std::size_t port, const std::string& coordinator_endpoint,
-            Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+            Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+            TensorShardsConcurrentMap& shard_id_to_tensor);
     ~Handler();
 
     void Start();
@@ -164,9 +168,7 @@ class NodeAgent {
         pending_waits_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
-    /// TODO: Call torch::Tensor something like TensorStorage and probably move
-    /// to TensorShard (no raw device ptr in TensorShard?)
-    std::unordered_map<ShardId, torch::Tensor> shard_id_to_tensor_;
+    TensorShardsConcurrentMap& shard_id_to_tensor_;
   };
 
   //============================================================================
@@ -176,7 +178,8 @@ class NodeAgent {
     Executor(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
              const std::string& coordinator_endpoint,
              const std::vector<Device>& devices,
-             Queue<std::pair<CopyOperationId, Plan>>& executor_queue);
+             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+             TensorShardsConcurrentMap const& shard_id_to_tensor);
     ~Executor();
 
     void Start();
@@ -186,6 +189,7 @@ class NodeAgent {
     void InitSockets();
     void CloseSockets();
     void Loop();
+    void EmbellishProgram(Program& program);
 
     NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
@@ -198,6 +202,7 @@ class NodeAgent {
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    TensorShardsConcurrentMap const& shard_id_to_tensor_;
   };
 
   NodeId node_id_;
@@ -216,6 +221,8 @@ class NodeAgent {
 
   std::unique_ptr<Handler> handler_;
   std::unique_ptr<Executor> executor_;
+
+  TensorShardsConcurrentMap shard_id_to_tensor_;
 };
 //==============================================================================
 }  // namespace setu::node_manager

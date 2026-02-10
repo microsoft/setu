@@ -36,5 +36,19 @@ TensorShardSpec TensorShardSpec::Deserialize(const BinaryRange& range) {
   return TensorShardSpec(name_val, dims_val, dtype_val, device_val);
 }
 //==============================================================================
+bool TensorShardSpec::Overlaps(const TensorShardSpec& other) const {
+  // Shards overlap if and only if ALL dimensions overlap
+  for (std::size_t i = 0; i < dims.size(); ++i) {
+    // Ranges [start1, end1) and [start2, end2) overlap iff
+    // start1 < end2 && start2 < end1
+    bool dim_overlaps =
+        dims[i].start < other.dims[i].end && other.dims[i].start < dims[i].end;
+    if (!dim_overlaps) {
+      return false;  // Found non-overlapping dimension
+    }
+  }
+  return true;  // All dimensions overlap
+}
+//==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

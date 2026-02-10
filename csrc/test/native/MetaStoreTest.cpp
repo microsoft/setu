@@ -545,6 +545,191 @@ TEST(MetaStoreTest, RegisterTensorShard_Float16Dtype_CorrectMetadata) {
   EXPECT_EQ(tensor_metadata->dtype, torch::kFloat16);
 }
 //==============================================================================
+// Shard registration validation tests
+//==============================================================================
+TEST(MetaStoreTest, RegisterTensorShard_DtypeMismatch_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard with float32
+  std::vector<TensorDimSpec> dims1;
+  dims1.emplace_back("x", 100, 0, 50);
+  TensorShardSpec spec1(tensor_name, dims1, torch::kFloat32,
+                        Device(torch::kCPU));
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register second shard with float16 - should return nullptr
+  std::vector<TensorDimSpec> dims2;
+  dims2.emplace_back("x", 100, 50, 100);
+  TensorShardSpec spec2(tensor_name, dims2, torch::kFloat16,
+                        Device(torch::kCPU));
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_DimensionCountMismatch_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard with 1 dimension
+  auto spec1 = Make1DShardSpec(tensor_name, 100, 0, 50);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register second shard with 2 dimensions - should return nullptr
+  auto spec2 = Make2DShardSpec(tensor_name, 100, 20, 50, 100, 0, 20);
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_DimensionNameMismatch_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard with dimension named "x"
+  std::vector<TensorDimSpec> dims1;
+  dims1.emplace_back("x", 100, 0, 50);
+  TensorShardSpec spec1(tensor_name, dims1, torch::kFloat32,
+                        Device(torch::kCPU));
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register second shard with dimension named "y" - should return
+  // nullptr
+  std::vector<TensorDimSpec> dims2;
+  dims2.emplace_back("y", 100, 50, 100);
+  TensorShardSpec spec2(tensor_name, dims2, torch::kFloat32,
+                        Device(torch::kCPU));
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_DimensionSizeMismatch_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard with dimension size 100
+  auto spec1 = Make1DShardSpec(tensor_name, 100, 0, 50);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register second shard with dimension size 200 - should return
+  // nullptr
+  auto spec2 = Make1DShardSpec(tensor_name, 200, 50, 100);
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_OverlappingShards1D_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard [0, 60)
+  auto spec1 = Make1DShardSpec(tensor_name, 100, 0, 60);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register overlapping shard [40, 100) - should return nullptr
+  auto spec2 = Make1DShardSpec(tensor_name, 100, 40, 100);
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_OverlappingShards2D_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "matrix";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard covering [0,5) x [0,10)
+  auto spec1 = Make2DShardSpec(tensor_name, 10, 20, 0, 5, 0, 10);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register overlapping shard [3,8) x [5,15) - overlaps at [3,5) x
+  // [5,10)
+  auto spec2 = Make2DShardSpec(tensor_name, 10, 20, 3, 8, 5, 15);
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_NonOverlapping2D_Succeeds) {
+  MetaStore store;
+  const TensorName tensor_name = "matrix";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register first shard covering [0,5) x [0,10)
+  auto spec1 = Make2DShardSpec(tensor_name, 10, 20, 0, 5, 0, 10);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Register non-overlapping shard [5,10) x [0,10) - different rows, same cols
+  auto spec2 = Make2DShardSpec(tensor_name, 10, 20, 5, 10, 0, 10);
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  ASSERT_NE(shard2, nullptr);
+
+  // Register non-overlapping shard [0,5) x [10,20) - same rows, different cols
+  auto spec3 = Make2DShardSpec(tensor_name, 10, 20, 0, 5, 10, 20);
+  auto shard3 = store.RegisterTensorShard(spec3, owner_node);
+  ASSERT_NE(shard3, nullptr);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 3);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_AdjacentShards_Succeeds) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register adjacent shards [0,50) and [50,100) - touching but not overlapping
+  auto spec1 = Make1DShardSpec(tensor_name, 100, 0, 50);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  auto spec2 = Make1DShardSpec(tensor_name, 100, 50, 100);
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  ASSERT_NE(shard2, nullptr);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 2);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_IdenticalShard_ReturnsNullptr) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register a shard
+  auto spec1 = Make1DShardSpec(tensor_name, 100, 0, 50);
+  auto shard1 = store.RegisterTensorShard(spec1, owner_node);
+  ASSERT_NE(shard1, nullptr);
+
+  // Attempt to register identical shard - should return nullptr (fully
+  // overlapping)
+  auto spec2 = Make1DShardSpec(tensor_name, 100, 0, 50);
+
+  auto shard2 = store.RegisterTensorShard(spec2, owner_node);
+  EXPECT_EQ(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+//==============================================================================
 // Metadata dimension verification tests
 //==============================================================================
 TEST(MetaStoreTest, GetTensorMetadata_DimensionNamesCorrect) {

@@ -58,7 +58,7 @@ class TensorShardReadHandle : public NonCopyableNonMovable {
    *
    * @return Const pointer to device memory
    */
-  [[nodiscard]] DevicePtr GetDevicePtr() const { return shard->device_ptr; }
+  [[nodiscard]] DevicePtr GetDevicePtr() const { return shard->GetDevicePtr(); }
 
   /**
    * @brief Get the shard being accessed
@@ -106,7 +106,7 @@ class TensorShardWriteHandle : public NonCopyableNonMovable {
    *
    * @return Pointer to device memory
    */
-  [[nodiscard]] DevicePtr GetDevicePtr() const { return shard->device_ptr; }
+  [[nodiscard]] DevicePtr GetDevicePtr() const { return shard->GetDevicePtr(); }
 
   /**
    * @brief Get the shard being accessed

@@ -16,7 +16,9 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/Logging.h"
 #include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 //==============================================================================
@@ -31,16 +33,17 @@ namespace setu::commons::datatypes {
  */
 struct TensorShard {
   /**
-   * @brief Constructs a tensor shard with metadata and device pointer
+   * @brief Constructs a tensor shard with metadata and tensor
    *
    * @param metadata_param Metadata describing this shard
-   * @param device_ptr_param Pointer to the device memory location
+   * @param tensor_param The torch tensor holding the shard data
    *
-   * @throws std::invalid_argument if device_ptr is null
+   * @throws std::invalid_argument if tensor_param is not defined
    */
-  TensorShard(TensorShardMetadata metadata_param, DevicePtr device_ptr_param)
-      : metadata(std::move(metadata_param)), device_ptr(device_ptr_param) {
-    ASSERT_VALID_POINTER_ARGUMENT(device_ptr_param);
+  TensorShard(TensorShardMetadata metadata_param, torch::Tensor tensor_param)
+      : metadata(std::move(metadata_param)), tensor(std::move(tensor_param)) {
+    ASSERT_VALID_ARGUMENTS(tensor.defined() && tensor.numel() > 0,
+                           "Invalid tensor argument: tensor is not defined");
   }
 
   /**
@@ -49,18 +52,24 @@ struct TensorShard {
    * @return String containing metadata and device pointer
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format("TensorShard(metadata={}, device_ptr={})",
-                       metadata.ToString(), device_ptr);
+    return std::format("TensorShard(metadata={}, tensor={})",
+                       metadata.ToString(), tensor);
   }
 
+  /**
+   * @brief Get read-only pointer to device memory
+   *
+   * @return Const pointer to device memory
+   */
+  [[nodiscard]] DevicePtr GetDevicePtr() const { return tensor.data_ptr(); }
+
   const TensorShardMetadata metadata;  ///< Immutable metadata for this shard
-  const DevicePtr device_ptr;          ///< Pointer to device memory location
+  const torch::Tensor tensor;          ///< The torch tensor holding shard data
 
  private:
   friend class TensorShardReadHandle;
   friend class TensorShardWriteHandle;
-  mutable std::shared_mutex
-      mutex;  ///< Mutex for thread-safe access to device_ptr
+  mutable std::shared_mutex mutex;  ///< Mutex for thread-safe access to tensor
 };
 //==============================================================================
 /// @brief Shared pointer to a TensorShard object
