@@ -14,34 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "messaging/GetTensorHandleResponse.h"
+#include "commons/datatypes/TensorSpec.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::commons::datatypes {
 //==============================================================================
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
-
-void GetTensorHandleResponse::Serialize(BinaryBuffer& buffer) const {
+void TensorSpec::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, error_code, tensor_ipc_spec, metadata,
-                     lock_base_dir);
+  writer.WriteFields(name, dims, dtype);
 }
 
-GetTensorHandleResponse GetTensorHandleResponse::Deserialize(
-    const BinaryRange& range) {
+TensorSpec TensorSpec::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, error_code_val, tensor_ipc_spec_val, metadata_val,
-        lock_base_dir_val] =
-      reader.ReadFields<RequestId, ErrorCode, std::optional<TensorIPCSpec>,
-                        std::optional<TensorShardMetadata>, std::string>();
-  return GetTensorHandleResponse(
-      request_id_val, error_code_val, std::move(tensor_ipc_spec_val),
-      std::move(metadata_val), std::move(lock_base_dir_val));
+  auto [name_val, dims_val, dtype_val] =
+      reader.ReadFields<TensorName, TensorDimMap, torch::Dtype>();
+  return TensorSpec(std::move(name_val), std::move(dims_val), dtype_val);
 }
-
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::commons::datatypes
 //==============================================================================

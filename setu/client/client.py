@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from typing import Dict, Iterator, Optional
 
 import torch
-
 from torch.multiprocessing.reductions import rebuild_cuda_tensor
 
 from setu._client import Client as Client_C
@@ -147,9 +146,8 @@ class Client:
             ...     .where("page", {0, 1, 2}) \\
             ...     .where("head", 5)  # Single index
         """
-        raise NotImplementedError("select() method is not implemented yet")
-        # native_selection = self._client.select(name)
-        # return TensorSelection(native_selection)
+        native_selection = self._client.select(name)
+        return TensorSelection(native_selection)
 
     def copy(
         self, src: TensorSelection, dst: TensorSelection

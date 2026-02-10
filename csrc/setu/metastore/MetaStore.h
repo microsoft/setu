@@ -25,6 +25,7 @@
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardSpec.h"
+#include "commons/datatypes/TensorSpec.h"
 #include "metastore/datatypes/TensorMetadata.h"
 //==============================================================================
 namespace setu::metastore {
@@ -37,6 +38,8 @@ using setu::commons::datatypes::TensorShardMetadataMap;
 using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::datatypes::TensorShardSpecPtr;
+using setu::commons::datatypes::TensorSpec;
+using setu::commons::datatypes::TensorSpecMap;
 using setu::metastore::datatypes::TensorMetadata;
 using setu::metastore::datatypes::TensorMetadataMap;
 using setu::metastore::datatypes::TensorMetadataPtr;
@@ -91,6 +94,20 @@ class MetaStore {
   [[nodiscard]] TensorMetadataPtr GetTensorMetadata(
       const TensorName& tensor_name /*[in]*/);
 
+  /**
+   * @brief Returns the TensorSpec for a tensor
+   *
+   * TensorSpec is cached on first shard registration, so this is available
+   * before all shards are registered. Returns nullptr if no shard has been
+   * registered for this tensor.
+   *
+   * @param tensor_name The name of the tensor to query
+   * @return Pointer to the TensorSpec if any shard has been registered, nullptr
+   * otherwise
+   */
+  [[nodiscard]] const TensorSpec* GetTensorSpec(
+      const TensorName& tensor_name /*[in]*/) const;
+
  private:
   /// Registered shard data: expected size, registered size, and shard metadata
   struct RegisteredShardsData {
@@ -118,6 +135,7 @@ class MetaStore {
   mutable std::recursive_mutex mutex_;
   std::unordered_map<TensorName, RegisteredShardsData> registered_shards_data_;
   TensorMetadataMap tensor_metadata_cache_;
+  TensorSpecMap tensor_spec_cache_;
 };
 //==============================================================================
 }  // namespace setu::metastore

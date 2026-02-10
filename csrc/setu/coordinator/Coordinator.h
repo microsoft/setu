@@ -197,6 +197,9 @@ class Coordinator {
     void HandleExecuteResponse(
         const Identity& node_identity,
         const setu::commons::messages::ExecuteResponse& response);
+    void HandleGetTensorSpecRequest(
+        const Identity& node_agent_identity,
+        const setu::commons::messages::GetTensorSpecRequest& request);
 
     /// @brief Unified shard submission logic for both Copy and Pull.
     void HandleShardSubmission(const Identity& node_agent_identity,

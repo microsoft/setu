@@ -104,8 +104,7 @@ void InitTensorDimSpecPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorSelectionPybind(py::module_& m) {
-  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection",
-                                                  py::module_local())
+  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection")
       .def(py::init<TensorName, TensorDimMap>(), py::arg("name"),
            py::arg("dims"))
       .def(py::init<TensorName, TensorIndicesMap>(), py::arg("name"),
@@ -129,6 +128,10 @@ void InitTensorSelectionPybind(py::module_& m) {
                &TensorSelection::Where, py::const_),
            py::arg("dim_name"), py::arg("slice"),
            "Create new selection with specified slice for a dimension")
+      .def("__eq__", &TensorSelection::operator==, py::arg("other"),
+           "Check equality with another TensorSelection")
+      .def("__ne__", &TensorSelection::operator!=, py::arg("other"),
+           "Check inequality with another TensorSelection")
       .def("__str__", &TensorSelection::ToString)
       .def("__repr__", &TensorSelection::ToString);
 }
@@ -175,8 +178,8 @@ void InitTensorDimShardPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorShardMetadataPybind(py::module_& m) {
-  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(
-      m, "TensorShardMetadata")
+  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(m,
+                                                          "TensorShardMetadata")
       .def(py::init<TensorShardSpec, NodeId>(), py::arg("spec"),
            py::arg("owner"), "Create metadata with auto-generated ID")
       .def(py::init<ShardId, TensorShardSpec, NodeId>(), py::arg("id"),
@@ -251,8 +254,7 @@ void InitTensorShardRefPybind(py::module_& m) {
             if (t.size() != 3) {
               throw std::runtime_error("Invalid state for TensorShardRef");
             }
-            return TensorShardRef(t[0].cast<TensorName>(),
-                                  t[1].cast<ShardId>(),
+            return TensorShardRef(t[0].cast<TensorName>(), t[1].cast<ShardId>(),
                                   t[2].cast<TensorDimMap>());
           }));
 }

@@ -51,6 +51,8 @@ using setu::commons::datatypes::TensorShardMetadataMap;
 using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::datatypes::TensorSpec;
+using setu::commons::datatypes::TensorSpecMap;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::CoordinatorMessage;
@@ -58,6 +60,10 @@ using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::GetTensorSelectionRequest;
+using setu::commons::messages::GetTensorSelectionResponse;
+using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
@@ -132,6 +138,9 @@ class NodeAgent {
     void HandleWaitForShardAllocationRequest(
         const Identity& client_identity,
         const WaitForShardAllocationRequest& request);
+    void HandleGetTensorSelectionRequest(
+        const Identity& client_identity,
+        const GetTensorSelectionRequest& request);
 
     // Coordinator message handlers
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
@@ -142,6 +151,7 @@ class NodeAgent {
         const RegisterTensorShardCoordinatorResponse& response);
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
     void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
+    void HandleGetTensorSpecResponse(const GetTensorSpecResponse& response);
 
     void AllocateTensor(const TensorShardMetadata& shard_metadata);
 
@@ -168,6 +178,7 @@ class NodeAgent {
     setu::commons::utils::PendingOperations<ShardId> pending_shard_allocs_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
+    TensorSpecMap tensor_spec_cache_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
     std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
   };

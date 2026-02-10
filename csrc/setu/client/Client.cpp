@@ -23,9 +23,12 @@
 //==============================================================================
 namespace setu::client {
 //==============================================================================
+using setu::commons::datatypes::TensorSelection;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::GetTensorSelectionRequest;
+using setu::commons::messages::GetTensorSelectionResponse;
 using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
@@ -225,6 +228,20 @@ GetTensorHandleResponse Client::GetTensorHandle(
                        "Metadata is missing for shard {}", shard_ref.shard_id);
 
   return response;
+}
+
+TensorSelectionPtr Client::Select(const TensorName& name) {
+  ClientRequest request = GetTensorSelectionRequest(name);
+  Comm::Send(request_socket_, request);
+
+  auto response = Comm::Recv<GetTensorSelectionResponse>(request_socket_);
+
+  ASSERT_VALID_RUNTIME(response.error_code == ErrorCode::kSuccess,
+                       "Failed to get tensor selection for tensor {}", name);
+  ASSERT_VALID_RUNTIME(response.selection.has_value(),
+                       "Selection is missing for tensor {}", name);
+
+  return std::make_shared<TensorSelection>(response.selection.value());
 }
 
 std::vector<TensorShardRefPtr> Client::GetShards() const {

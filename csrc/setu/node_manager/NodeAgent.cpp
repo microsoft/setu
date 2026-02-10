@@ -31,9 +31,11 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardSpecPtr;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -46,6 +48,10 @@ using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::GetTensorSelectionRequest;
+using setu::commons::messages::GetTensorSelectionResponse;
+using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
@@ -217,6 +223,8 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
           HandleGetTensorHandleRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, WaitForShardAllocationRequest>) {
           HandleWaitForShardAllocationRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, GetTensorSelectionRequest>) {
+          HandleGetTensorSelectionRequest(client_identity, msg);
         }
       },
       request);
@@ -238,6 +246,8 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
           HandleRegisterTensorShardCoordinatorResponse(msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
           HandleSubmitCopyResponse(msg);
+        } else if constexpr (std::is_same_v<T, GetTensorSpecResponse>) {
+          HandleGetTensorSpecResponse(msg);
         }
       },
       message);
@@ -373,6 +383,26 @@ void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
   }
 }
 
+void NodeAgent::Handler::HandleGetTensorSelectionRequest(
+    const Identity& client_identity, const GetTensorSelectionRequest& request) {
+  // Check local cache first
+  auto it = tensor_spec_cache_.find(request.tensor_name);
+  if (it != tensor_spec_cache_.end()) {
+    auto selection_ptr =
+        std::make_shared<TensorSelection>(it->second.name, it->second.dims);
+    GetTensorSelectionResponse response(request.request_id,
+                                        ErrorCode::kSuccess, *selection_ptr);
+    Comm::SendWithIdentity<GetTensorSelectionResponse>(
+        client_socket_, client_identity, response);
+    return;
+  }
+
+  // Not cached locally — fetch from coordinator asynchronously
+  GetTensorSpecRequest spec_request(request.tensor_name);
+  request_router_.TrackRequest(spec_request.request_id, client_identity);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, spec_request);
+}
+
 void NodeAgent::Handler::HandleAllocateTensorRequest(
     const AllocateTensorRequest& request) {
   for (const auto& shard_id : request.shard_ids) {
@@ -436,13 +466,21 @@ void NodeAgent::Handler::HandleRegisterTensorShardCoordinatorResponse(
     pending_shard_allocs_.RegisterOperation(metadata.id);
     LOG_DEBUG("Registered pending shard allocation for shard: {}", metadata.id);
 
-    // Build TensorDimMap from the spec's dims
-    TensorDimMap dims;
-    for (const auto& dim_spec : metadata.spec.dims) {
-      dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
+    // Cache TensorSpec on first shard for this tensor
+    if (tensor_spec_cache_.find(metadata.spec.name) ==
+        tensor_spec_cache_.end()) {
+      TensorDimMap dims;
+      for (const auto& dim_spec : metadata.spec.dims) {
+        dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
+      }
+      tensor_spec_cache_.emplace(
+          metadata.spec.name,
+          TensorSpec(metadata.spec.name, TensorDimMap(dims), metadata.spec.dtype));
+      shard_ref.emplace(metadata.spec.name, metadata.id, std::move(dims));
+    } else {
+      shard_ref.emplace(metadata.spec.name, metadata.id,
+                        tensor_spec_cache_.at(metadata.spec.name).dims);
     }
-
-    shard_ref.emplace(metadata.spec.name, metadata.id, std::move(dims));
   }
 
   // Send RegisterTensorShardNodeAgentResponse to client
@@ -480,6 +518,31 @@ void NodeAgent::Handler::HandleWaitForCopyResponse(
 
   Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, *client_identity,
                                               response);
+}
+
+void NodeAgent::Handler::HandleGetTensorSpecResponse(
+    const GetTensorSpecResponse& response) {
+  auto client_identity = request_router_.ClaimIdentity(response.request_id);
+  if (!client_identity.has_value()) {
+    LOG_WARNING(
+        "Received GetTensorSpecResponse for unknown request_id: {}, ignoring",
+        response.request_id);
+    return;
+  }
+
+  ASSERT_VALID_RUNTIME(response.error_code == ErrorCode::kSuccess,
+                       "Failed to get TensorSpec: {}", response.error_code);
+  ASSERT_VALID_RUNTIME(response.tensor_spec.has_value(),
+                       "TensorSpec missing in response");
+
+  const auto& spec = response.tensor_spec.value();
+
+  // Build spanning selection and respond to client
+  auto selection_ptr = std::make_shared<TensorSelection>(spec.name, spec.dims);
+  GetTensorSelectionResponse client_response(RequestId{}, ErrorCode::kSuccess,
+                                             *selection_ptr);
+  Comm::SendWithIdentity<GetTensorSelectionResponse>(
+      client_socket_, *client_identity, client_response);
 }
 
 void NodeAgent::Handler::AllocateTensor(

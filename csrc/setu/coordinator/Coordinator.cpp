@@ -27,14 +27,14 @@ using setu::commons::NodeId;
 using setu::commons::RequestId;
 using setu::commons::ShardId;
 using setu::commons::StringToUUID;
-using setu::commons::datatypes::TensorDim;
-using setu::commons::datatypes::TensorDimMap;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
+using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::SubmitCopyResponse;
@@ -229,6 +229,8 @@ void Coordinator::Handler::Loop() {
               HandleSubmitPullRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, ExecuteResponse>) {
               HandleExecuteResponse(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, GetTensorSpecRequest>) {
+              HandleGetTensorSpecRequest(inbox_msg.node_agent_identity, msg);
             } else {
               LOG_WARNING("Handler: Unknown message type (index={})",
                           inbox_msg.request.index());
@@ -418,6 +420,23 @@ void Coordinator::Handler::HandleExecuteResponse(
 
     copy_operations_.erase(it);
   }
+}
+
+void Coordinator::Handler::HandleGetTensorSpecRequest(
+    const Identity& node_agent_identity, const GetTensorSpecRequest& request) {
+  LOG_DEBUG("Coordinator received GetTensorSpecRequest for tensor: {}",
+            request.tensor_name);
+
+  const auto* tensor_spec = metastore_.GetTensorSpec(request.tensor_name);
+  ASSERT_VALID_RUNTIME(
+      tensor_spec != nullptr,
+      "TensorSpec must exist for tensor '{}' — at least one shard should have "
+      "been registered before GetTensorSpecRequest is sent",
+      request.tensor_name);
+
+  GetTensorSpecResponse response(request.request_id, ErrorCode::kSuccess,
+                                 *tensor_spec);
+  outbox_queue_.push(OutboxMessage{node_agent_identity, response});
 }
 
 //==============================================================================
