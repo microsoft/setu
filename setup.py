@@ -333,6 +333,11 @@ setup(
     packages=find_packages(exclude=("csrc")),
     python_requires=">=3.12",
     install_requires=get_requirements(),
+    entry_points={
+        "console_scripts": [
+            "setu-cluster=setu.ray.__main__:main",
+        ],
+    },
     ext_modules=ext_modules,
     cmdclass={"build_ext": cmake_build_ext},
 )
