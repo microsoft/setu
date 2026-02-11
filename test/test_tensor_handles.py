@@ -625,11 +625,15 @@ def test_multiple_concurrent_readers(infrastructure):
     while not result_queue.empty():
         results.append(result_queue.get())
 
-    assert len(results) == num_readers, f"Expected {num_readers} results, got {len(results)}"
+    assert (
+        len(results) == num_readers
+    ), f"Expected {num_readers} results, got {len(results)}"
 
     for status, matches, value in results:
         assert status == "success", f"Reader failed with error: {matches}"
-        assert matches, f"Reader got unexpected value: {value}, expected {expected_value}"
+        assert (
+            matches
+        ), f"Reader got unexpected value: {value}, expected {expected_value}"
 
 
 def _writer_process(
@@ -740,7 +744,9 @@ def test_writer_blocks_readers(infrastructure):
     # Reader should have seen the written value (waited for writer)
     reader_result = reader_queue.get()
     assert reader_result[0] == "success", f"Reader failed: {reader_result[1]}"
-    assert reader_result[1], f"Reader should see written value 99.0, got {reader_result[2]}"
+    assert reader_result[
+        1
+    ], f"Reader should see written value 99.0, got {reader_result[2]}"
 
 
 @pytest.mark.gpu

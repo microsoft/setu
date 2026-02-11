@@ -175,8 +175,8 @@ void InitTensorDimShardPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorShardMetadataPybind(py::module_& m) {
-  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(
-      m, "TensorShardMetadata")
+  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(m,
+                                                          "TensorShardMetadata")
       .def(py::init<TensorShardSpec, NodeId>(), py::arg("spec"),
            py::arg("owner"), "Create metadata with auto-generated ID")
       .def(py::init<ShardId, TensorShardSpec, NodeId>(), py::arg("id"),
@@ -251,8 +251,7 @@ void InitTensorShardRefPybind(py::module_& m) {
             if (t.size() != 3) {
               throw std::runtime_error("Invalid state for TensorShardRef");
             }
-            return TensorShardRef(t[0].cast<TensorName>(),
-                                  t[1].cast<ShardId>(),
+            return TensorShardRef(t[0].cast<TensorName>(), t[1].cast<ShardId>(),
                                   t[2].cast<TensorDimMap>());
           }));
 }

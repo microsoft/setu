@@ -111,7 +111,8 @@ void InitGetTensorHandleResponsePybind(py::module_& m) {
                     "The request ID this response corresponds to")
       .def_readonly("error_code", &GetTensorHandleResponse::error_code,
                     "The error code of the response")
-      .def_readonly("tensor_ipc_spec", &GetTensorHandleResponse::tensor_ipc_spec,
+      .def_readonly("tensor_ipc_spec",
+                    &GetTensorHandleResponse::tensor_ipc_spec,
                     "IPC spec for rebuilding the tensor")
       .def_readonly("metadata", &GetTensorHandleResponse::metadata,
                     "Metadata for the tensor shard")
