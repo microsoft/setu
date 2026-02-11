@@ -23,8 +23,8 @@ if(NOT NCCL_FOUND)
   message(FATAL_ERROR "NCCL is required but was not found. "
                       "Set NCCL_ROOT, CUDA_HOME, or CUDA_PATH environment variable.")
 endif()
-target_include_directories(setu_common INTERFACE ${NCCL_INCLUDE_DIRS})
-target_link_libraries(setu_common INTERFACE ${NCCL_LIBRARIES})
+target_include_directories(setu_common INTERFACE ${NCCL_INCLUDE_DIR})
+target_link_libraries(setu_common INTERFACE ${NCCL_LIBRARY})
 message(STATUS "NCCL support enabled")
 
 # Function to configure common target properties

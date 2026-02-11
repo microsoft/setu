@@ -8,9 +8,9 @@ import torch
 
 from setu._commons.datatypes import (
     TensorShard,
-    TensorShardReadHandle as NativeReadHandle,
-    TensorShardWriteHandle as NativeWriteHandle,
 )
+from setu._commons.datatypes import TensorShardReadHandle as NativeReadHandle
+from setu._commons.datatypes import TensorShardWriteHandle as NativeWriteHandle
 
 
 class TensorReadHandle:

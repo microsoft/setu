@@ -37,10 +37,9 @@ GetTensorHandleResponse GetTensorHandleResponse::Deserialize(
         lock_base_dir_val] =
       reader.ReadFields<RequestId, ErrorCode, std::optional<TensorIPCSpec>,
                         std::optional<TensorShardMetadata>, std::string>();
-  return GetTensorHandleResponse(request_id_val, error_code_val,
-                                 std::move(tensor_ipc_spec_val),
-                                 std::move(metadata_val),
-                                 std::move(lock_base_dir_val));
+  return GetTensorHandleResponse(
+      request_id_val, error_code_val, std::move(tensor_ipc_spec_val),
+      std::move(metadata_val), std::move(lock_base_dir_val));
 }
 
 //==============================================================================

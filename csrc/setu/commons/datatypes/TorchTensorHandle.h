@@ -20,8 +20,8 @@
 //==============================================================================
 #include "commons/ClassTraits.h"
 #include "commons/Logging.h"
-#include "commons/Types.h"
 #include "commons/TorchCommon.h"
+#include "commons/Types.h"
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================

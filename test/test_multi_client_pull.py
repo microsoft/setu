@@ -144,7 +144,7 @@ def _run_source_client(
 
         # Get tensor handle and initialize data
         print(f"[Source {client_id}] Getting tensor handle...", flush=True)
-        tensor_ipc_spec = client.get_tensor_handle(shard_ref)
+        tensor_ipc_spec, _, _ = client.get_tensor_handle(shard_ref)
         tensor = _rebuild_tensor_from_handle(tensor_ipc_spec)
         print(f"[Source {client_id}] Filling tensor with {init_value}...", flush=True)
         tensor.fill_(init_value)
@@ -280,7 +280,7 @@ def _run_dest_client(
 
         # Get tensor handle and verify value
         print(f"[Dest {client_id}] Getting tensor handle...", flush=True)
-        tensor_ipc_spec = client.get_tensor_handle(shard_ref)
+        tensor_ipc_spec, _, _ = client.get_tensor_handle(shard_ref)
         tensor = _rebuild_tensor_from_handle(tensor_ipc_spec)
         torch.cuda.synchronize()
 
