@@ -95,7 +95,7 @@ def main():
     client.connect(endpoint)
 
     # Register destination tensor shard on cuda:0
-    dst_device = Device(torch_device=torch.device("cuda:0"))
+    dst_device = Device(torch_device=torch.device("cuda:1"))
     dims = [
         TensorDimSpec("dim_0", 4, 0, 4),
         TensorDimSpec("dim_1", 8, 0, 8),
@@ -108,9 +108,10 @@ def main():
     )
     dst_ref = client.register_tensor_shard(dst_spec)
     assert dst_ref is not None, "Failed to register destination shard"
+    print(f"Dest shard registered: {dst_ref.shard_id}")
 
     client.wait_for_shard_allocation(dst_ref.shard_id)
-    print("Destination shard allocated")
+    print(f"Destination shard allocated, device={dst_device})")
 
     # Build selection and issue pull
     dim_map = {
