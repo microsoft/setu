@@ -131,7 +131,7 @@ define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" ""
 
 file(GLOB_RECURSE PLANNER_SRC "csrc/setu/planner/*.cpp")
 define_setu_extension(_planner "${PLANNER_SRC}" "setu_common_objects"
-                      "_metastore_static;_ir_static")
+                      "_messaging_static;_metastore_static;_ir_static")
 define_setu_static(_planner_static "${PLANNER_SRC}" "setu_common_objects"
                    "_metastore_static;_ir_static")
 

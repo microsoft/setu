@@ -743,8 +743,12 @@ def _register_and_get_handle_with_timing(
     # Signal that registration is done
     register_done_event.set()
 
-    # Now get handle - this should block until tensor is allocated
+    # Wait for the shard to be allocated (blocks until coordinator sends
+    # AllocateTensorRequest and NodeAgent completes allocation)
     get_handle_start = time.time()
+    client.wait_for_shard_allocation(shard_ref.shard_id)
+
+    # Now get handle - shard is allocated so this returns immediately
     tensor_ipc_spec, metadata, lock_base_dir = client.get_tensor_handle(shard_ref)
     get_handle_end = time.time()
 
