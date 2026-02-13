@@ -11,7 +11,8 @@ set(BOOST_INCLUDE_LIBRARIES
     container_hash
     stacktrace
     dynamic_bitset
-    unordered)
+    unordered
+    interprocess)
 
 FetchContent_Declare(
   Boost

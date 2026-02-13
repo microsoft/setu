@@ -31,6 +31,7 @@ namespace setu::node_manager::worker {
 //==============================================================================
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
+using setu::commons::NodeId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
@@ -47,7 +48,7 @@ using setu::ir::UseComm;
 
 class NCCLWorker : public Worker {
  public:
-  NCCLWorker(Device device, std::size_t reply_port);
+  NCCLWorker(NodeId node_id, Device device);
   ~NCCLWorker();
 
   void Execute(const Program& program) override;
@@ -68,7 +69,6 @@ class NCCLWorker : public Worker {
 
   struct CommCacheEntry {
     ncclComm_t nccl_comm;
-    std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
   };
 
   std::unordered_map<std::string, CommCacheEntry> comm_cache_;

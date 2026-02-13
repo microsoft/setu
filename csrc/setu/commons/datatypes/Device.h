@@ -82,6 +82,13 @@ struct Device {
     return !(*this == other);
   }
 
+  [[nodiscard]] bool operator<(const Device& other) const {
+    if (torch_device.type() != other.torch_device.type()) {
+      return torch_device.type() < other.torch_device.type();
+    }
+    return torch_device.index() < other.torch_device.index();
+  }
+
   /**
    * @brief Returns the local device index
    *

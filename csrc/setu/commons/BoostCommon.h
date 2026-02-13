@@ -22,6 +22,7 @@
 #include <boost/dynamic_bitset.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/heap/fibonacci_heap.hpp>
+#include <boost/interprocess/sync/file_lock.hpp>
 #include <boost/stacktrace.hpp>
 #include <boost/thread/concurrent_queues/queue_op_status.hpp>
 #include <boost/thread/concurrent_queues/sync_priority_queue.hpp>
@@ -42,6 +43,8 @@ using PriorityQueue = ::boost::concurrent::sync_priority_queue<Args...>;
 template <typename Key, typename Value, typename Hash = boost::hash<Key>,
           typename Pred = std::equal_to<Key>>
 using ConcurrentMap = ::boost::concurrent_flat_map<Key, Value, Hash, Pred>;
+using FileLock = ::boost::interprocess::file_lock;
+using FileLockPtr = std::shared_ptr<FileLock>;
 //==============================================================================
 /**
  * @brief Generate a random UUID

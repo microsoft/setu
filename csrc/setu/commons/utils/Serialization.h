@@ -86,6 +86,11 @@ template <typename... Types>
 struct IsVariant<std::variant<Types...>> : std::true_type {};
 
 template <typename U>
+struct IsSet : std::false_type {};
+template <typename U, typename Comp, typename Alloc>
+struct IsSet<std::set<U, Comp, Alloc>> : std::true_type {};
+
+template <typename U>
 struct IsDynamicBitset : std::false_type {};
 template <typename Block, typename Alloc>
 struct IsDynamicBitset<boost::dynamic_bitset<Block, Alloc>> : std::true_type {};
@@ -141,6 +146,11 @@ class BinaryWriter {
       if (value.empty()) return;
       // Always serialize individually for deques (no contiguous storage
       // guarantee)
+      for (const auto& item : value) Write(item);
+
+    } else if constexpr (IsSet<T>::value) {
+      // Set types: write size + elements (serialize individually)
+      Write<std::uint32_t>(static_cast<std::uint32_t>(value.size()));
       for (const auto& item : value) Write(item);
 
     } else if constexpr (IsSharedPtr<T>::value) {
@@ -277,6 +287,14 @@ class BinaryReader {
       // guarantee)
       for (std::uint32_t i = 0; i < sz; ++i) deq.push_back(Read<E>());
       return deq;
+
+    } else if constexpr (IsSet<T>::value) {
+      // Set types: read size + elements (insert individually)
+      using E = typename T::value_type;
+      const auto sz = Read<std::uint32_t>();
+      T s;
+      for (std::uint32_t i = 0; i < sz; ++i) s.insert(Read<E>());
+      return s;
 
     } else if constexpr (IsSharedPtr<T>::value) {
       // Shared pointer types: read nullness flag + pointee if non-null

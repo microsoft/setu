@@ -24,11 +24,13 @@
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "commons/messages/Messages.h"
+#include "commons/utils/ShardAggregator.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
 #include "coordinator/datatypes/CopyOperation.h"
+#include "messaging/Messages.h"
 #include "metastore/MetaStore.h"
+#include "planner/backends/nccl.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -38,17 +40,55 @@ using setu::commons::Identity;
 using setu::commons::NodeId;
 using setu::commons::Queue;
 using setu::commons::RequestId;
+using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
+using setu::commons::messages::SubmitPullRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::coordinator::datatypes::CopyOperationPtr;
 using setu::metastore::MetaStore;
+using setu::planner::Plan;
+using setu::planner::backends::nccl::NCCLPlanner;
+
+/// @brief Shared state for tracking a copy operation across Handler and
+/// Executor threads.
+///
+/// Thread Safety: expected_responses is std::atomic because Executor writes it
+/// (after dispatching ExecuteRequests) and Handler reads it (when processing
+/// ExecuteResponses). These accesses occur without explicit queue
+/// synchronization for this field, so we use release/acquire ordering to ensure
+/// visibility.
+struct CopyOperationState {
+  CopySpec spec;
+  std::vector<Identity> submitters;  // NodeAgents to notify when done
+
+  // Atomic because Executor writes and Handler reads without explicit
+  // synchronization. Using release/acquire ordering ensures Executor's write
+  // is visible to Handler.
+  std::atomic<std::size_t> expected_responses{0};
+
+  std::size_t completed_responses{0};  // Only Handler reads/writes
+
+  explicit CopyOperationState(CopySpec spec_param,
+                              std::vector<Identity> submitters_param)
+      : spec(std::move(spec_param)), submitters(std::move(submitters_param)) {}
+};
+using CopyOperationStatePtr = std::shared_ptr<CopyOperationState>;
+
+/// @brief Task for the planner containing CopyOperationId, CopySpec, and shared
+/// state
+struct PlannerTask {
+  CopyOperationId copy_op_id;
+  CopySpec copy_spec;
+  CopyOperationStatePtr state;  // Shared with Handler's copy_operations_ map
+};
+
 //==============================================================================
 class Coordinator {
  public:
@@ -139,7 +179,7 @@ class Coordinator {
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<CopySpec>& planner_queue);
+            Queue<PlannerTask>& planner_queue);
 
     void Start();
     void Stop();
@@ -152,6 +192,18 @@ class Coordinator {
         const RegisterTensorShardRequest& request);
     void HandleSubmitCopyRequest(const Identity& node_agent_identity,
                                  const SubmitCopyRequest& request);
+    void HandleSubmitPullRequest(const Identity& node_agent_identity,
+                                 const SubmitPullRequest& request);
+    void HandleExecuteResponse(
+        const Identity& node_identity,
+        const setu::commons::messages::ExecuteResponse& response);
+
+    /// @brief Unified shard submission logic for both Copy and Pull.
+    void HandleShardSubmission(const Identity& node_agent_identity,
+                               const RequestId& request_id,
+                               const ShardId& shard_id,
+                               const CopySpec& copy_spec,
+                               std::size_t expected_shards);
 
     /// Key for tracking copy operations by (src, dst) tensor pair
     struct CopyKey {
@@ -164,42 +216,31 @@ class Coordinator {
       }
     };
 
-    /// NodeAgent waiting for a copy response
-    struct PendingNodeAgent {
-      Identity identity;
-      RequestId request_id;
-    };
-
     Queue<InboxMessage>& inbox_queue_;
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
-    Queue<CopySpec>& planner_queue_;
+    Queue<PlannerTask>& planner_queue_;
 
-    /// Tracks number of SubmitCopyRequests received per (src, dst) pair
-    std::map<CopyKey, std::size_t> copies_received_;
-
-    /// Stores the first CopySpec received for each (src, dst) pair for
-    /// validation
+    /// Aggregates shard submissions per (src, dst) pair until all expected
+    /// shards arrive
     /// TODO: we might have copies with distinct TensorSelections, we need to
     /// address that
-    std::map<CopyKey, CopySpec> pending_copy_specs_;
+    setu::commons::utils::ShardAggregator<CopyKey, CopySpec> shard_aggregator_;
 
-    /// Tracks NodeAgents waiting for SubmitCopy response
-    std::map<CopyKey, std::vector<PendingNodeAgent>> pending_node_agents_;
-
-    /// Maps CopyOperationId to CopySpec
-    /// TODO: cleanup after copy finished
-    std::map<CopyOperationId, CopySpec> copy_operations_;
+    /// Maps CopyOperationId to shared CopyOperationState (includes submitters
+    /// and completion tracking)
+    std::map<CopyOperationId, CopyOperationStatePtr> copy_operations_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
   };
 
   //============================================================================
-  // Executor: Dispatches execution plans to NodeAgents (pure business logic)
+  // Executor: Compiles CopySpecs and dispatches execution plans to NodeAgents
   //============================================================================
   struct Executor {
-    Executor(Queue<OutboxMessage>& outbox_queue);
+    Executor(Queue<PlannerTask>& planner_queue,
+             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore);
 
     void Start();
     void Stop();
@@ -207,7 +248,10 @@ class Coordinator {
    private:
     void Loop();
 
+    Queue<PlannerTask>& planner_queue_;
     Queue<OutboxMessage>& outbox_queue_;
+    MetaStore& metastore_;
+    NCCLPlanner planner_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
@@ -222,8 +266,9 @@ class Coordinator {
   Queue<InboxMessage> inbox_queue_;
   Queue<OutboxMessage> outbox_queue_;
 
-  /// Queue of CopySpecs for the Planner to process
-  Queue<CopySpec> planner_queue_;
+  /// Queue of PlannerTasks (CopyOperationId + CopySpec) for the Executor to
+  /// compile and dispatch
+  Queue<PlannerTask> planner_queue_;
 
   std::unique_ptr<Gateway> gateway_;
   std::unique_ptr<Handler> handler_;

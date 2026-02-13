@@ -24,6 +24,7 @@
 #include "commons/enums/Enums.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "commons/utils/ZmqHelper.h"
+#include "messaging/GetTensorHandleResponse.h"
 
 namespace setu::client {
 using setu::commons::CopyOperationId;
@@ -34,6 +35,7 @@ using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardRefPtr;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
+using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::utils::TensorIPCSpec;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
@@ -56,18 +58,23 @@ class Client {
 
   std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
 
+  std::optional<CopyOperationId> SubmitPull(const CopySpec& copy_spec);
+
   void WaitForCopy(CopyOperationId copy_op_id);
 
-  TensorIPCSpec GetTensorHandle(const TensorShardRef& shard_ref);
+  void WaitForShardAllocation(ShardId shard_id);
 
-  [[nodiscard]] const std::vector<TensorShardRefPtr>& GetShards() const;
+  GetTensorHandleResponse GetTensorHandle(const TensorShardRef& shard_ref);
+
+  [[nodiscard]] std::vector<TensorShardRefPtr> GetShards() const;
 
  private:
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr request_socket_;
 
-  std::vector<TensorShardRefPtr> client_shards_;
+  // Map from tensor name to list of shard refs owned by this client
+  std::map<TensorName, std::vector<TensorShardRefPtr>> tensor_shards_;
 
   std::string endpoint_;
   bool is_connected_{false};

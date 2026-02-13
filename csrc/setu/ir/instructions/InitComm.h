@@ -20,22 +20,26 @@
 //==============================================================================
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/Types.h"
+#include "setu/commons/datatypes/Device.h"
 #include "setu/commons/utils/Serialization.h"
+#include "setu/planner/Participant.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DeviceRank;
+using setu::commons::NodeId;
+using setu::commons::datatypes::Device;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
+using setu::planner::Participant;
 //==============================================================================
 
 struct InitComm {
   InitComm(ncclUniqueId comm_id,
-           std::unordered_map<DeviceRank, std::int32_t> device_to_rank)
-      : comm_id(std::move(comm_id)),
-        device_to_rank(std::move(device_to_rank)) {}
+           std::unordered_map<Participant, DeviceRank> participant_to_rank)
+      : comm_id(comm_id), participant_to_rank(std::move(participant_to_rank)) {}
 
   ~InitComm() = default;
   InitComm(const InitComm&) = default;
@@ -50,7 +54,7 @@ struct InitComm {
   static InitComm Deserialize(const BinaryRange& range);
 
   ncclUniqueId comm_id;
-  std::unordered_map<DeviceRank, std::int32_t> device_to_rank;
+  std::unordered_map<Participant, DeviceRank> participant_to_rank;
 };
 
 //==============================================================================

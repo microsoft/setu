@@ -35,6 +35,7 @@ using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::utils::ZmqContextPtr;
 using setu::node_manager::worker::NCCLWorker;
 using setu::node_manager::worker::Worker;
 //==============================================================================
@@ -42,6 +43,9 @@ void InitWorkerPybindClass(py::module_& m) {
   // Worker is abstract (has pure virtual Execute and Setup methods)
   // so we don't provide py::init - it can only be used as a base class
   py::class_<Worker, std::shared_ptr<Worker>>(m, "Worker")
+      .def("connect", &Worker::Connect, py::arg("zmq_context"),
+           py::arg("endpoint"),
+           "Connect the worker to an inproc endpoint on a shared ZMQ context")
       .def("start", &Worker::Start, "Start the worker executor loop")
       .def("stop", &Worker::Stop, "Stop the worker executor loop")
       .def("is_running", &Worker::IsRunning, "Check if worker is running")
@@ -49,9 +53,8 @@ void InitWorkerPybindClass(py::module_& m) {
                              "Get the device this worker is bound to");
 
   py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
-      .def(py::init<Device, std::size_t>(), py::arg("device"),
-           py::arg("reply_port"),
-           "Create an NCCL worker for the given device and reply port")
+      .def(py::init<NodeId, Device>(), py::arg("node_id"), py::arg("device"),
+           "Create an NCCL worker for the given node ID and device")
       .def("setup", &NCCLWorker::Setup,
            py::call_guard<py::gil_scoped_release>(),
            "Initialize CUDA device and stream (call before execute)")
@@ -64,24 +67,13 @@ void InitWorkerPybindClass(py::module_& m) {
 void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
       .def(py::init<NodeId, std::size_t, std::string,
-                    const std::vector<Device>&>(),
+                    const std::vector<Device>&, std::string>(),
            py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
-           py::arg("devices"),
-           "Create a NodeAgent with specified port, coordinator endpoint, and "
-           "devices")
+           py::arg("devices"), py::arg("lock_base_dir") = "/tmp/setu/locks",
+           "Create a NodeAgent with specified port, coordinator endpoint, "
+           "devices, and lock directory")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
-      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop")
-      .def("register_tensor_shard", &NodeAgent::RegisterTensorShard,
-           py::arg("shard_spec"),
-           "Register a tensor shard and return a reference to it")
-      .def("submit_copy", &NodeAgent::SubmitCopy, py::arg("copy_spec"),
-           "Submit a copy operation and return an operation ID")
-      .def("wait_for_copy", &NodeAgent::WaitForCopy, py::arg("copy_op_id"),
-           "Wait for a copy operation to complete")
-      .def("copy_operation_finished", &NodeAgent::CopyOperationFinished,
-           py::arg("copy_op_id"), "Notify that a copy operation has completed")
-      .def("execute", &NodeAgent::Execute, py::arg("plan"),
-           "Execute a coordinator plan");
+      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop");
 }
 //==============================================================================
 }  // namespace setu::node_manager

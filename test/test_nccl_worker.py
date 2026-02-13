@@ -7,6 +7,7 @@ when given an embellished Program. Requires CUDA and the setu extensions
 """
 
 import threading
+import uuid
 
 import pytest
 import torch
@@ -27,6 +28,7 @@ def _get_extensions():
             generate_nccl_id,
         )
         from setu._node_manager import NCCLWorker
+        from setu._planner import Participant
 
         return {
             "NCCLWorker": NCCLWorker,
@@ -38,6 +40,7 @@ def _get_extensions():
             "InitComm": InitComm,
             "ShardRef": ShardRef,
             "generate_nccl_id": generate_nccl_id,
+            "Participant": Participant,
         }
     except ImportError as e:
         print(f"setu extensions not available: {e}")
@@ -57,9 +60,10 @@ def test_nccl_worker_copy_instruction():
     Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
+    node_id = uuid.uuid4()
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(device, reply_port=0)
+    worker = NCCLWorker(node_id, device)
     worker.setup()
 
     num_elements = 128
@@ -107,9 +111,10 @@ def test_nccl_worker_copy_instruction_with_offset():
     Copy = ext["Copy"]
     ShardRef = ext["ShardRef"]
 
+    node_id = uuid.uuid4()
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(device, reply_port=0)
+    worker = NCCLWorker(node_id, device)
     worker.setup()
 
     # Buffer large enough for offset copy: copy 8 floats starting at byte 16
@@ -161,9 +166,10 @@ def test_nccl_worker_empty_program():
     NCCLWorker = ext["NCCLWorker"]
     Device = ext["Device"]
 
+    node_id = uuid.uuid4()
     torch_device = torch.device("cuda:0")
     device = Device(torch_device)
-    worker = NCCLWorker(device, reply_port=0)
+    worker = NCCLWorker(node_id, device)
     worker.setup()
 
     program = []
@@ -188,6 +194,11 @@ def test_nccl_worker_send_receive():
     InitComm = ext["InitComm"]
     ShardRef = ext["ShardRef"]
     generate_nccl_id = ext["generate_nccl_id"]
+    Participant = ext["Participant"]
+
+    # Generate node IDs for the two workers
+    node_id_0 = uuid.uuid4()
+    node_id_1 = uuid.uuid4()
 
     torch_device_0 = torch.device("cuda:0")
     device_0 = Device(torch_device_0)
@@ -197,8 +208,10 @@ def test_nccl_worker_send_receive():
     # Generate a shared NCCL unique ID for the communicator
     nccl_id = generate_nccl_id()
 
-    # Device rank to NCCL rank mapping (both devices participate)
-    device_to_rank = {0: 0, 1: 1}
+    # Participant to NCCL rank mapping (both participants)
+    participant_0 = Participant(node_id_0, device_0)
+    participant_1 = Participant(node_id_1, device_1)
+    participant_to_rank = {participant_0: 0, participant_1: 1}
 
     # Create source tensor on device 0, destination on device 1
     num_elements = 128
@@ -210,28 +223,26 @@ def test_nccl_worker_send_receive():
     dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
     # Program for worker 0: InitComm, then Send to device 1
-    init_comm_0 = InitComm(nccl_id, device_to_rank)
+    init_comm_0 = InitComm(nccl_id, participant_to_rank)
     send_instr = Send(
         src_shard,
-        0,  # offset_bytes
+        0,  # offset
         num_elements,
         torch.float32,
+        1,  # peer_rank: worker 0 sends to worker 1 (rank 1)
     )
-    # Set peer rank: worker 0 sends to worker 1 (rank 1)
-    send_instr.set_peer_rank(1)
 
     program_0 = [Instruction(init_comm_0), Instruction(send_instr)]
 
     # Program for worker 1: InitComm, then Receive from device 0
-    init_comm_1 = InitComm(nccl_id, device_to_rank)
+    init_comm_1 = InitComm(nccl_id, participant_to_rank)
     recv_instr = Receive(
         dst_shard,
-        0,  # offset_bytes
+        0,  # offset
         num_elements,
         torch.float32,
+        0,  # peer_rank: worker 1 receives from worker 0 (rank 0)
     )
-    # Set peer rank: worker 1 receives from worker 0 (rank 0)
-    recv_instr.set_peer_rank(0)
 
     program_1 = [Instruction(init_comm_1), Instruction(recv_instr)]
 
@@ -254,7 +265,7 @@ def test_nccl_worker_send_receive():
 
     def run_worker_0():
         try:
-            worker = NCCLWorker(device_0, reply_port=0)
+            worker = NCCLWorker(node_id_0, device_0)
             worker.setup()
             worker.execute(program_0)
         except Exception as e:
@@ -262,7 +273,7 @@ def test_nccl_worker_send_receive():
 
     def run_worker_1():
         try:
-            worker = NCCLWorker(device_1, reply_port=0)
+            worker = NCCLWorker(node_id_1, device_1)
             worker.setup()
             worker.execute(program_1)
         except Exception as e:

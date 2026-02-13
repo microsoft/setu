@@ -36,12 +36,12 @@ using setu::commons::utils::BinaryWriter;
 struct Receive {
   Receive(ShardRef dst_shard_param, std::size_t offset_bytes_param,
           std::size_t count_param, torch::Dtype dtype_param,
-          DevicePtr dst_ptr_param = nullptr)
-      : peer_rank(std::nullopt),
-        dst_shard(std::move(dst_shard_param)),
+          DeviceRank peer_rank_param, DevicePtr dst_ptr_param = nullptr)
+      : dst_shard(std::move(dst_shard_param)),
         offset_bytes(offset_bytes_param),
         count(count_param),
         dtype(dtype_param),
+        peer_rank(peer_rank_param),
         dst_ptr(dst_ptr_param) {}
 
   ~Receive() = default;
@@ -61,29 +61,11 @@ struct Receive {
    */
   void Embellish(const std::function<DevicePtr(const ShardRef&)>& resolver);
 
-  /**
-   * @brief Sets the peer rank for this receive operation.
-   *
-   * @param rank The rank of the source device in the communicator
-   */
-  void SetPeerRank(DeviceRank rank) { peer_rank = rank; }
-
-  /**
-   * @brief Gets the peer rank, asserting that it has been set.
-   *
-   * @return The source device rank
-   */
-  [[nodiscard]] DeviceRank GetPeerRank() const {
-    ASSERT_VALID_RUNTIME(peer_rank.has_value(),
-                         "Peer rank has not been set for Receive");
-    return peer_rank.value();
-  }
-
-  std::optional<DeviceRank> peer_rank;
   ShardRef dst_shard;
   std::size_t offset_bytes;
   std::size_t count;
   torch::Dtype dtype;
+  DeviceRank peer_rank;
 
   // Embellished pointers
   DevicePtr dst_ptr;

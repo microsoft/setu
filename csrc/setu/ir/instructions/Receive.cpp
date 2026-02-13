@@ -23,31 +23,25 @@ std::string Receive::ToString() const {
   return std::format(
       "Receive(peer_rank={}, shard={}, offset_bytes={}, count={}, dtype={}, "
       "dst_device_ptr={})",
-      peer_rank.has_value() ? std::to_string(peer_rank.value()) : "unset",
-      dst_shard.ToString(), offset_bytes, count, static_cast<int>(dtype),
-      dst_ptr);
+      peer_rank, dst_shard.ToString(), offset_bytes, count,
+      static_cast<int>(dtype), dst_ptr);
 }
 
 void Receive::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  // Serialize peer_rank as optional (bool + value if present)
-  writer.WriteFields(peer_rank.has_value(), peer_rank.value_or(0), dst_shard,
-                     offset_bytes, count, dtype, dst_ptr_value);
+  writer.WriteFields(peer_rank, dst_shard, offset_bytes, count, dtype,
+                     dst_ptr_value);
 }
 
 Receive Receive::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [has_peer_rank, peer_rank_val, dst_shard, offset_bytes, count, dtype,
-        dst_ptr_value] =
-      reader.ReadFields<bool, DeviceRank, ShardRef, std::size_t, std::size_t,
+  auto [peer_rank, dst_shard, offset_bytes, count, dtype, dst_ptr_value] =
+      reader.ReadFields<DeviceRank, ShardRef, std::size_t, std::size_t,
                         torch::Dtype, std::uintptr_t>();
   const auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_value);
-  Receive recv(std::move(dst_shard), offset_bytes, count, dtype, dst_ptr);
-  if (has_peer_rank) {
-    recv.SetPeerRank(peer_rank_val);
-  }
-  return recv;
+  return Receive(std::move(dst_shard), offset_bytes, count, dtype, peer_rank,
+                 dst_ptr);
 }
 
 void Receive::Embellish(

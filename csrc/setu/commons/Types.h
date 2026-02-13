@@ -40,7 +40,7 @@ using TimeS = double;
 /// @brief Unique identifier for a node in the distributed system
 using NodeId = boost::uuids::uuid;
 /// @brief Identifier for a device within a node
-using DeviceRank = std::size_t;
+using DeviceRank = std::int32_t;
 /// @brief Unique serial number for tracking objects
 using SerialNumber = std::uint64_t;
 /// @brief Unique identity for client identity (zmq)

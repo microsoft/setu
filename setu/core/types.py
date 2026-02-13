@@ -12,3 +12,4 @@ Rank: TypeAlias = int
 TensorName: TypeAlias = str
 TensorSize: TypeAlias = int
 SerialNumber: TypeAlias = int
+CopyOperationId: TypeAlias = int

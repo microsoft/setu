@@ -27,12 +27,14 @@
 //==============================================================================
 #include "setu/ir/Instruction.h"
 #include "setu/ir/ShardRef.h"
+#include "setu/planner/Planner.h"
 //==============================================================================
 namespace setu::ir {
 //==============================================================================
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::ShardId;
+using setu::planner::Participant;
 //==============================================================================
 void InitShardRefPybind(py::module_& m) {
   py::class_<ShardRef>(m, "ShardRef")
@@ -80,49 +82,51 @@ void InitCopyInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitSendInstructionPybind(py::module_& m) {
   py::class_<Send>(m, "Send")
-      .def(py::init<ShardRef, std::size_t, std::size_t, torch::Dtype>(),
-           py::arg("src_shard"), py::arg("offset_bytes"), py::arg("count"),
-           py::arg("dtype"),
+      .def(py::init<ShardRef, std::size_t, std::size_t, torch::Dtype,
+                    DeviceRank>(),
+           py::arg("src_shard"), py::arg("offset"), py::arg("count"),
+           py::arg("dtype"), py::arg("peer_rank"),
            "Create a send instruction for NCCL point-to-point communication")
+      .def_readonly("peer_rank", &Send::peer_rank,
+                    "Destination device rank in the communicator")
       .def_readonly("src_shard", &Send::src_shard, "Source shard reference")
       .def_readonly("offset_bytes", &Send::offset_bytes,
                     "Byte offset in source memory")
       .def_readonly("count", &Send::count, "Number of elements to send")
       .def_readonly("dtype", &Send::dtype, "Data type of elements")
-      .def("set_peer_rank", &Send::SetPeerRank, py::arg("rank"),
-           "Set the destination device rank for this send operation")
       .def("__str__", &Send::ToString)
       .def("__repr__", &Send::ToString);
 }
 //==============================================================================
 void InitReceiveInstructionPybind(py::module_& m) {
   py::class_<Receive>(m, "Receive")
-      .def(py::init<ShardRef, std::size_t, std::size_t, torch::Dtype>(),
+      .def(py::init<ShardRef, std::size_t, std::size_t, torch::Dtype,
+                    DeviceRank>(),
            py::arg("dst_shard"), py::arg("offset_bytes"), py::arg("count"),
-           py::arg("dtype"),
+           py::arg("dtype"), py::arg("peer_rank"),
            "Create a receive instruction for NCCL point-to-point communication")
+      .def_readonly("peer_rank", &Receive::peer_rank,
+                    "Source device rank in the communicator")
       .def_readonly("dst_shard", &Receive::dst_shard,
                     "Destination shard reference")
       .def_readonly("offset_bytes", &Receive::offset_bytes,
-                    "Byte offset in destination memory")
+                    "Byte offset in destination shard")
       .def_readonly("count", &Receive::count, "Number of elements to receive")
       .def_readonly("dtype", &Receive::dtype, "Data type of elements")
-      .def("set_peer_rank", &Receive::SetPeerRank, py::arg("rank"),
-           "Set the source device rank for this receive operation")
       .def("__str__", &Receive::ToString)
       .def("__repr__", &Receive::ToString);
 }
 //==============================================================================
 void InitInitCommInstructionPybind(py::module_& m) {
   py::class_<InitComm>(m, "InitComm")
-      .def(py::init<ncclUniqueId,
-                    std::unordered_map<DeviceRank, std::int32_t>>(),
-           py::arg("comm_id"), py::arg("device_to_rank"),
-           "Create an instruction to initialize an NCCL communicator")
+      .def(
+          py::init<ncclUniqueId, std::unordered_map<Participant, DeviceRank>>(),
+          py::arg("comm_id"), py::arg("participant_to_rank"),
+          "Create an instruction to initialize an NCCL communicator")
       .def_readonly("comm_id", &InitComm::comm_id,
                     "NCCL unique communicator ID")
-      .def_readonly("device_to_rank", &InitComm::device_to_rank,
-                    "Mapping from device rank to NCCL rank")
+      .def_readonly("participant_to_rank", &InitComm::participant_to_rank,
+                    "Mapping from participant to NCCL rank")
       .def("__str__", &InitComm::ToString)
       .def("__repr__", &InitComm::ToString);
 }

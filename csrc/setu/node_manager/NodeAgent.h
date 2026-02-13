@@ -25,9 +25,11 @@
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
-#include "commons/messages/Messages.h"
+#include "commons/utils/PendingOperations.h"
+#include "commons/utils/RequestRouter.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
+#include "messaging/Messages.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Planner.h"
 //==============================================================================
@@ -60,8 +62,11 @@ using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
+using setu::commons::messages::WaitForShardAllocationRequest;
+using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::ir::Program;
@@ -72,19 +77,9 @@ using setu::planner::Plan;
 class NodeAgent {
  public:
   NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
-            const std::vector<Device>& devices);
+            const std::vector<Device>& devices,
+            std::string lock_base_dir = "/tmp/setu/locks");
   ~NodeAgent();
-
-  std::optional<TensorShardRef> RegisterTensorShard(
-      const TensorShardSpec& shard_spec);
-
-  std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
-
-  void WaitForCopy(CopyOperationId copy_op_id);
-
-  void CopyOperationFinished(CopyOperationId copy_op_id);
-
-  void Execute(Plan plan);
 
   void Start();
   void Stop();
@@ -105,7 +100,8 @@ class NodeAgent {
     Handler(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
             std::size_t port, const std::string& coordinator_endpoint,
             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-            TensorShardsConcurrentMap& shard_id_to_tensor);
+            TensorShardsConcurrentMap& shard_id_to_tensor,
+            std::string lock_base_dir);
     ~Handler();
 
     void Start();
@@ -116,31 +112,38 @@ class NodeAgent {
     void CloseSockets();
     void Loop();
 
-    // Unified message dispatch methods
+    // Client message dispatch
     void HandleClientMessage(const Identity& client_identity,
                              const ClientRequest& request);
-    void HandleCoordinatorMessage(const CoordinatorMessage& message);
+
+    // Async coordinator message dispatch (messages received on DEALER socket)
+    void HandleAsyncCoordinatorMessage(const CoordinatorMessage& message);
 
     // Client message handlers
+    // Sync: RegisterTensorShard sends via REQ socket, blocks for response
     void HandleRegisterTensorShardRequest(
         const Identity& client_identity,
         const RegisterTensorShardRequest& request);
+    // Async: SubmitCopy/SubmitPull send via DEALER socket, response comes later
     void HandleSubmitCopyRequest(const Identity& client_identity,
                                  const SubmitCopyRequest& request);
+    void HandleSubmitPullRequest(const Identity& client_identity,
+                                 const SubmitPullRequest& request);
+    // Local: handled entirely within NodeAgent
     void HandleWaitForCopyRequest(const Identity& client_identity,
                                   const WaitForCopyRequest& request);
     void HandleGetTensorHandleRequest(const Identity& client_identity,
                                       const GetTensorHandleRequest& request);
+    void HandleWaitForShardAllocationRequest(
+        const Identity& client_identity,
+        const WaitForShardAllocationRequest& request);
 
-    // Coordinator message handlers
+    // Async coordinator message handlers (received on DEALER socket)
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
     void HandleCopyOperationFinishedRequest(
         const CopyOperationFinishedRequest& request);
     void HandleExecuteRequest(const ExecuteRequest& request);
-    void HandleRegisterTensorShardCoordinatorResponse(
-        const RegisterTensorShardCoordinatorResponse& response);
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
-    void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
 
     void AllocateTensor(const TensorShardMetadata& shard_metadata);
 
@@ -151,24 +154,25 @@ class NodeAgent {
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
 
     ZmqSocketPtr client_socket_;
-    ZmqSocketPtr coordinator_socket_;
+    ZmqSocketPtr sync_socket_;   // REQ socket for sync request-response
+    ZmqSocketPtr async_socket_;  // DEALER socket for async send/receive
 
     std::thread thread_;
     std::atomic<bool> running_{false};
 
-    // stores mapping from request id to the client identity who sent this
-    // request. Used to route coordinator responses back to the client that
-    // initiated the request
-    std::unordered_map<RequestId, Identity> request_id_to_client_identity_;
+    // Routes coordinator responses back to the client that initiated the
+    // request
+    setu::commons::utils::RequestRouter request_router_;
 
-    // Pending client waits: maps copy_op_id to list of client identities
-    // waiting
-    std::unordered_map<CopyOperationId, std::vector<Identity>,
-                       boost::hash<CopyOperationId>>
-        pending_waits_;
+    // Tracks pending copy operations: registration, waiting, and completion
+    setu::commons::utils::PendingOperations<CopyOperationId> pending_copies_;
+
+    // Tracks pending shard allocation: registration, waiting, and completion
+    setu::commons::utils::PendingOperations<ShardId> pending_shard_allocs_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
+    std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
   };
 
   //============================================================================
@@ -197,7 +201,7 @@ class NodeAgent {
     std::vector<Device> devices_;
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
 
-    ZmqSocketPtr coordinator_socket_;
+    ZmqSocketPtr async_socket_;  // DEALER socket for async send to coordinator
     std::unordered_map<DeviceRank, ZmqSocketPtr> worker_sockets_;
 
     std::thread thread_;
@@ -223,6 +227,7 @@ class NodeAgent {
   std::unique_ptr<Executor> executor_;
 
   TensorShardsConcurrentMap shard_id_to_tensor_;
+  std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
 };
 //==============================================================================
 }  // namespace setu::node_manager

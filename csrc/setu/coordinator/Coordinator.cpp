@@ -32,14 +32,18 @@ using setu::commons::datatypes::TensorDimMap;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::CoordinatorMessage;
+using setu::commons::messages::CopyOperationFinishedRequest;
+using setu::commons::messages::ExecuteRequest;
+using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
+using setu::planner::Plan;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
-constexpr std::chrono::milliseconds kExecutorLoopSleepMs(10);
 //==============================================================================
 // Coordinator Implementation
 //==============================================================================
@@ -60,7 +64,9 @@ void Coordinator::Start() {
                                        outbox_queue_);
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
                                        planner_queue_);
-  executor_ = std::make_unique<Executor>(outbox_queue_);
+
+  executor_ =
+      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_);
 
   gateway_->Start();
   handler_->Start();
@@ -75,6 +81,7 @@ void Coordinator::Stop() {
   LOG_DEBUG("Stopping Coordinator");
 
   inbox_queue_.close();
+  planner_queue_.close();
   outbox_queue_.close();
 
   if (gateway_) {
@@ -139,46 +146,33 @@ Coordinator::Gateway::~Gateway() {
 }
 
 void Coordinator::Gateway::InitSockets() {
-  LOG_DEBUG("Gateway: Initializing ZMQ sockets");
-
   node_agent_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
-
-  LOG_DEBUG("Gateway: Initialized ZMQ sockets successfully");
 }
 
 void Coordinator::Gateway::CloseSockets() {
-  LOG_DEBUG("Gateway: Closing ZMQ sockets");
-
   if (node_agent_socket_) {
     node_agent_socket_->close();
   }
-
-  LOG_DEBUG("Gateway: Closed ZMQ sockets successfully");
 }
 
 void Coordinator::Gateway::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting gateway loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorGatewayThread"));
 }
 
 void Coordinator::Gateway::Stop() {
-  LOG_DEBUG("Stopping gateway loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Gateway loop stopped");
 }
 
 void Coordinator::Gateway::Loop() {
-  LOG_DEBUG("Entering gateway loop");
-
   running_ = true;
   while (running_) {
     // Poll for incoming messages from NodeAgents
@@ -187,11 +181,10 @@ void Coordinator::Gateway::Loop() {
     for (const auto& socket : ready) {
       if (socket == node_agent_socket_) {
         auto [node_agent_identity, request] =
-            Comm::RecvWithIdentity<NodeAgentRequest, false>(socket);
+            Comm::RecvWithIdentity<NodeAgentRequest>(socket);
         auto status =
             inbox_queue_.try_push(InboxMessage{node_agent_identity, request});
         if (status == boost::queue_op_status::closed) {
-          LOG_DEBUG("Gateway: inbox_queue_ closed, exiting");
           return;
         }
       }
@@ -201,12 +194,11 @@ void Coordinator::Gateway::Loop() {
     try {
       while (!outbox_queue_.empty()) {
         OutboxMessage outbox_msg = outbox_queue_.pull();
-        Comm::SendWithIdentity<CoordinatorMessage, false>(
-            node_agent_socket_, outbox_msg.node_agent_identity,
-            outbox_msg.message);
+        Comm::Send<CoordinatorMessage>(node_agent_socket_,
+                                       outbox_msg.node_agent_identity,
+                                       outbox_msg.message);
       }
     } catch (const boost::concurrent::sync_queue_is_closed&) {
-      LOG_DEBUG("Gateway: outbox_queue_ closed, exiting");
       return;
     }
   }
@@ -218,7 +210,7 @@ void Coordinator::Gateway::Loop() {
 Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
                               Queue<OutboxMessage>& outbox_queue,
                               MetaStore& metastore,
-                              Queue<CopySpec>& planner_queue)
+                              Queue<PlannerTask>& planner_queue)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
@@ -228,24 +220,19 @@ void Coordinator::Handler::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting handler loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorHandlerThread"));
 }
 
 void Coordinator::Handler::Stop() {
-  LOG_DEBUG("Stopping handler loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Handler loop stopped");
 }
 
 void Coordinator::Handler::Loop() {
-  LOG_DEBUG("Entering handler loop");
-
   running_ = true;
   while (running_) {
     try {
@@ -258,11 +245,17 @@ void Coordinator::Handler::Loop() {
                                                msg);
             } else if constexpr (std::is_same_v<T, SubmitCopyRequest>) {
               HandleSubmitCopyRequest(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, SubmitPullRequest>) {
+              HandleSubmitPullRequest(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, ExecuteResponse>) {
+              HandleExecuteResponse(inbox_msg.node_agent_identity, msg);
+            } else {
+              LOG_WARNING("Handler: Unknown message type (index={})",
+                          inbox_msg.request.index());
             }
           },
           inbox_msg.request);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
-      LOG_DEBUG("Handler: inbox_queue_ closed, exiting");
       return;
     }
   }
@@ -274,9 +267,14 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
   LOG_INFO("Coordinator received RegisterTensorShardRequest for tensor: {}",
            request.tensor_shard_spec.name);
 
-  // Parse NodeId from the identity (NodeAgent uses to_string(node_id) as
-  // identity)
-  NodeId owner_node_id = StringToUUID(node_agent_identity);
+  // Parse NodeId from the identity (NodeAgent REQ identity is
+  // "uuid_req")
+  auto underscore_pos = node_agent_identity.rfind('_');
+  ASSERT_VALID_RUNTIME(underscore_pos != std::string::npos,
+                       "Invalid node agent identity format: {}",
+                       node_agent_identity);
+  NodeId owner_node_id =
+      StringToUUID(node_agent_identity.substr(0, underscore_pos));
 
   // Register the tensor shard in the metastore with owner information
   auto shard_metadata_ptr =
@@ -313,9 +311,9 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
       owner_to_shard_ids[shard_metadata->owner].push_back(shard_id);
     }
 
-    // Send AllocateTensorRequest to each NodeAgent with its shard IDs
+    // Send AllocateTensorRequest to each NodeAgent's async (DEALER) socket
     for (const auto& [owner_id, shard_ids] : owner_to_shard_ids) {
-      Identity owner_identity = to_string(owner_id);
+      Identity owner_identity = to_string(owner_id) + "_dealer";
       AllocateTensorRequest allocate_request(shard_ids);
       outbox_queue_.push(OutboxMessage{owner_identity, allocate_request});
     }
@@ -324,113 +322,189 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
 
 void Coordinator::Handler::HandleSubmitCopyRequest(
     const Identity& node_agent_identity, const SubmitCopyRequest& request) {
-  LOG_INFO("Coordinator received SubmitCopyRequest from {} to {}",
-           request.copy_spec.src_name, request.copy_spec.dst_name);
+  LOG_INFO("Coordinator received SubmitCopyRequest from {} to {} for shard {}",
+           request.copy_spec.src_name, request.copy_spec.dst_name,
+           request.shard_id);
 
-  CopyKey copy_key{request.copy_spec.src_name, request.copy_spec.dst_name};
+  // Expected = all src shards + all dst shards
+  std::size_t expected_shards =
+      metastore_.GetNumShardsForTensor(request.copy_spec.src_name) +
+      metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
-  // Check if this is the first request for this (src, dst) pair
-  auto pending_it = pending_copy_specs_.find(copy_key);
-  if (pending_it == pending_copy_specs_.end()) {
-    // First request - store the CopySpec for validation
-    pending_copy_specs_.emplace(copy_key, request.copy_spec);
-    copies_received_[copy_key] = 1;
-  } else {
-    // Subsequent request - verify TensorSelections match
-    const CopySpec& first_spec = pending_it->second;
+  HandleShardSubmission(node_agent_identity, request.request_id,
+                        request.shard_id, request.copy_spec, expected_shards);
+}
 
-    /// TODO: need to handle errors differently
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.src_selection == *first_spec.src_selection,
-        "SubmitCopy {} -> {}: source selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
+void Coordinator::Handler::HandleSubmitPullRequest(
+    const Identity& node_agent_identity, const SubmitPullRequest& request) {
+  LOG_INFO("Coordinator received SubmitPullRequest from {} to {} for shard {}",
+           request.copy_spec.src_name, request.copy_spec.dst_name,
+           request.shard_id);
 
-    ASSERT_VALID_RUNTIME(
-        *request.copy_spec.dst_selection == *first_spec.dst_selection,
-        "SubmitCopy {} -> {}: destination selection mismatch",
-        request.copy_spec.src_name, request.copy_spec.dst_name);
+  // For Pull: expected shards = number of DESTINATION shards only (one-sided)
+  std::size_t expected_shards =
+      metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
-    copies_received_[copy_key]++;
+  HandleShardSubmission(node_agent_identity, request.request_id,
+                        request.shard_id, request.copy_spec, expected_shards);
+}
+
+void Coordinator::Handler::HandleShardSubmission(
+    const Identity& node_agent_identity, const RequestId& request_id,
+    const ShardId& shard_id, const CopySpec& copy_spec,
+    std::size_t expected_shards) {
+  using setu::commons::utils::AggregationParticipant;
+
+  CopyKey copy_key{copy_spec.src_name, copy_spec.dst_name};
+
+  auto result = shard_aggregator_.Submit(
+      copy_key, shard_id, copy_spec,
+      AggregationParticipant{node_agent_identity, request_id}, expected_shards,
+      [](const CopySpec& stored, const CopySpec& incoming) {
+        /// TODO: need to handle errors differently
+        ASSERT_VALID_RUNTIME(
+            *incoming.src_selection == *stored.src_selection,
+            "Shard submission {} -> {}: source selection mismatch",
+            incoming.src_name, incoming.dst_name);
+        ASSERT_VALID_RUNTIME(
+            *incoming.dst_selection == *stored.dst_selection,
+            "Shard submission {} -> {}: destination selection mismatch",
+            incoming.src_name, incoming.dst_name);
+      });
+
+  if (!result.has_value()) {
+    return;
   }
 
-  // Track this node agent for later response
-  pending_node_agents_[copy_key].push_back(
-      PendingNodeAgent{node_agent_identity, request.request_id});
+  // All shards submitted — generate CopyOperationId and dispatch
+  CopyOperationId copy_op_id = GenerateUUID();
 
-  // Get the expected number of clients (number of shards for source tensor)
-  std::size_t expected_clients =
-      metastore_.GetNumShardsForTensor(request.copy_spec.src_name);
+  LOG_INFO(
+      "All shards submitted for {} -> {}, "
+      "copy_op_id={}, adding to planner queue",
+      copy_spec.src_name, copy_spec.dst_name, copy_op_id);
 
-  LOG_DEBUG("SubmitCopy {} -> {}: received {}/{} requests",
-            request.copy_spec.src_name, request.copy_spec.dst_name,
-            copies_received_[copy_key], expected_clients);
+  // Collect submitter identities
+  std::vector<Identity> submitters;
+  submitters.reserve(result->participants.size());
+  for (const auto& participant : result->participants) {
+    submitters.push_back(participant.identity);
+  }
 
-  // Check if all clients have sent the request
-  if (copies_received_[copy_key] == expected_clients) {
-    // Generate CopyOperationId
-    CopyOperationId copy_op_id = GenerateUUID();
+  // Create shared state with submitter identities
+  auto state = std::make_shared<CopyOperationState>(result->payload,
+                                                    std::move(submitters));
 
+  // Store the shared state (will be accessed by HandleExecuteResponse)
+  copy_operations_.emplace(copy_op_id, state);
+
+  // Add to planner queue with copy_op_id and shared state
+  planner_queue_.push(PlannerTask{copy_op_id, result->payload, state});
+
+  // Send responses to all waiting participants with copy_op_id
+  for (const auto& participant : result->participants) {
+    SubmitCopyResponse response(participant.request_id, copy_op_id,
+                                ErrorCode::kSuccess);
+    outbox_queue_.push(OutboxMessage{participant.identity, response});
+  }
+}
+
+void Coordinator::Handler::HandleExecuteResponse(
+    const Identity& /*node_identity*/, const ExecuteResponse& response) {
+  auto it = copy_operations_.find(response.copy_op_id);
+  if (it == copy_operations_.end()) {
+    LOG_WARNING("ExecuteResponse for unknown copy_op_id: {}, ignoring",
+                response.copy_op_id);
+    return;
+  }
+
+  auto& state = it->second;
+  state->completed_responses++;
+
+  // Atomic load with acquire ordering to synchronize with Executor's write
+  const auto expected =
+      state->expected_responses.load(std::memory_order_acquire);
+
+  LOG_DEBUG("ExecuteResponse for copy_op_id {}: {}/{} responses received",
+            response.copy_op_id, state->completed_responses, expected);
+
+  // Check if all participants completed
+  if (state->completed_responses == expected) {
     LOG_INFO(
-        "All clients submitted copy request {} -> {}, "
-        "copy_op_id={}, adding to planner queue",
-        request.copy_spec.src_name, request.copy_spec.dst_name, copy_op_id);
+        "All {} participants completed for copy_op_id {}, notifying {} "
+        "submitters",
+        expected, response.copy_op_id, state->submitters.size());
 
-    // Store the mapping
-    copy_operations_.emplace(copy_op_id, request.copy_spec);
-
-    // Add to planner queue
-    planner_queue_.push(request.copy_spec);
-
-    // Send responses to all waiting clients with copy_op_id
-    for (const auto& client : pending_node_agents_[copy_key]) {
-      SubmitCopyResponse response(client.request_id, copy_op_id,
-                                  ErrorCode::kSuccess);
-      outbox_queue_.push(OutboxMessage{client.identity, response});
+    // Send CopyOperationFinishedRequest to all SUBMITTERS
+    for (const auto& submitter_identity : state->submitters) {
+      CopyOperationFinishedRequest finish_req(response.copy_op_id);
+      outbox_queue_.push(OutboxMessage{submitter_identity, finish_req});
     }
 
-    // Clean up maps
-    copies_received_.erase(copy_key);
-    pending_copy_specs_.erase(copy_key);
-    pending_node_agents_.erase(copy_key);
+    copy_operations_.erase(it);
   }
 }
 
 //==============================================================================
 // Executor Implementation
 //==============================================================================
-Coordinator::Executor::Executor(Queue<OutboxMessage>& outbox_queue)
-    : outbox_queue_(outbox_queue) {}
+Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
+                                Queue<OutboxMessage>& outbox_queue,
+                                MetaStore& metastore)
+    : planner_queue_(planner_queue),
+      outbox_queue_(outbox_queue),
+      metastore_(metastore) {}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {
     return;
   }
-  LOG_DEBUG("Starting executor loop");
   thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
                                            "CoordinatorExecutorThread"));
 }
 
 void Coordinator::Executor::Stop() {
-  LOG_DEBUG("Stopping executor loop");
   running_ = false;
 
   if (thread_.joinable()) {
     thread_.join();
   }
-  LOG_DEBUG("Executor loop stopped");
 }
 
 void Coordinator::Executor::Loop() {
-  LOG_DEBUG("Entering executor loop");
-
   running_ = true;
   while (running_) {
-    // TODO: Implement executor loop to dispatch plans to NodeAgents
-    // Will pull from an executor_queue_ and push to outbox_queue_
-    // For now, just sleep and check running_ flag
-    std::this_thread::sleep_for(kExecutorLoopSleepMs);
-    if (outbox_queue_.closed()) {
-      LOG_DEBUG("Executor: outbox_queue_ closed, exiting");
+    try {
+      // Pull the next planner task from the queue
+      PlannerTask task = planner_queue_.pull();
+
+      LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
+
+      // Compile the CopySpec into a Plan using NCCLPlanner
+      Plan plan = planner_.Compile(task.copy_spec, metastore_);
+
+      LOG_DEBUG("Compiled plan:\n{}", plan);
+
+      // Fragment the plan by NodeId
+      auto fragments = plan.Fragments();
+
+      // Send ExecuteRequest to each node agent's async (DEALER) socket
+      for (auto& [node_id, node_plan] : fragments) {
+        Identity node_identity = boost::uuids::to_string(node_id) + "_dealer";
+
+        ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
+
+        outbox_queue_.push(OutboxMessage{node_identity, execute_request});
+      }
+
+      // Set expected responses (atomic write with release ordering for
+      // visibility to Handler thread)
+      task.state->expected_responses.store(fragments.size(),
+                                           std::memory_order_release);
+      LOG_DEBUG("Executor: Set expected_responses={} for copy_op_id={}",
+                fragments.size(), task.copy_op_id);
+
+    } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;
     }
   }

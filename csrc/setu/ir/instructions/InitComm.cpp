@@ -16,24 +16,32 @@
 //==============================================================================
 #include "setu/ir/instructions/InitComm.h"
 //==============================================================================
+#include "setu/planner/Planner.h"
+//==============================================================================
 namespace setu::ir {
 //==============================================================================
 
 std::string InitComm::ToString() const {
-  return std::format("InitComm(device_to_rank_size={})", device_to_rank.size());
+  std::string hex;
+  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
+    hex +=
+        std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
+  }
+  return std::format("InitComm(comm_id={}, participant_to_rank={})", hex,
+                     participant_to_rank);
 }
 
 void InitComm::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(comm_id, device_to_rank);
+  writer.WriteFields(comm_id, participant_to_rank);
 }
 
 InitComm InitComm::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [comm_id, device_to_rank] =
+  auto [comm_id, participant_to_rank] =
       reader.ReadFields<ncclUniqueId,
-                        std::unordered_map<DeviceRank, std::int32_t>>();
-  return InitComm(comm_id, std::move(device_to_rank));
+                        std::unordered_map<Participant, DeviceRank>>();
+  return InitComm(comm_id, participant_to_rank);
 }
 
 //==============================================================================

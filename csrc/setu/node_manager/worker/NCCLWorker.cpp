@@ -19,9 +19,9 @@
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/messages/Messages.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
+#include "messaging/Messages.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -30,6 +30,7 @@ using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
+using setu::planner::Participant;
 //==============================================================================
 
 #define CUDA_CHECK(call)                                                \
@@ -50,8 +51,8 @@ using setu::commons::utils::ZmqHelper;
 // NCCLWorker
 //==============================================================================
 
-NCCLWorker::NCCLWorker(Device device, std::size_t reply_port)
-    : Worker(device, reply_port), stream_(nullptr) {}
+NCCLWorker::NCCLWorker(NodeId node_id, Device device)
+    : Worker(node_id, device), stream_(nullptr) {}
 
 NCCLWorker::~NCCLWorker() {
   if (stream_) {
@@ -69,8 +70,6 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
-  LOG_DEBUG("Executing program with {} instructions", program.size());
-
   bool group_started = false;
 
   for (const auto& instruction : program) {
@@ -124,16 +123,14 @@ void NCCLWorker::ExecuteInitComm(const InitComm& inst) {
   std::string key = CommIdToString(inst.comm_id);
 
   const std::int32_t num_ranks =
-      static_cast<std::int32_t>(inst.device_to_rank.size());
-  const std::int32_t rank = inst.device_to_rank.at(device_.LocalDeviceIndex());
+      static_cast<std::int32_t>(inst.participant_to_rank.size());
+  auto part = Participant(node_id_, device_);
+  const std::int32_t rank = inst.participant_to_rank.at(part);
 
   ncclComm_t comm;
   NCCL_CHECK(ncclCommInitRank(&comm, num_ranks, inst.comm_id, rank));
 
-  comm_cache_[key] = CommCacheEntry{
-      .nccl_comm = comm,
-      .device_to_rank = inst.device_to_rank,
-  };
+  comm_cache_[key] = CommCacheEntry{.nccl_comm = comm};
 
   active_comm_key_ = key;
   LOG_DEBUG("InitComm complete: {} ranks, this rank={}", num_ranks, rank);
@@ -158,26 +155,24 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
 
 void NCCLWorker::ExecuteSend(const Send& inst) {
   auto& entry = comm_cache_.at(active_comm_key_);
-  const std::int32_t peer_rank = inst.GetPeerRank();
 
   NCCL_CHECK(ncclSend(static_cast<char*>(inst.src_ptr) + inst.offset_bytes,
-                      inst.count, ToNcclDataType(inst.dtype), peer_rank,
+                      inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
                       entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Send: {} elements from {} to device: {}", inst.count,
-            inst.src_shard.ToString(), peer_rank);
+  LOG_DEBUG("Send: {} elements from {} to device rank: {}", inst.count,
+            inst.src_shard.ToString(), inst.peer_rank);
 }
 
 void NCCLWorker::ExecuteReceive(const Receive& inst) {
   auto& entry = comm_cache_.at(active_comm_key_);
-  const std::int32_t peer_rank = inst.GetPeerRank();
 
   NCCL_CHECK(ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.offset_bytes,
-                      inst.count, ToNcclDataType(inst.dtype), peer_rank,
+                      inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
                       entry.nccl_comm, stream_));
 
-  LOG_DEBUG("Receive: {} elements from device: {} from device: {}", inst.count,
-            inst.dst_shard.ToString(), peer_rank);
+  LOG_DEBUG("Receive: {} elements to {} from device rank: {}", inst.count,
+            inst.dst_shard.ToString(), inst.peer_rank);
 }
 
 //==============================================================================

@@ -63,13 +63,25 @@ void InitTensorSlicePybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorDimPybind(py::module_& m) {
-  py::class_<TensorDim>(m, "TensorDim", py::module_local())
+  py::class_<TensorDim>(m, "TensorDim")
       .def(py::init<TensorDimName, std::size_t>(), py::arg("name"),
            py::arg("size"))
       .def_readonly("name", &TensorDim::name, "Name of the tensor dimension")
       .def_readonly("size", &TensorDim::size, "Size of the tensor dimension")
       .def("__str__", &TensorDim::ToString)
-      .def("__repr__", &TensorDim::ToString);
+      .def("__repr__", &TensorDim::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const TensorDim& dim) {  // __getstate__
+            return py::make_tuple(dim.name, dim.size);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for TensorDim");
+            }
+            return TensorDim(t[0].cast<TensorDimName>(),
+                             t[1].cast<std::size_t>());
+          }));
 }
 //==============================================================================
 void InitTensorDimSpecPybind(py::module_& m) {
@@ -163,8 +175,8 @@ void InitTensorDimShardPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorShardMetadataPybind(py::module_& m) {
-  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(
-      m, "TensorShardMetadata", py::module_local())
+  py::class_<TensorShardMetadata, TensorShardMetadataPtr>(m,
+                                                          "TensorShardMetadata")
       .def(py::init<TensorShardSpec, NodeId>(), py::arg("spec"),
            py::arg("owner"), "Create metadata with auto-generated ID")
       .def(py::init<ShardId, TensorShardSpec, NodeId>(), py::arg("id"),
@@ -182,10 +194,12 @@ void InitTensorShardMetadataPybind(py::module_& m) {
 //==============================================================================
 void InitTensorShardPybind(py::module_& m) {
   py::class_<TensorShard, TensorShardPtr>(m, "TensorShard", py::module_local())
-      .def(py::init<TensorShardMetadata, torch::Tensor>(), py::arg("metadata"),
-           py::arg("tensor"))
+      .def(py::init<TensorShardMetadata, torch::Tensor, std::string>(),
+           py::arg("metadata"), py::arg("tensor"), py::arg("lock_base_dir"))
       .def_readonly("metadata", &TensorShard::metadata,
                     "Metadata describing this shard")
+      .def_readonly("tensor", &TensorShard::tensor,
+                    "The torch tensor holding shard data")
       .def("get_device_ptr", &TensorShard::GetDevicePtr,
            "Get pointer to device memory location")
       .def("__str__", &TensorShard::ToString)
@@ -215,8 +229,7 @@ void InitTensorShardSpecPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorShardRefPybind(py::module_& m) {
-  py::class_<TensorShardRef, TensorShardRefPtr>(m, "TensorShardRef",
-                                                py::module_local())
+  py::class_<TensorShardRef, TensorShardRefPtr>(m, "TensorShardRef")
       .def(py::init<TensorName, ShardId, TensorDimMap>(), py::arg("name"),
            py::arg("shard_id"), py::arg("dims"))
       .def_readonly("name", &TensorShardRef::name,
@@ -228,7 +241,19 @@ void InitTensorShardRefPybind(py::module_& m) {
       .def("get_num_dims", &TensorShardRef::GetNumDims,
            "Get number of dimensions in this shard")
       .def("__str__", &TensorShardRef::ToString)
-      .def("__repr__", &TensorShardRef::ToString);
+      .def("__repr__", &TensorShardRef::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const TensorShardRef& ref) {  // __getstate__
+            return py::make_tuple(ref.name, ref.shard_id, ref.dims);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 3) {
+              throw std::runtime_error("Invalid state for TensorShardRef");
+            }
+            return TensorShardRef(t[0].cast<TensorName>(), t[1].cast<ShardId>(),
+                                  t[2].cast<TensorDimMap>());
+          }));
 }
 //==============================================================================
 void InitTensorShardReadHandlePybind(py::module_& m) {

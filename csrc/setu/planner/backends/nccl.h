@@ -22,6 +22,7 @@
 //==============================================================================
 namespace setu::planner::backends::nccl {
 //==============================================================================
+using setu::commons::DeviceRank;
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
 
@@ -30,7 +31,11 @@ class NCCLPlanner : public Planner {
   Plan Compile(CopySpec& copy_spec, MetaStore& metastore) override;
 
  private:
-  std::map<std::set<Device>, ncclUniqueId> comm_cache_;
+  struct CommCacheEntry {
+    ncclUniqueId id;
+    std::unordered_map<Participant, DeviceRank> ranks;
+  };
+  std::map<Participants, CommCacheEntry> comm_cache_;
 };
 //==============================================================================
 }  // namespace setu::planner::backends::nccl

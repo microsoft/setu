@@ -16,14 +16,12 @@
 //==============================================================================
 #include "Pybind.h"
 //==============================================================================
-#include "commons/Logging.h"
-#include "commons/StdCommon.h"
-#include "commons/datatypes/Pybind.h"
-//==============================================================================
 namespace setu::node_manager::datatypes {
 //==============================================================================
-void InitDatatypesPybindSubmodule(py::module_& pm) {
-  setu::commons::datatypes::InitDatatypesPybindSubmodule(pm);
+void InitDatatypesPybindSubmodule(py::module_& /* pm */) {
+  // No-op: datatypes are registered globally by _commons.datatypes module
+  // and don't need to be re-registered here.
+  // Users should import from setu._commons.datatypes instead.
 }
 //==============================================================================
 }  // namespace setu::node_manager::datatypes

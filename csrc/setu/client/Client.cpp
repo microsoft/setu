@@ -17,13 +17,12 @@
 #include "client/Client.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/messages/Messages.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ZmqHelper.h"
+#include "messaging/Messages.h"
 //==============================================================================
 namespace setu::client {
 //==============================================================================
-using setu::commons::datatypes::TensorShardRefPtr;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
@@ -31,8 +30,11 @@ using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitCopyResponse;
+using setu::commons::messages::SubmitPullRequest;
 using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
+using setu::commons::messages::WaitForShardAllocationRequest;
+using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 //==============================================================================
@@ -54,7 +56,6 @@ void Client::Connect(const std::string& endpoint) {
 
   // Create ZMQ context
   zmq_context_ = std::make_shared<zmq::context_t>();
-
   request_socket_ = ZmqHelper::CreateAndConnectSocket(
       zmq_context_, zmq::socket_type::req, endpoint);
 
@@ -66,8 +67,6 @@ void Client::Connect(const std::string& endpoint) {
 
 void Client::Disconnect() {
   ASSERT_VALID_RUNTIME(is_connected_, "Client is not connected");
-
-  LOG_DEBUG("Client disconnecting from {}", endpoint_);
 
   if (request_socket_) {
     request_socket_->close();
@@ -91,8 +90,6 @@ const std::string& Client::GetEndpoint() const { return endpoint_; }
 
 std::optional<TensorShardRef> Client::RegisterTensorShard(
     const TensorShardSpec& shard_spec) {
-  LOG_DEBUG("Client registering tensor shard: {}", shard_spec.name);
-
   ClientRequest request = RegisterTensorShardRequest(shard_spec);
   Comm::Send(request_socket_, request);
 
@@ -112,34 +109,85 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
     return std::nullopt;
   }
 
-  client_shards_.push_back(
-      std::make_shared<TensorShardRef>(response.shard_ref.value()));
+  const auto& shard_ref = response.shard_ref.value();
+  tensor_shards_[shard_ref.name].push_back(
+      std::make_shared<TensorShardRef>(shard_ref));
 
   return response.shard_ref;
 }
 
 std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
-  LOG_DEBUG("Client submitting copy operation from {} to {}",
-            copy_spec.src_name, copy_spec.dst_name);
-
-  ClientRequest request = SubmitCopyRequest(copy_spec);
-  Comm::Send(request_socket_, request);
-
-  auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
-
-  LOG_DEBUG("Client received copy operation ID: {}",
-            response.copy_operation_id);
-
-  if (response.error_code != ErrorCode::kSuccess) {
-    return std::nullopt;
+  // Find all shards owned by this client that are involved in the copy
+  // (either as source or destination)
+  std::vector<ShardId> involved_shards;
+  if (auto it = tensor_shards_.find(copy_spec.src_name);
+      it != tensor_shards_.end()) {
+    for (const auto& shard_ref : it->second) {
+      involved_shards.push_back(shard_ref->shard_id);
+    }
+  }
+  if (auto it = tensor_shards_.find(copy_spec.dst_name);
+      it != tensor_shards_.end()) {
+    for (const auto& shard_ref : it->second) {
+      involved_shards.push_back(shard_ref->shard_id);
+    }
   }
 
-  return response.copy_operation_id;
+  ASSERT_VALID_RUNTIME(!involved_shards.empty(),
+                       "Client has no shards for src {} or dst {}",
+                       copy_spec.src_name, copy_spec.dst_name);
+
+  // Submit a request for each involved shard
+  std::optional<CopyOperationId> copy_op_id;
+  for (const auto& shard_id : involved_shards) {
+    ClientRequest request = SubmitCopyRequest(shard_id, copy_spec);
+    Comm::Send(request_socket_, request);
+
+    auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
+
+    LOG_DEBUG("Client received copy operation ID: {} for shard {}",
+              response.copy_operation_id, shard_id);
+
+    if (response.error_code != ErrorCode::kSuccess) {
+      return std::nullopt;
+    }
+
+    copy_op_id = response.copy_operation_id;
+  }
+
+  return copy_op_id;
+}
+
+std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
+  // For Pull: only destination shards submit (one-sided operation)
+  auto it = tensor_shards_.find(copy_spec.dst_name);
+  ASSERT_VALID_RUNTIME(it != tensor_shards_.end(),
+                       "Client has no shards for dst {}", copy_spec.dst_name);
+
+  // Submit a request for each destination shard
+  std::optional<CopyOperationId> copy_op_id;
+  for (const auto& shard_ref : it->second) {
+    const auto shard_id = shard_ref->shard_id;
+
+    ClientRequest request = SubmitPullRequest(shard_id, copy_spec);
+    Comm::Send(request_socket_, request);
+
+    auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
+
+    LOG_DEBUG("Client received pull operation ID: {} for shard {}",
+              response.copy_operation_id, shard_id);
+
+    if (response.error_code != ErrorCode::kSuccess) {
+      return std::nullopt;
+    }
+
+    copy_op_id = response.copy_operation_id;
+  }
+
+  return copy_op_id;
 }
 
 void Client::WaitForCopy(CopyOperationId copy_op_id) {
-  LOG_DEBUG("Client waiting for copy operation ID: {}", copy_op_id);
-
   ClientRequest request = WaitForCopyRequest(copy_op_id);
   Comm::Send(request_socket_, request);
 
@@ -150,10 +198,19 @@ void Client::WaitForCopy(CopyOperationId copy_op_id) {
       copy_op_id, response.error_code);
 }
 
-TensorIPCSpec Client::GetTensorHandle(const TensorShardRef& shard_ref) {
-  LOG_DEBUG("Client requesting tensor handle for shard: {}",
-            shard_ref.shard_id);
+void Client::WaitForShardAllocation(ShardId shard_id) {
+  ClientRequest request = WaitForShardAllocationRequest(shard_id);
+  Comm::Send(request_socket_, request);
 
+  auto response = Comm::Recv<WaitForShardAllocationResponse>(request_socket_);
+
+  LOG_DEBUG(
+      "Client finished waiting for shard allocation: {} with error code: {}",
+      shard_id, response.error_code);
+}
+
+GetTensorHandleResponse Client::GetTensorHandle(
+    const TensorShardRef& shard_ref) {
   ClientRequest request = GetTensorHandleRequest(shard_ref.shard_id);
   Comm::Send(request_socket_, request);
 
@@ -170,12 +227,18 @@ TensorIPCSpec Client::GetTensorHandle(const TensorShardRef& shard_ref) {
   ASSERT_VALID_RUNTIME(response.tensor_ipc_spec.has_value(),
                        "Tensor IPC spec is missing for shard {}",
                        shard_ref.shard_id);
+  ASSERT_VALID_RUNTIME(response.metadata.has_value(),
+                       "Metadata is missing for shard {}", shard_ref.shard_id);
 
-  return response.tensor_ipc_spec.value();
+  return response;
 }
 
-const std::vector<TensorShardRefPtr>& Client::GetShards() const {
-  return client_shards_;
+std::vector<TensorShardRefPtr> Client::GetShards() const {
+  std::vector<TensorShardRefPtr> result;
+  for (const auto& [name, shards] : tensor_shards_) {
+    result.insert(result.end(), shards.begin(), shards.end());
+  }
+  return result;
 }
 //==============================================================================
 }  // namespace setu::client

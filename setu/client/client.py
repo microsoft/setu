@@ -4,73 +4,136 @@ Setu client API for tensor operations.
 
 from __future__ import annotations
 
+import logging
+import uuid
 from contextlib import contextmanager
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, Optional
 
 import torch
+from torch.multiprocessing.reductions import rebuild_cuda_tensor
 
-from setu._commons.datatypes import TensorDim, TensorShardRef
+from setu._client import Client as Client_C
+from setu._commons.datatypes import (
+    CopySpec,
+    TensorShard,
+    TensorShardRef,
+    TensorShardSpec,
+)
 from setu.client.tensor_handles import TensorReadHandle, TensorWriteHandle
 from setu.client.tensor_selection import TensorSelection
-from setu.core.types import TensorName
+from setu.core.types import CopyOperationId, TensorName
+
+logger = logging.getLogger(__name__)
 
 
 class Client:
     """
     Client interface for creating and managing tensor shards in the Setu system.
+
+    The Client provides the primary interface for:
+    - Registering tensor shards with the Setu system
+    - Accessing tensor data through read/write context managers
+    - Copying data between tensor selections
+    - Creating tensor selections for operations
+
+    Example:
+        >>> client = Client("tcp://localhost:5555")
+        >>> shard_ref = client.register_tensor_shard(spec)
+        >>> with client.write(shard_ref) as tensor:
+        ...     tensor.fill_(1.0)
     """
 
-    def __init__(self) -> None:
-        """Initialize the Setu client."""
-        self._shards: Dict[TensorName, TensorShardRef] = {}
-
-    def create_tensor_shard(
-        self,
-        name: TensorName,
-        dims: List[TensorDim],
-        dtype: torch.dtype,
-        device: str,
-    ) -> TensorShardRef:
+    def __init__(self, endpoint: str) -> None:
         """
-        Create a tensor shard with the specified dimensions and properties.
+        Initialize the Setu client and connect to a NodeAgent.
 
         Args:
-            name: Fully qualified name for the tensor shard in the format
-                  "replica:X/worker:Y/task:Z/tensor_name"
-            dims: List of TensorDim objects defining each dimension with its name
-                  and size
-            dtype: PyTorch data type for the tensor (e.g., torch.bfloat16, torch.float16)
-            device: Device string in PyTorch format (e.g., "cuda:0", "cpu")
+            endpoint: ZMQ endpoint for the NodeAgent (e.g., "tcp://localhost:5555")
+
+        Raises:
+            RuntimeError: If connection to the endpoint fails
+        """
+        self._client = Client_C()
+        self._client.connect(endpoint)
+        self._endpoint = endpoint
+        self._tensor_shard_cache: Dict[uuid.UUID, TensorShard] = {}
+        logger.debug("Client connected to %s", endpoint)
+
+    @property
+    def endpoint(self) -> str:
+        """Get the endpoint this client is connected to."""
+        return self._endpoint
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if the client is connected to a NodeAgent."""
+        return self._client.is_connected()
+
+    def disconnect(self) -> None:
+        """
+        Disconnect from the NodeAgent.
+
+        This frees all registered shards and closes the connection.
+        Call this explicitly before the client goes out of scope to ensure
+        clean shutdown.
+        """
+        if self._client.is_connected():
+            self._client.disconnect()
+            logger.debug("Client disconnected from %s", self._endpoint)
+
+    def register_tensor_shard(self, spec: TensorShardSpec) -> Optional[TensorShardRef]:
+        """
+        Register a tensor shard with the specified dimensions and properties.
+
+        The shard will be allocated on the NodeAgent and tracked by the
+        Coordinator. The returned TensorShardRef can be used for subsequent
+        read/write operations.
+
+        Args:
+            spec: TensorShardSpec defining the tensor name, dimensions, dtype,
+                  and device
 
         Returns:
-            TensorShardRef object - a reference to the created shard
+            TensorShardRef if registration succeeds, None if it fails (e.g.,
+            overlapping shards, dtype mismatch, dimension mismatch)
 
         Example:
-            >>> client = Client()
-            >>> from setu._commons.datatypes import TensorDim
-            >>> shard_ref = client.create_tensor_shard(
-            ...     name="replica:0/worker:0/task:0/t",
-            ...     dims=[
-            ...         TensorDim("a", 2048),
-            ...         TensorDim("b", 128),
-            ...         TensorDim("c", 256)
-            ...     ],
-            ...     dtype=torch.bfloat16,
-            ...     device="cuda:0"
+            >>> from setu._commons.datatypes import Device, TensorDimSpec, TensorShardSpec
+            >>> device = Device(torch_device=torch.device("cuda:0"))
+            >>> dims = [
+            ...     TensorDimSpec("rows", 1024, 0, 512),
+            ...     TensorDimSpec("cols", 768, 0, 768),
+            ... ]
+            >>> spec = TensorShardSpec(
+            ...     name="my_tensor",
+            ...     dims=dims,
+            ...     dtype=torch.float32,
+            ...     device=device,
             ... )
+            >>> shard_ref = client.register_tensor_shard(spec)
         """
-        # TODO: Implement tensor shard creation
-        raise NotImplementedError("create_tensor_shard not yet implemented")
+        shard_ref = self._client.register_tensor_shard(spec)
+
+        if shard_ref is not None:
+            logger.debug("Registered tensor shard: %s", spec.name)
+
+        return shard_ref
 
     def select(self, name: TensorName) -> TensorSelection:
         """
-        Create a tensor selection for the given tensor (initially selects all indices).
+        Create a tensor selection covering only indices owned by this client's shards.
+
+        The selection includes only the indices that this client has registered
+        shards for. Use `.where()` to narrow the selection further.
 
         Args:
-            name: Fully qualified tensor name
+            name: Name of the tensor to create selection for
 
         Returns:
-            TensorSelection with all indices selected (use .where() to narrow)
+            TensorSelection covering only owned indices
+
+        Raises:
+            RuntimeError: If the tensor name is not known or selection fails
 
         Example:
             >>> # Using different indexing styles
@@ -83,30 +146,96 @@ class Client:
             ...     .where("page", {0, 1, 2}) \\
             ...     .where("head", 5)  # Single index
         """
-        # TODO: Get dims from metadata registry
-        # For now this will need to be implemented when metadata tracking is added
-        raise NotImplementedError(
-            "select not yet implemented - needs metadata tracking"
-        )
+        raise NotImplementedError("select() method is not implemented yet")
+        # native_selection = self._client.select(name)
+        # return TensorSelection(native_selection)
 
-    def copy(self, src: TensorSelection, dst: TensorSelection) -> None:
+    def copy(
+        self, src: TensorSelection, dst: TensorSelection
+    ) -> Optional[CopyOperationId]:
         """
         Copy data from source selection to destination selection.
 
         Args:
             src: Source tensor selection
             dst: Destination tensor selection
+            blocking: If True, wait for copy to complete before returning.
+                      If False, return immediately with a CopyOperationId
+                      that can be used with wait().
+
+        Returns:
+            None if blocking=True, CopyOperationId if blocking=False
 
         Raises:
-            ValueError: If selections are incompatible or copy would fail
+            ValueError: If selections are incompatible (different dimensions/sizes)
+            RuntimeError: If copy operation fails
 
         Example:
-            >>> src = client.select("kv_cache_src").where(page=[1,2,3]).build()
-            >>> dst = client.select("kv_cache_dst").where(page=[4,5,6]).build()
-            >>> client.copy(src, dst)
+            >>> src = client.select("kv_cache_src").where("page", [1, 2, 3])
+            >>> dst = client.select("kv_cache_dst").where("page", [4, 5, 6])
+            >>> client.copy(src, dst)  # Blocking copy
+            >>>
+            >>> # Or non-blocking:
+            >>> op_id = client.copy(src, dst, blocking=False)
+            >>> # ... do other work ...
+            >>> client.wait(op_id)
         """
-        # TODO: Implement tensor copy operation
-        raise NotImplementedError("copy not yet implemented")
+        copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
+
+        copy_op_id = self._client.submit_copy(copy_spec)
+
+        if copy_op_id is None:
+            raise RuntimeError("Copy operation submission failed")
+
+        logger.debug(
+            "Submitted copy operation %d: %s -> %s", copy_op_id, src.name, dst.name
+        )
+        return copy_op_id
+
+    def wait(self, copy_op_id: CopyOperationId) -> None:
+        """
+        Wait for a copy operation to complete.
+
+        Args:
+            copy_op_id: The copy operation ID returned by copy(blocking=False)
+
+        Example:
+            >>> op_id = client.copy(src, dst, blocking=False)
+            >>> # ... do other work ...
+            >>> client.wait(op_id)
+        """
+        self._client.wait_for_copy(copy_op_id)
+        logger.debug("Copy operation %d completed", copy_op_id)
+
+    def _get_tensor_shard(self, shard_ref: TensorShardRef) -> TensorShard:
+        """Get a cached TensorShard, or fetch and cache on first access.
+
+        Args:
+            shard_ref: TensorShardRef to look up
+
+        Returns:
+            TensorShard with rebuilt tensor, metadata, and lock_base_dir
+        """
+        shard_id = shard_ref.shard_id
+        cached = self._tensor_shard_cache.get(shard_id)
+        if cached is not None:
+            return cached
+
+        tensor_ipc_spec, metadata, lock_base_dir = self._client.get_tensor_handle(
+            shard_ref
+        )
+        tensor = rebuild_cuda_tensor(
+            **tensor_ipc_spec.to_dict(),
+            tensor_cls=torch.Tensor,
+            storage_cls=torch.storage.UntypedStorage,
+        )
+        shard = TensorShard(
+            metadata=metadata,
+            tensor=tensor,
+            lock_base_dir=lock_base_dir,
+        )
+        self._tensor_shard_cache[shard_id] = shard
+        return shard
 
     @contextmanager
     def read(self, shard_ref: TensorShardRef) -> Iterator[torch.Tensor]:
@@ -121,10 +250,11 @@ class Client:
 
         Example:
             >>> with client.read(shard_ref) as tensor:
-            ...     data = tensor[0, :, :]
+            ...     data = tensor[0, :, :].clone()
+            ...     print(tensor.sum())
         """
-        handle = TensorReadHandle(self, shard_ref)
-        with handle as tensor:
+        shard = self._get_tensor_shard(shard_ref)
+        with TensorReadHandle(shard) as tensor:
             yield tensor
 
     @contextmanager
@@ -140,8 +270,9 @@ class Client:
 
         Example:
             >>> with client.write(shard_ref) as tensor:
-            ...     tensor[0, :, :] = new_data
+            ...     tensor.fill_(1.0)
+            ...     tensor[0, :, :] = some_data
         """
-        handle = TensorWriteHandle(self, shard_ref)
-        with handle as tensor:
+        shard = self._get_tensor_shard(shard_ref)
+        with TensorWriteHandle(shard) as tensor:
             yield tensor

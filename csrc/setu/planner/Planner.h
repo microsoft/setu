@@ -21,88 +21,46 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
-#include "commons/datatypes/Device.h"
+#include "commons/utils/Serialization.h"
 #include "ir/Instruction.h"
 #include "metastore/MetaStore.h"
+#include "planner/Participant.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
 
-using setu::commons::NodeId;
+using setu::commons::BinaryBuffer;
+using setu::commons::BinaryRange;
 using setu::commons::datatypes::CopySpec;
-using setu::commons::datatypes::Device;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 using setu::ir::Program;
 using setu::metastore::MetaStore;
 
-//==============================================================================
-/**
- * @brief Represents a participant in a distributed operation
- *
- * A Participant combines a NodeId (which node) with a Device (which device
- * on that node). This is used in the planner to identify specific devices
- * across the distributed system.
- */
-struct Participant {
-  Participant() = default;
-
-  Participant(NodeId node_id_param, Device device_param)
-      : node_id(std::move(node_id_param)), device(device_param) {}
-
-  [[nodiscard]] std::string ToString() const {
-    return std::format("Participant(node_id={}, device={})", node_id,
-                       device.ToString());
-  }
-
-  [[nodiscard]] bool operator==(const Participant& other) const {
-    return node_id == other.node_id && device == other.device;
-  }
-
-  [[nodiscard]] bool operator!=(const Participant& other) const {
-    return !(*this == other);
-  }
-
-  /**
-   * @brief Returns the local device index
-   *
-   * @return Local device index from the underlying device
-   */
-  [[nodiscard]] std::int16_t LocalDeviceIndex() const {
-    return device.LocalDeviceIndex();
-  }
-
-  NodeId node_id;
-  Device device;
-};
-
-using Participants = std::vector<Participant>;
-//==============================================================================
-}  // namespace setu::planner
-//==============================================================================
-// Hash function for Participant to enable use in unordered containers
-//==============================================================================
-namespace std {
-template <>
-struct hash<setu::planner::Participant> {
-  std::size_t operator()(
-      const setu::planner::Participant& participant) const noexcept {
-    std::size_t h1 = boost::hash<boost::uuids::uuid>{}(participant.node_id);
-    std::size_t h2 =
-        std::hash<setu::commons::datatypes::Device>{}(participant.device);
-
-    return h1 ^ (h2 << 1);
-  }
-};
-}  // namespace std
-//==============================================================================
-namespace setu::planner {
 //==============================================================================
 
 struct Plan {
   std::unordered_map<NodeId, Plan> Fragments();
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("Plan(participants={}, programs={})",
-                       participants.size(), program.size());
+    return std::format("Plan(participants={}, programs={})", participants,
+                       program);
+  }
+
+  void Serialize(BinaryBuffer& buffer) const {
+    BinaryWriter writer(buffer);
+    writer.WriteFields(participants, program);
+  }
+
+  static Plan Deserialize(const BinaryRange& range) {
+    BinaryReader reader(range);
+    auto [participants_val, program_val] =
+        reader.ReadFields<Participants,
+                          std::unordered_map<Participant, Program>>();
+    Plan plan;
+    plan.participants = std::move(participants_val);
+    plan.program = std::move(program_val);
+    return plan;
   }
 
   Participants participants;

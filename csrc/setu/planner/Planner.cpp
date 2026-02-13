@@ -16,10 +16,24 @@
 //==============================================================================
 #include "planner/Planner.h"
 //==============================================================================
+#include "commons/Logging.h"
+//==============================================================================
 namespace setu::planner {
 //==============================================================================
 
-std::unordered_map<NodeId, Plan> Plan::Fragments() { return {}; }
+std::unordered_map<NodeId, Plan> Plan::Fragments() {
+  std::unordered_map<NodeId, Plan> fragments;
+
+  // Group programs by NodeId, keeping participants the same across all
+  // fragments
+  for (const auto& [participant, prog] : program) {
+    auto& fragment = fragments[participant.node_id];
+    fragment.participants = participants;
+    fragment.program[participant] = prog;
+  }
+
+  return fragments;
+}
 
 //==============================================================================
 }  // namespace setu::planner
