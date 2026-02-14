@@ -161,7 +161,7 @@ void Coordinator::Gateway::Loop() {
     for (const auto& socket : ready) {
       if (socket == node_agent_socket_) {
         auto [node_agent_identity, request] =
-            Comm::RecvWithIdentity<NodeAgentRequest, false>(socket);
+            Comm::RecvWithIdentity<NodeAgentRequest>(socket);
         auto status =
             inbox_queue_.try_push(InboxMessage{node_agent_identity, request});
         if (status == boost::queue_op_status::closed) {
@@ -174,9 +174,9 @@ void Coordinator::Gateway::Loop() {
     try {
       while (!outbox_queue_.empty()) {
         OutboxMessage outbox_msg = outbox_queue_.pull();
-        Comm::SendWithIdentity<CoordinatorMessage, false>(
-            node_agent_socket_, outbox_msg.node_agent_identity,
-            outbox_msg.message);
+        Comm::Send<CoordinatorMessage>(node_agent_socket_,
+                                       outbox_msg.node_agent_identity,
+                                       outbox_msg.message);
       }
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;
@@ -247,9 +247,14 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
   LOG_INFO("Coordinator received RegisterTensorShardRequest for tensor: {}",
            request.tensor_shard_spec.name);
 
-  // Parse NodeId from the identity (NodeAgent uses to_string(node_id) as
-  // identity)
-  NodeId owner_node_id = StringToUUID(node_agent_identity);
+  // Parse NodeId from the identity (NodeAgent REQ identity is
+  // "uuid_req")
+  auto underscore_pos = node_agent_identity.rfind('_');
+  ASSERT_VALID_RUNTIME(underscore_pos != std::string::npos,
+                       "Invalid node agent identity format: {}",
+                       node_agent_identity);
+  NodeId owner_node_id =
+      StringToUUID(node_agent_identity.substr(0, underscore_pos));
 
   // Register the tensor shard in the metastore with owner information
   auto shard_metadata_ptr =
@@ -286,9 +291,9 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
       owner_to_shard_ids[shard_metadata->owner].push_back(shard_id);
     }
 
-    // Send AllocateTensorRequest to each NodeAgent with its shard IDs
+    // Send AllocateTensorRequest to each NodeAgent's async (DEALER) socket
     for (const auto& [owner_id, shard_ids] : owner_to_shard_ids) {
-      Identity owner_identity = to_string(owner_id);
+      Identity owner_identity = to_string(owner_id) + "_dealer";
       AllocateTensorRequest allocate_request(shard_ids);
       outbox_queue_.push(OutboxMessage{owner_identity, allocate_request});
     }
@@ -463,9 +468,9 @@ void Coordinator::Executor::Loop() {
       // Fragment the plan by NodeId
       auto fragments = plan.Fragments();
 
-      // Send ExecuteRequest to each node agent
+      // Send ExecuteRequest to each node agent's async (DEALER) socket
       for (auto& [node_id, node_plan] : fragments) {
-        Identity node_identity = boost::uuids::to_string(node_id);
+        Identity node_identity = boost::uuids::to_string(node_id) + "_dealer";
 
         ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
 

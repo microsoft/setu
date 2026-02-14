@@ -107,6 +107,10 @@ file(GLOB_RECURSE CLIENT_SRC "csrc/setu/client/*.cpp")
 define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "_messaging_static")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "_messaging_static")
 
+file(GLOB_RECURSE CIR_SRC "csrc/setu/cir/*.cpp")
+define_setu_extension(_cir "${CIR_SRC}" "setu_common_objects" "")
+define_setu_static(_cir_static "${CIR_SRC}" "setu_common_objects" "")
+
 file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
 define_setu_extension(_ir "${IR_SRC}" "setu_common_objects" "")
 define_setu_static(_ir_static "${IR_SRC}" "setu_common_objects" "")

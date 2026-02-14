@@ -112,19 +112,24 @@ class NodeAgent {
     void CloseSockets();
     void Loop();
 
-    // Unified message dispatch methods
+    // Client message dispatch
     void HandleClientMessage(const Identity& client_identity,
                              const ClientRequest& request);
-    void HandleCoordinatorMessage(const CoordinatorMessage& message);
+
+    // Async coordinator message dispatch (messages received on DEALER socket)
+    void HandleAsyncCoordinatorMessage(const CoordinatorMessage& message);
 
     // Client message handlers
+    // Sync: RegisterTensorShard sends via REQ socket, blocks for response
     void HandleRegisterTensorShardRequest(
         const Identity& client_identity,
         const RegisterTensorShardRequest& request);
+    // Async: SubmitCopy/SubmitPull send via DEALER socket, response comes later
     void HandleSubmitCopyRequest(const Identity& client_identity,
                                  const SubmitCopyRequest& request);
     void HandleSubmitPullRequest(const Identity& client_identity,
                                  const SubmitPullRequest& request);
+    // Local: handled entirely within NodeAgent
     void HandleWaitForCopyRequest(const Identity& client_identity,
                                   const WaitForCopyRequest& request);
     void HandleGetTensorHandleRequest(const Identity& client_identity,
@@ -133,15 +138,12 @@ class NodeAgent {
         const Identity& client_identity,
         const WaitForShardAllocationRequest& request);
 
-    // Coordinator message handlers
+    // Async coordinator message handlers (received on DEALER socket)
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
     void HandleCopyOperationFinishedRequest(
         const CopyOperationFinishedRequest& request);
     void HandleExecuteRequest(const ExecuteRequest& request);
-    void HandleRegisterTensorShardCoordinatorResponse(
-        const RegisterTensorShardCoordinatorResponse& response);
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
-    void HandleWaitForCopyResponse(const WaitForCopyResponse& response);
 
     void AllocateTensor(const TensorShardMetadata& shard_metadata);
 
@@ -152,7 +154,8 @@ class NodeAgent {
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
 
     ZmqSocketPtr client_socket_;
-    ZmqSocketPtr coordinator_socket_;
+    ZmqSocketPtr sync_socket_;   // REQ socket for sync request-response
+    ZmqSocketPtr async_socket_;  // DEALER socket for async send/receive
 
     std::thread thread_;
     std::atomic<bool> running_{false};
@@ -198,7 +201,7 @@ class NodeAgent {
     std::vector<Device> devices_;
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
 
-    ZmqSocketPtr coordinator_socket_;
+    ZmqSocketPtr async_socket_;  // DEALER socket for async send to coordinator
     std::unordered_map<DeviceRank, ZmqSocketPtr> worker_sockets_;
 
     std::thread thread_;

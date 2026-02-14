@@ -54,9 +54,7 @@ using NodeAgentRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                  SubmitPullRequest, ExecuteResponse>;
 
-/// @brief All messages from Coordinator to NodeAgent (flattened).
-/// This unified type enables a single, flat dispatch loop instead of
-/// nested request/response handling.
+/// @brief All messages from Coordinator to NodeAgent
 using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
                  ExecuteRequest, RegisterTensorShardCoordinatorResponse,

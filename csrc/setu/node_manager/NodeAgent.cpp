@@ -151,17 +151,28 @@ void NodeAgent::Handler::InitSockets() {
   client_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
 
-  Identity identity = to_string(node_id_);
-  coordinator_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
+  // REQ socket for sync request-response with coordinator
+  Identity sync_identity = to_string(node_id_) + "_req";
+  sync_socket_ =
+      ZmqHelper::CreateAndConnectSocket(zmq_context_, zmq::socket_type::req,
+                                        coordinator_endpoint_, sync_identity);
+
+  // DEALER socket for async send/receive with coordinator
+  Identity async_identity = to_string(node_id_) + "_dealer";
+  async_socket_ =
+      ZmqHelper::CreateAndConnectSocket(zmq_context_, zmq::socket_type::dealer,
+                                        coordinator_endpoint_, async_identity);
 }
 
 void NodeAgent::Handler::CloseSockets() {
   if (client_socket_) {
     client_socket_->close();
   }
-  if (coordinator_socket_) {
-    coordinator_socket_->close();
+  if (sync_socket_) {
+    sync_socket_->close();
+  }
+  if (async_socket_) {
+    async_socket_->close();
   }
 }
 
@@ -184,17 +195,17 @@ void NodeAgent::Handler::Stop() {
 void NodeAgent::Handler::Loop() {
   running_ = true;
   while (running_) {
-    auto ready = Comm::PollForRead({client_socket_, coordinator_socket_},
-                                   kPollTimeoutMs);
+    auto ready =
+        Comm::PollForRead({client_socket_, async_socket_}, kPollTimeoutMs);
 
     for (const auto& socket : ready) {
       if (socket == client_socket_) {
         auto [identity, request] =
             Comm::RecvWithIdentity<ClientRequest>(socket);
         HandleClientMessage(identity, request);
-      } else if (socket == coordinator_socket_) {
-        auto message = Comm::Recv<CoordinatorMessage>(socket);
-        HandleCoordinatorMessage(message);
+      } else if (socket == async_socket_) {
+        auto message = Comm::Recv<CoordinatorMessage>(async_socket_);
+        HandleAsyncCoordinatorMessage(message);
       }
     }
   }
@@ -222,7 +233,7 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
       request);
 }
 
-void NodeAgent::Handler::HandleCoordinatorMessage(
+void NodeAgent::Handler::HandleAsyncCoordinatorMessage(
     const CoordinatorMessage& message) {
   std::visit(
       [&](const auto& msg) {
@@ -233,9 +244,6 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
           HandleCopyOperationFinishedRequest(msg);
         } else if constexpr (std::is_same_v<T, ExecuteRequest>) {
           HandleExecuteRequest(msg);
-        } else if constexpr (std::is_same_v<
-                                 T, RegisterTensorShardCoordinatorResponse>) {
-          HandleRegisterTensorShardCoordinatorResponse(msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
           HandleSubmitCopyResponse(msg);
         }
@@ -246,23 +254,56 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
 void NodeAgent::Handler::HandleRegisterTensorShardRequest(
     const Identity& client_identity,
     const RegisterTensorShardRequest& request) {
-  request_router_.TrackRequest(request.request_id, client_identity);
+  // Sync: send via REQ socket, block until coordinator responds
+  Comm::Send<NodeAgentRequest>(sync_socket_, request);
+  auto coordinator_response = Comm::Recv<CoordinatorMessage>(sync_socket_);
 
-  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
+  const auto& resp =
+      std::get<RegisterTensorShardCoordinatorResponse>(coordinator_response);
+
+  // Reconstruct TensorShardRef from TensorShardMetadata
+  std::optional<TensorShardRef> shard_ref;
+  if (resp.shard_metadata.has_value()) {
+    const auto& metadata = resp.shard_metadata.value();
+
+    // Store the metadata for later allocation
+    auto metadata_ptr = std::make_shared<TensorShardMetadata>(metadata);
+    tensor_shard_metadata_map_.emplace(metadata.id, metadata_ptr);
+
+    // Register the shard so clients can wait for its allocation
+    pending_shard_allocs_.RegisterOperation(metadata.id);
+    LOG_DEBUG("Registered pending shard allocation for shard: {}", metadata.id);
+
+    // Build TensorDimMap from the spec's dims
+    TensorDimMap dims;
+    for (const auto& dim_spec : metadata.spec.dims) {
+      dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
+    }
+
+    shard_ref.emplace(metadata.spec.name, metadata.id, std::move(dims));
+  }
+
+  // Send RegisterTensorShardNodeAgentResponse to client
+  RegisterTensorShardNodeAgentResponse client_response(
+      resp.request_id, resp.error_code, std::move(shard_ref));
+  Comm::Send<RegisterTensorShardNodeAgentResponse>(
+      client_socket_, client_identity, client_response);
 }
 
 void NodeAgent::Handler::HandleSubmitCopyRequest(
     const Identity& client_identity, const SubmitCopyRequest& request) {
   request_router_.TrackRequest(request.request_id, client_identity);
 
-  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
+  // Async: send via DEALER with delimiter, response comes later
+  Comm::Send<NodeAgentRequest>(async_socket_, request);
 }
 
 void NodeAgent::Handler::HandleSubmitPullRequest(
     const Identity& client_identity, const SubmitPullRequest& request) {
   request_router_.TrackRequest(request.request_id, client_identity);
 
-  Comm::Send<NodeAgentRequest>(coordinator_socket_, request);
+  // Async: send via DEALER with delimiter, response comes later
+  Comm::Send<NodeAgentRequest>(async_socket_, request);
 }
 
 void NodeAgent::Handler::HandleWaitForCopyRequest(
@@ -273,16 +314,16 @@ void NodeAgent::Handler::HandleWaitForCopyRequest(
   switch (result) {
     case AddWaiterResult::kAlreadyComplete: {
       WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
-      Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_,
-                                                  client_identity, response);
+      Comm::Send<WaitForCopyResponse>(client_socket_, client_identity,
+                                      response);
       return;
     }
     case AddWaiterResult::kNotRegistered: {
       LOG_ERROR("WaitForCopy for unknown copy_operation_id: {}",
                 request.copy_operation_id);
       WaitForCopyResponse response(RequestId{}, ErrorCode::kInvalidArguments);
-      Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_,
-                                                  client_identity, response);
+      Comm::Send<WaitForCopyResponse>(client_socket_, client_identity,
+                                      response);
       return;
     }
     case AddWaiterResult::kWaiterAdded:
@@ -303,8 +344,8 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotFound, std::nullopt,
                                      std::nullopt, lock_base_dir_);
-    Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
-                                                    client_identity, response);
+    Comm::Send<GetTensorHandleResponse>(client_socket_, client_identity,
+                                        response);
     return;
   }
 
@@ -317,8 +358,8 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
     LOG_ERROR("Shard registered but not yet allocated: {}", request.shard_id);
     GetTensorHandleResponse response(request.request_id,
                                      ErrorCode::kTensorNotAllocated);
-    Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
-                                                    client_identity, response);
+    Comm::Send<GetTensorHandleResponse>(client_socket_, client_identity,
+                                        response);
     return;
   }
 
@@ -332,8 +373,8 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
   GetTensorHandleResponse response(request.request_id, ErrorCode::kSuccess,
                                    std::move(*tensor_ipc_spec),
                                    std::move(metadata), lock_base_dir_);
-  Comm::SendWithIdentity<GetTensorHandleResponse>(client_socket_,
-                                                  client_identity, response);
+  Comm::Send<GetTensorHandleResponse>(client_socket_, client_identity,
+                                      response);
 }
 
 void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
@@ -352,8 +393,8 @@ void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
           "immediately to client {}",
           request.shard_id, client_identity);
       WaitForShardAllocationResponse response(RequestId{}, ErrorCode::kSuccess);
-      Comm::SendWithIdentity<WaitForShardAllocationResponse>(
-          client_socket_, client_identity, response);
+      Comm::Send<WaitForShardAllocationResponse>(client_socket_,
+                                                 client_identity, response);
       return;
     }
     case AddWaiterResult::kNotRegistered: {
@@ -361,8 +402,8 @@ void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
                 request.shard_id, client_identity);
       WaitForShardAllocationResponse response(RequestId{},
                                               ErrorCode::kInvalidArguments);
-      Comm::SendWithIdentity<WaitForShardAllocationResponse>(
-          client_socket_, client_identity, response);
+      Comm::Send<WaitForShardAllocationResponse>(client_socket_,
+                                                 client_identity, response);
       return;
     }
     case AddWaiterResult::kWaiterAdded:
@@ -390,8 +431,8 @@ void NodeAgent::Handler::HandleAllocateTensorRequest(
     for (const auto& client_id : waiters) {
       LOG_DEBUG("Responding to waiter {} for shard {}", client_id, shard_id);
       WaitForShardAllocationResponse response(RequestId{}, ErrorCode::kSuccess);
-      Comm::SendWithIdentity<WaitForShardAllocationResponse>(
-          client_socket_, client_id, response);
+      Comm::Send<WaitForShardAllocationResponse>(client_socket_, client_id,
+                                                 response);
     }
   }
 }
@@ -403,53 +444,12 @@ void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
   auto waiters = pending_copies_.DrainWaiters(request.copy_operation_id);
   for (const auto& client_id : waiters) {
     WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
-    Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, client_id,
-                                                response);
+    Comm::Send<WaitForCopyResponse>(client_socket_, client_id, response);
   }
 }
 
 void NodeAgent::Handler::HandleExecuteRequest(const ExecuteRequest& request) {
   executor_queue_.push(std::make_pair(request.copy_op_id, request.node_plan));
-}
-
-void NodeAgent::Handler::HandleRegisterTensorShardCoordinatorResponse(
-    const RegisterTensorShardCoordinatorResponse& response) {
-  auto client_identity = request_router_.ClaimIdentity(response.request_id);
-  if (!client_identity.has_value()) {
-    LOG_WARNING(
-        "Received RegisterTensorShardCoordinatorResponse for unknown "
-        "request_id: {}, ignoring",
-        response.request_id);
-    return;
-  }
-
-  // Reconstruct TensorShardRef from TensorShardMetadata
-  std::optional<TensorShardRef> shard_ref;
-  if (response.shard_metadata.has_value()) {
-    const auto& metadata = response.shard_metadata.value();
-
-    // Store the metadata for later allocation
-    auto metadata_ptr = std::make_shared<TensorShardMetadata>(metadata);
-    tensor_shard_metadata_map_.emplace(metadata.id, metadata_ptr);
-
-    // Register the shard so clients can wait for its allocation
-    pending_shard_allocs_.RegisterOperation(metadata.id);
-    LOG_DEBUG("Registered pending shard allocation for shard: {}", metadata.id);
-
-    // Build TensorDimMap from the spec's dims
-    TensorDimMap dims;
-    for (const auto& dim_spec : metadata.spec.dims) {
-      dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
-    }
-
-    shard_ref.emplace(metadata.spec.name, metadata.id, std::move(dims));
-  }
-
-  // Send RegisterTensorShardNodeAgentResponse to client
-  RegisterTensorShardNodeAgentResponse client_response(
-      response.request_id, response.error_code, std::move(shard_ref));
-  Comm::SendWithIdentity<RegisterTensorShardNodeAgentResponse>(
-      client_socket_, *client_identity, client_response);
 }
 
 void NodeAgent::Handler::HandleSubmitCopyResponse(
@@ -464,22 +464,7 @@ void NodeAgent::Handler::HandleSubmitCopyResponse(
 
   pending_copies_.RegisterOperation(response.copy_operation_id);
 
-  Comm::SendWithIdentity<SubmitCopyResponse>(client_socket_, *client_identity,
-                                             response);
-}
-
-void NodeAgent::Handler::HandleWaitForCopyResponse(
-    const WaitForCopyResponse& response) {
-  auto client_identity = request_router_.ClaimIdentity(response.request_id);
-  if (!client_identity.has_value()) {
-    LOG_WARNING(
-        "Received WaitForCopyResponse for unknown request_id: {}, ignoring",
-        response.request_id);
-    return;
-  }
-
-  Comm::SendWithIdentity<WaitForCopyResponse>(client_socket_, *client_identity,
-                                              response);
+  Comm::Send<SubmitCopyResponse>(client_socket_, *client_identity, response);
 }
 
 void NodeAgent::Handler::AllocateTensor(
@@ -527,10 +512,9 @@ NodeAgent::Executor::~Executor() {
 }
 
 void NodeAgent::Executor::InitSockets() {
-  Identity identity = to_string(node_id_);
-  coordinator_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_,
-      identity + "_executor");
+  Identity identity = to_string(node_id_) + "_executor";
+  async_socket_ = ZmqHelper::CreateAndConnectSocket(
+      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
 
   // Connect REQ sockets to each worker's inproc endpoint
   for (const auto& device : devices_) {
@@ -556,8 +540,8 @@ void NodeAgent::Executor::CloseSockets() {
   }
   worker_sockets_.clear();
 
-  if (coordinator_socket_) {
-    coordinator_socket_->close();
+  if (async_socket_) {
+    async_socket_->close();
   }
 }
 
@@ -616,13 +600,13 @@ void NodeAgent::Executor::Loop() {
       LOG_DEBUG("All workers completed execution for copy_op_id: {}",
                 copy_op_id);
 
-      // Notify coordinator that execution is complete
+      // Notify coordinator that execution is complete (async, fire-and-forget)
       ExecuteResponse response(RequestId{}, copy_op_id, ErrorCode::kSuccess);
       LOG_INFO(
           "NodeAgent Executor: Sending ExecuteResponse to Coordinator for "
           "copy_op_id={}",
           copy_op_id);
-      Comm::Send<NodeAgentRequest>(coordinator_socket_, response);
+      Comm::Send<NodeAgentRequest>(async_socket_, response);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;
     }
