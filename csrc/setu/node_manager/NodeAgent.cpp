@@ -16,6 +16,8 @@
 //==============================================================================
 #include "node_manager/NodeAgent.h"
 //==============================================================================
+#include <nccl.h>
+//==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
@@ -44,6 +46,8 @@ using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
+using setu::commons::messages::GenerateNcclIdRequest;
+using setu::commons::messages::GenerateNcclIdResponse;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::NodeAgentRequest;
@@ -233,6 +237,8 @@ void NodeAgent::Handler::HandleCoordinatorMessage(
           HandleCopyOperationFinishedRequest(msg);
         } else if constexpr (std::is_same_v<T, ExecuteRequest>) {
           HandleExecuteRequest(msg);
+        } else if constexpr (std::is_same_v<T, GenerateNcclIdRequest>) {
+          HandleGenerateNcclIdRequest(msg);
         } else if constexpr (std::is_same_v<
                                  T, RegisterTensorShardCoordinatorResponse>) {
           HandleRegisterTensorShardCoordinatorResponse(msg);
@@ -410,6 +416,14 @@ void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
 
 void NodeAgent::Handler::HandleExecuteRequest(const ExecuteRequest& request) {
   executor_queue_.push(std::make_pair(request.copy_op_id, request.node_plan));
+}
+
+void NodeAgent::Handler::HandleGenerateNcclIdRequest(
+    const GenerateNcclIdRequest& request) {
+  ncclUniqueId nccl_id;
+  ncclGetUniqueId(&nccl_id);
+  GenerateNcclIdResponse response(request.request_id, nccl_id);
+  Comm::Send<NodeAgentRequest>(coordinator_socket_, response);
 }
 
 void NodeAgent::Handler::HandleRegisterTensorShardCoordinatorResponse(

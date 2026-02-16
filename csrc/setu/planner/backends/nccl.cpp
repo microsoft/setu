@@ -27,6 +27,14 @@ using setu::ir::ShardRef;
 using setu::planner::TensorShardRangeView;
 //==============================================================================
 
+NCCLPlanner::NCCLPlanner(NcclIdGenerator id_generator)
+    : id_generator_(std::move(id_generator)) {
+  ASSERT_VALID_ARGUMENTS(id_generator_ != nullptr,
+                         "NcclIdGenerator callback must not be null");
+}
+
+//==============================================================================
+
 // Helper struct to keep track of buffer consumption
 struct ShardBufferState {
   explicit ShardBufferState(ShardBufferRange range_param)
@@ -148,8 +156,8 @@ Plan NCCLPlanner::Compile(CopySpec& copy_spec, MetaStore& metastore) {
 
   bool new_comm = false;
   if (!comm_cache_.contains(parts)) {
-    ncclUniqueId comm_id;
-    ncclGetUniqueId(&comm_id);
+    auto rank0 = *parts.begin();
+    ncclUniqueId comm_id = id_generator_(rank0);
     DeviceRank rank = 0;
     std::unordered_map<Participant, DeviceRank> ranks;
     for (auto part : parts) {

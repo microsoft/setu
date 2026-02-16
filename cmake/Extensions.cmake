@@ -69,6 +69,10 @@ endfunction()
 
 # OPTIMIZATION: Create OBJECT libraries to compile common sources only once
 file(GLOB_RECURSE COMMON_SRC "csrc/setu/commons/*.cpp")
+# Exclude Pybind.cpp — it is the PYBIND11_MODULE entry point for _commons only,
+# not a shared utility. Including it in setu_common_objects would drag an
+# unresolved reference to InitMessagesPybindSubmodule into every extension.
+list(FILTER COMMON_SRC EXCLUDE REGEX "csrc/setu/commons/Pybind\\.cpp$")
 
 # Create object library for common sources (compiled only once!)
 add_library(setu_common_objects OBJECT ${COMMON_SRC})

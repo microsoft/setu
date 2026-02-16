@@ -37,9 +37,12 @@ using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
+using setu::commons::messages::GenerateNcclIdRequest;
+using setu::commons::messages::GenerateNcclIdResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::SubmitPullRequest;
 using setu::commons::utils::Comm;
+using setu::planner::Participant;
 using setu::commons::utils::ZmqHelper;
 using setu::planner::Plan;
 //==============================================================================
@@ -52,9 +55,9 @@ Coordinator::Coordinator(std::size_t port)
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_);
-  executor_ =
-      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_);
+                                       planner_queue_, nccl_id_promises_);
+  executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
+                                         metastore_, nccl_id_promises_);
 }
 
 Coordinator::~Coordinator() {
@@ -190,11 +193,13 @@ void Coordinator::Gateway::Loop() {
 Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
                               Queue<OutboxMessage>& outbox_queue,
                               MetaStore& metastore,
-                              Queue<PlannerTask>& planner_queue)
+                              Queue<PlannerTask>& planner_queue,
+                              NcclIdPromiseMap& nccl_id_promises)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
-      planner_queue_(planner_queue) {}
+      planner_queue_(planner_queue),
+      nccl_id_promises_(nccl_id_promises) {}
 
 void Coordinator::Handler::Start() {
   if (running_.load()) {
@@ -229,6 +234,9 @@ void Coordinator::Handler::Loop() {
               HandleSubmitPullRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, ExecuteResponse>) {
               HandleExecuteResponse(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T,
+                                                 GenerateNcclIdResponse>) {
+              HandleGenerateNcclIdResponse(msg);
             } else {
               LOG_WARNING("Handler: Unknown message type (index={})",
                           inbox_msg.request.index());
@@ -420,15 +428,47 @@ void Coordinator::Handler::HandleExecuteResponse(
   }
 }
 
+void Coordinator::Handler::HandleGenerateNcclIdResponse(
+    const GenerateNcclIdResponse& response) {
+  bool found = nccl_id_promises_.visit(
+      response.request_id, [&](const auto& entry) {
+        entry.second->set_value(response.nccl_id);
+      });
+
+  if (!found) {
+    LOG_WARNING(
+        "GenerateNcclIdResponse for unknown request_id: {}, ignoring",
+        response.request_id);
+    return;
+  }
+
+  nccl_id_promises_.erase(response.request_id);
+}
+
 //==============================================================================
 // Executor Implementation
 //==============================================================================
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
-                                MetaStore& metastore)
+                                MetaStore& metastore,
+                                NcclIdPromiseMap& nccl_id_promises)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
-      metastore_(metastore) {}
+      metastore_(metastore),
+      nccl_id_promises_(nccl_id_promises),
+      planner_([this](const Participant& rank0) -> ncclUniqueId {
+        GenerateNcclIdRequest request;
+        auto promise_ptr = std::make_shared<std::promise<ncclUniqueId>>();
+        auto future = promise_ptr->get_future();
+
+        nccl_id_promises_.insert_or_assign(request.request_id, promise_ptr);
+
+        Identity node_identity = boost::uuids::to_string(rank0.node_id);
+        outbox_queue_.push(
+            OutboxMessage{node_identity, CoordinatorMessage{request}});
+
+        return future.get();
+      }) {}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {

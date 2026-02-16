@@ -16,6 +16,8 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include <nccl.h>
+//==============================================================================
 #include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
@@ -53,8 +55,15 @@ using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::coordinator::datatypes::CopyOperationPtr;
 using setu::metastore::MetaStore;
+using setu::commons::ConcurrentMap;
+using setu::commons::messages::GenerateNcclIdResponse;
 using setu::planner::Plan;
 using setu::planner::backends::nccl::NCCLPlanner;
+
+/// @brief Thread-safe map from RequestId to a shared promise for ncclUniqueId.
+/// Executor thread inserts (emplace), Handler thread fulfills (visit + erase).
+using NcclIdPromiseMap =
+    ConcurrentMap<RequestId, std::shared_ptr<std::promise<ncclUniqueId>>>;
 
 /// @brief Shared state for tracking a copy operation across Handler and
 /// Executor threads.
@@ -179,7 +188,8 @@ class Coordinator {
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<PlannerTask>& planner_queue);
+            Queue<PlannerTask>& planner_queue,
+            NcclIdPromiseMap& nccl_id_promises);
 
     void Start();
     void Stop();
@@ -197,6 +207,8 @@ class Coordinator {
     void HandleExecuteResponse(
         const Identity& node_identity,
         const setu::commons::messages::ExecuteResponse& response);
+    void HandleGenerateNcclIdResponse(
+        const GenerateNcclIdResponse& response);
 
     /// @brief Unified shard submission logic for both Copy and Pull.
     void HandleShardSubmission(const Identity& node_agent_identity,
@@ -220,6 +232,7 @@ class Coordinator {
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Queue<PlannerTask>& planner_queue_;
+    NcclIdPromiseMap& nccl_id_promises_;
 
     /// Aggregates shard submissions per (src, dst) pair until all expected
     /// shards arrive
@@ -240,7 +253,8 @@ class Coordinator {
   //============================================================================
   struct Executor {
     Executor(Queue<PlannerTask>& planner_queue,
-             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore);
+             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
+             NcclIdPromiseMap& nccl_id_promises);
 
     void Start();
     void Stop();
@@ -251,6 +265,7 @@ class Coordinator {
     Queue<PlannerTask>& planner_queue_;
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
+    NcclIdPromiseMap& nccl_id_promises_;
     NCCLPlanner planner_;
 
     std::thread thread_;
@@ -264,6 +279,11 @@ class Coordinator {
   // Internal message queues
   Queue<InboxMessage> inbox_queue_;
   Queue<OutboxMessage> outbox_queue_;
+
+  /// @brief Shared map for cross-thread ncclUniqueId generation.
+  /// Executor inserts a promise (keyed by RequestId), Handler fulfills it
+  /// when the GenerateNcclIdResponse arrives from the NodeAgent.
+  NcclIdPromiseMap nccl_id_promises_;
 
   /// Queue of PlannerTasks (CopyOperationId + CopySpec) for the Executor to
   /// compile and dispatch

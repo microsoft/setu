@@ -28,6 +28,8 @@
 #include "messaging/ExecuteProgramResponse.h"
 #include "messaging/ExecuteRequest.h"
 #include "messaging/ExecuteResponse.h"
+#include "messaging/GenerateNcclIdRequest.h"
+#include "messaging/GenerateNcclIdResponse.h"
 #include "messaging/GetTensorHandleRequest.h"
 #include "messaging/GetTensorHandleResponse.h"
 #include "messaging/RegisterTensorShardCoordinatorResponse.h"
@@ -52,15 +54,17 @@ using ClientRequest =
 /// @brief Requests from NodeAgent to Coordinator.
 using NodeAgentRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
-                 SubmitPullRequest, ExecuteResponse>;
+                 SubmitPullRequest, ExecuteResponse,
+                 GenerateNcclIdResponse>;
 
 /// @brief All messages from Coordinator to NodeAgent (flattened).
 /// This unified type enables a single, flat dispatch loop instead of
 /// nested request/response handling.
 using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
-                 ExecuteRequest, RegisterTensorShardCoordinatorResponse,
-                 SubmitCopyResponse, WaitForCopyResponse>;
+                 ExecuteRequest, GenerateNcclIdRequest,
+                 RegisterTensorShardCoordinatorResponse, SubmitCopyResponse,
+                 WaitForCopyResponse>;
 
 using Request =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,

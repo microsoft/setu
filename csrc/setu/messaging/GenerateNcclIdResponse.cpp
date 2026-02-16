@@ -14,37 +14,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "messaging/GenerateNcclIdResponse.h"
 //==============================================================================
-#include <nccl.h>
+namespace setu::commons::messages {
 //==============================================================================
-#include "planner/Planner.h"
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
-namespace setu::planner::backends::nccl {
-//==============================================================================
-using setu::commons::DeviceRank;
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
 
-/// @brief Callback type for generating an ncclUniqueId.
-/// The callback receives the rank-0 Participant and must return the generated
-/// ncclUniqueId. The implementation typically sends a request to the rank-0
-/// NodeAgent which calls ncclGetUniqueId() locally.
-using NcclIdGenerator = std::function<ncclUniqueId(const Participant& rank0)>;
+void GenerateNcclIdResponse::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(request_id, error_code, nccl_id);
+}
 
-class NCCLPlanner : public Planner {
- public:
-  explicit NCCLPlanner(NcclIdGenerator id_generator);
-  Plan Compile(CopySpec& copy_spec, MetaStore& metastore) override;
+GenerateNcclIdResponse GenerateNcclIdResponse::Deserialize(
+    const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [request_id_val, error_code_val, nccl_id_val] =
+      reader.ReadFields<RequestId, ErrorCode, ncclUniqueId>();
+  return GenerateNcclIdResponse(request_id_val, nccl_id_val, error_code_val);
+}
 
- private:
-  struct CommCacheEntry {
-    ncclUniqueId id;
-    std::unordered_map<Participant, DeviceRank> ranks;
-  };
-  std::map<Participants, CommCacheEntry> comm_cache_;
-  NcclIdGenerator id_generator_;
-};
 //==============================================================================
-}  // namespace setu::planner::backends::nccl
+}  // namespace setu::commons::messages
 //==============================================================================
