@@ -16,52 +16,52 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include <nccl.h>
 //==============================================================================
-#include "commons/utils/Serialization.h"
-#include "messaging/BaseRequest.h"
-#include "planner/ir/llc/Instruction.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/datatypes/Device.h"
+#include "setu/commons/utils/Serialization.h"
+#include "setu/planner/Participant.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::planner::ir::llc {
 //==============================================================================
+using setu::commons::DeviceRank;
+using setu::commons::NodeId;
+using setu::commons::datatypes::Device;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
-using setu::planner::ir::llc::Program;
+using setu::planner::Participant;
 //==============================================================================
 
-struct ExecuteProgramRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit ExecuteProgramRequest(Program program_param)
-      : BaseRequest(), program(std::move(program_param)) {}
+/// Initialize a new NCCL communicator for a group of participant devices.
+///
+/// Maps each Participant to a DeviceRank within the communicator.  The
+/// `comm_id` is a globally unique NCCL identifier shared by all participants
+/// so they can collectively call ncclCommInitRank.
+struct InitComm {
+  InitComm(ncclUniqueId comm_id,
+           std::unordered_map<Participant, DeviceRank> participant_to_rank)
+      : comm_id(comm_id), participant_to_rank(std::move(participant_to_rank)) {}
 
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  ExecuteProgramRequest(RequestId request_id_param, Program program_param)
-      : BaseRequest(request_id_param), program(std::move(program_param)) {}
+  ~InitComm() = default;
+  InitComm(const InitComm&) = default;
+  InitComm& operator=(const InitComm&) = default;
+  InitComm(InitComm&&) = default;
+  InitComm& operator=(InitComm&&) = default;
 
-  [[nodiscard]] std::string ToString() const {
-    return std::format("ExecuteProgramRequest(request_id={}, program_size={})",
-                       request_id, program.size());
-  }
+  [[nodiscard]] std::string ToString() const;
 
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.WriteFields(request_id, program);
-  }
+  void Serialize(BinaryBuffer& buffer) const;
 
-  static ExecuteProgramRequest Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [request_id_val, program_val] =
-        reader.ReadFields<RequestId, Program>();
-    return ExecuteProgramRequest(request_id_val, std::move(program_val));
-  }
+  static InitComm Deserialize(const BinaryRange& range);
 
-  const Program program;
+  ncclUniqueId comm_id;
+  std::unordered_map<Participant, DeviceRank> participant_to_rank;
 };
-using ExecuteProgramRequestPtr = std::shared_ptr<ExecuteProgramRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::planner::ir::llc
 //==============================================================================

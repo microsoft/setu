@@ -18,27 +18,32 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Value.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::cir {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+/// %dst_out = pack((%src0, ..., %srcN), %dst_in)
+///
+/// Concatenates multiple source buffers into a contiguous destination.
+/// The total size of all sources must equal the destination size. Sources are
+/// packed in order.
+struct PackOp {
+  Value dst_out;            ///< New version of destination after the pack
+  std::vector<Value> srcs;  ///< Source values (read, concatenated in order)
+  Value dst_in;             ///< Destination value before pack (consumed)
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] std::string ToString() const {
+    std::string srcs_str;
+    for (std::size_t i = 0; i < srcs.size(); ++i) {
+      if (i > 0) srcs_str += ", ";
+      srcs_str += srcs[i].ToString();
+    }
+    return std::format("{} = pack(({}), {})", dst_out.ToString(), srcs_str,
+                       dst_in.ToString());
+  }
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

@@ -61,9 +61,9 @@ using setu::commons::utils::AddWaiterResult;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
-using setu::ir::Instruction;
-using setu::ir::Program;
 using setu::planner::Plan;
+using setu::planner::ir::llc::Instruction;
+using setu::planner::ir::llc::Program;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================

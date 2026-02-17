@@ -14,30 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
-//==============================================================================
-#include "commons/StdCommon.h"
-//==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
 #include "planner/Plan.h"
-#include "planner/targets/backend.h"
+//==============================================================================
+#include "commons/Logging.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+std::unordered_map<NodeId, Plan> Plan::Fragments() {
+  std::unordered_map<NodeId, Plan> fragments;
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+  // Group programs by NodeId, keeping participants the same across all
+  // fragments
+  for (const auto& [participant, prog] : program) {
+    auto& fragment = fragments[participant.node_id];
+    fragment.participants = participants;
+    fragment.program[participant] = prog;
+  }
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
-};
+  return fragments;
+}
 
 //==============================================================================
 }  // namespace setu::planner

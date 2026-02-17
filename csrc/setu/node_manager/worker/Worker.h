@@ -21,7 +21,7 @@
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
-#include "ir/Instruction.h"
+#include "planner/ir/llc/Instruction.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -30,7 +30,7 @@ using setu::commons::datatypes::Device;
 using setu::commons::enums::ErrorCode;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
+using setu::planner::ir::llc::Program;
 //==============================================================================
 class Worker {
  public:

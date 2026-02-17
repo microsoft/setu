@@ -18,27 +18,31 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
-//==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::cir {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+/// Contiguous region within a buffer, specified in element counts (not bytes).
+/// Byte conversion happens only during backend lowering, where we use dtype to
+/// do the conversion.
+struct Slice {
+  std::size_t offset;  ///< Start offset in elements
+  std::size_t size;    ///< Number of elements
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+  [[nodiscard]] std::size_t End() const { return offset + size; }
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] bool operator==(const Slice& other) const {
+    return offset == other.offset && size == other.size;
+  }
+
+  [[nodiscard]] bool operator!=(const Slice& other) const {
+    return !(*this == other);
+  }
+
+  [[nodiscard]] std::string ToString() const {
+    return std::format("[{}, {}]", offset, size);
+  }
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

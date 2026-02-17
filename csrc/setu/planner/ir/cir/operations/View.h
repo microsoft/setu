@@ -14,23 +14,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/Planner.h"
+#pragma once
 //==============================================================================
-#include "commons/Logging.h"
-#include "planner/passes/CopySpecToCIR.h"
+#include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 //==============================================================================
-namespace setu::planner {
+#include "planner/ir/cir/Slice.h"
+#include "planner/ir/cir/Value.h"
+#include "planner/ir/llc/ShardRef.h"
 //==============================================================================
-Planner::Planner(std::unique_ptr<targets::Backend> backend)
-    : backend_(std::move(backend)) {
-  ASSERT_VALID_POINTER_ARGUMENT(backend_);
-}
+namespace setu::planner::ir::cir {
 //==============================================================================
-Plan Planner::Compile(CopySpec& spec, MetaStore& metastore) {
-  auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
-  auto plan = backend_->Run(cir);
-  return plan;
-}
+
+/// %out = view(@node:device, &shard_ref, [offset, size])
+///
+/// Constructs a CIR Value representing a contiguous region of a physical
+/// shard buffer. The slice is in element counts; byte conversion happens
+/// during backend lowering.
+struct ViewOp {
+  Value out;      ///< Result value
+  Device device;  ///< Physical device where the shard resides
+  setu::planner::ir::llc::ShardRef handle;  ///< Reference to the physical shard
+  Slice slice;         ///< Region within the shard (elements)
+  torch::Dtype dtype;  ///< Element data type
+
+  [[nodiscard]] std::string ToString() const {
+    return std::format("{} = view({}, &{}, {}, {})", out.ToString(),
+                       device.ToString(), handle.ToString(), slice.ToString(),
+                       torch::toString(dtype));
+  }
+};
+
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

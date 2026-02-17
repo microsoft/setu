@@ -16,29 +16,42 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include <nccl.h>
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
 #include "planner/targets/backend.h"
+#include "planner/Planner.h"
+#include "planner/ir/cir/Program.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::targets {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+using setu::planner::targets::Backend;
+using setu::commons::DeviceRank;
+namespace cir = setu::planner::ir::cir;
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+/// CIR → LLC lowering pass (NCCL flavor).
+///
+/// Walks a CIR Program and produces a Plan containing per-device LLC programs.
+/// Maintains a communicator cache across invocations so that repeated calls
+/// with the same participant set reuse the existing communicator (UseComm)
+/// instead of creating a new one (InitComm).
+///
+/// Currently supported CIR operations:
+///   view  — records shard/offset metadata for later use by copy
+///   copy  — emits LLC Copy (same-device) or Send+Receive (cross-device)
+///
+/// Unsupported (will assert): alloc_tmp, pack, unpack
+struct NCCL : public Backend {
+  [[nodiscard]] Plan Run(const cir::Program& program /*[in]*/) override;
 
  private:
-  std::unique_ptr<targets::Backend> backend_;
+  struct CommCacheEntry {
+    ncclUniqueId id;
+    std::unordered_map<Participant, DeviceRank> ranks;
+  };
+  std::map<Participants, CommCacheEntry> comm_cache_;
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::targets
 //==============================================================================

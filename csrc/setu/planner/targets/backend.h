@@ -16,29 +16,21 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
-//==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
 #include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Program.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::targets {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+namespace cir = setu::planner::ir::cir;
 
-class Planner {
+/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
+class Backend {
  public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  virtual ~Backend() = default;
+  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::targets
 //==============================================================================

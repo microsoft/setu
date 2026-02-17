@@ -14,31 +14,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/ir/llc/instructions/InitComm.h"
 //==============================================================================
-#include "commons/StdCommon.h"
+#include "setu/planner/Planner.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
-//==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::llc {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+std::string InitComm::ToString() const {
+  std::string hex;
+  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
+    hex +=
+        std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
+  }
+  return std::format("InitComm(comm_id={}, participant_to_rank={})", hex,
+                     participant_to_rank);
+}
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+void InitComm::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(comm_id, participant_to_rank);
+}
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
-};
+InitComm InitComm::Deserialize(const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [comm_id, participant_to_rank] =
+      reader.ReadFields<ncclUniqueId,
+                        std::unordered_map<Participant, DeviceRank>>();
+  return InitComm(comm_id, participant_to_rank);
+}
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::llc
 //==============================================================================

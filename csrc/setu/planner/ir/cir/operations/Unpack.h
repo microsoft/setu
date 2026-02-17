@@ -18,27 +18,37 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Value.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::cir {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+/// (%dst0_out, ..., %dstN_out) = unpack(%src, (%dst0_in, ..., %dstN_in))
+///
+/// Splits a source buffer into multiple destination buffers.
+/// The source size must equal the total size of all destinations. Destinations
+/// are filled in order.
+struct UnpackOp {
+  std::vector<Value> dst_outs;  ///< New versions of destinations after unpack
+  Value src;                    ///< Source value (read)
+  std::vector<Value> dst_ins;   ///< Destination values before unpack (consumed)
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] std::string ToString() const {
+    std::string outs_str;
+    for (std::size_t i = 0; i < dst_outs.size(); ++i) {
+      if (i > 0) outs_str += ", ";
+      outs_str += dst_outs[i].ToString();
+    }
+    std::string ins_str;
+    for (std::size_t i = 0; i < dst_ins.size(); ++i) {
+      if (i > 0) ins_str += ", ";
+      ins_str += dst_ins[i].ToString();
+    }
+    return std::format("({}) = unpack({}, ({}))", outs_str, src.ToString(),
+                       ins_str);
+  }
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

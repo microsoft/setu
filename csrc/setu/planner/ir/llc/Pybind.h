@@ -16,29 +16,12 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/TorchCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+namespace setu::planner::ir::llc {
 //==============================================================================
-namespace setu::planner {
+void InitLLCPybind(py::module_& m);
 //==============================================================================
-
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
-
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
-};
-
-//==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::llc
 //==============================================================================

@@ -69,10 +69,10 @@ using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
-using setu::ir::ShardRef;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
+using setu::planner::ir::llc::Program;
+using setu::planner::ir::llc::ShardRef;
 //==============================================================================
 class NodeAgent {
  public:

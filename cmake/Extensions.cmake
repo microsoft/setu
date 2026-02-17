@@ -107,17 +107,8 @@ file(GLOB_RECURSE CLIENT_SRC "csrc/setu/client/*.cpp")
 define_setu_extension(_client "${CLIENT_SRC}" "setu_common_objects" "_messaging_static")
 define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "_messaging_static")
 
-file(GLOB_RECURSE CIR_SRC "csrc/setu/cir/*.cpp")
-define_setu_extension(_cir "${CIR_SRC}" "setu_common_objects" "")
-define_setu_static(_cir_static "${CIR_SRC}" "setu_common_objects" "")
-
-file(GLOB_RECURSE IR_SRC "csrc/setu/ir/*.cpp")
-define_setu_extension(_ir "${IR_SRC}" "setu_common_objects" "")
-define_setu_static(_ir_static "${IR_SRC}" "setu_common_objects" "")
-
 file(GLOB_RECURSE MESSAGES_SRC "csrc/setu/messaging/*.cpp")
-define_setu_static(_messaging_static "${MESSAGES_SRC}" "setu_common_objects"
-                   "_planner_static;_ir_static")
+define_setu_static(_messaging_static "${MESSAGES_SRC}" "setu_common_objects" "_planner_static")
 
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")
 define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects"
@@ -130,10 +121,8 @@ define_setu_extension(_metastore "${METASTORE_SRC}" "setu_common_objects" "")
 define_setu_static(_metastore_static "${METASTORE_SRC}" "setu_common_objects" "")
 
 file(GLOB_RECURSE PLANNER_SRC "csrc/setu/planner/*.cpp")
-define_setu_extension(_planner "${PLANNER_SRC}" "setu_common_objects"
-                      "_metastore_static;_ir_static")
-define_setu_static(_planner_static "${PLANNER_SRC}" "setu_common_objects"
-                   "_metastore_static;_ir_static")
+define_setu_extension(_planner "${PLANNER_SRC}" "setu_common_objects" "_metastore_static")
+define_setu_static(_planner_static "${PLANNER_SRC}" "setu_common_objects" "_metastore_static")
 
 file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
 define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects"

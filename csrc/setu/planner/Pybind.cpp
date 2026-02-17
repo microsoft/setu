@@ -21,6 +21,7 @@
 #include "commons/TorchCommon.h"
 #include "commons/utils/Pybind.h"
 //==============================================================================
+#include "planner/ir/llc/Pybind.h"
 #include "setu/planner/Participant.h"
 //==============================================================================
 namespace setu::planner {
@@ -53,5 +54,6 @@ void InitPlannerPybind(py::module_& m) { InitParticipantPybind(m); }
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   setu::commons::Logger::InitializeLogLevel();
   setu::planner::InitPlannerPybind(m);
+  setu::planner::ir::llc::InitLLCPybind(m);
 }
 //==============================================================================

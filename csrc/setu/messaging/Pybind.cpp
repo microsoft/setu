@@ -20,8 +20,8 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 #include "commons/Types.h"
-#include "ir/Instruction.h"
 #include "messaging/Messages.h"
+#include "planner/ir/llc/Instruction.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -30,7 +30,7 @@ using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
-using setu::ir::Program;
+using setu::planner::ir::llc::Program;
 //==============================================================================
 void InitRegisterTensorShardRequestPybind(py::module_& m) {
   py::class_<RegisterTensorShardRequest>(m, "RegisterTensorShardRequest",

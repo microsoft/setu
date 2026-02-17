@@ -16,29 +16,42 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/StdCommon.h"
+#include <nccl.h>
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/Types.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::llc {
+//==============================================================================
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+/// Switch to an already-initialized NCCL communicator.
+///
+/// Subsequent Send/Receive instructions use this communicator until the
+/// next UseComm or InitComm instruction.
+struct UseComm {
+  explicit UseComm(ncclUniqueId comm_id) : comm_id(std::move(comm_id)) {}
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+  ~UseComm() = default;
+  UseComm(const UseComm&) = default;
+  UseComm& operator=(const UseComm&) = default;
+  UseComm(UseComm&&) = default;
+  UseComm& operator=(UseComm&&) = default;
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] std::string ToString() const;
+
+  void Serialize(BinaryBuffer& buffer) const;
+
+  static UseComm Deserialize(const BinaryRange& range);
+
+  ncclUniqueId comm_id;
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::llc
 //==============================================================================

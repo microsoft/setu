@@ -19,6 +19,7 @@
 #include "commons/Logging.h"
 #include "commons/QueueUtils.h"
 #include "commons/utils/Comm.h"
+#include "planner/targets/nccl.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -433,7 +434,8 @@ Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 MetaStore& metastore)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
-      metastore_(metastore) {}
+      metastore_(metastore),
+      planner_(std::make_unique<setu::planner::targets::NCCL>()) {}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {

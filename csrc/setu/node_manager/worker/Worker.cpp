@@ -31,7 +31,7 @@ using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
-using setu::ir::Instruction;
+using setu::planner::ir::llc::Instruction;
 //==============================================================================
 Worker::Worker(NodeId node_id, Device device)
     : node_id_(node_id), device_(device), worker_running_{false} {}

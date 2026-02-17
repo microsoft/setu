@@ -14,31 +14,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/ir/llc/ShardRef.h"
 //==============================================================================
-#include "commons/StdCommon.h"
+namespace setu::planner::ir::llc {
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
-//==============================================================================
-namespace setu::planner {
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+std::string ShardRef::ToString() const {
+  std::string name_str =
+      tensor_name.has_value() ? tensor_name.value() : "<none>";
+  std::string node_str =
+      node_id.has_value() ? boost::uuids::to_string(node_id.value()) : "<none>";
+  return std::format("ShardRef(shard_id={}, tensor_name={}, node_id={})",
+                     boost::uuids::to_string(shard_id), name_str, node_str);
+}
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+void ShardRef::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(shard_id, node_id, tensor_name);
+}
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
-};
+ShardRef ShardRef::Deserialize(const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [shard_id, node_id, tensor_name] =
+      reader.ReadFields<ShardId, std::optional<NodeId>,
+                        std::optional<TensorName>>();
+
+  ShardRef ref(std::move(shard_id), std::move(tensor_name));
+  ref.node_id = std::move(node_id);
+  return ref;
+}
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::llc
 //==============================================================================

@@ -20,25 +20,27 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Program.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::cir {
 //==============================================================================
 
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
 
-class Planner {
+/// Lowers a CopySpec into a CIR Program.
+///
+/// Uses a two-pointer walk over source and destination selections to match
+/// buffer regions. For each matched region, emits:
+///   - view() for the src shard slice (element offsets)
+///   - view() for the dst shard slice (element offsets)
+///   - copy() from src view to dst view
+class CIRLowering {
  public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] static Program Lower(CopySpec& copy_spec /*[in]*/,
+                                     MetaStore& metastore /*[in]*/);
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

@@ -18,27 +18,28 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Value.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::cir {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+/// %dst_out = copy(%src, %dst_in)
+///
+/// Copies data from src to dst, producing a new SSA version of dst.
+/// The lifetime of dst_in terminates at this point; it must be referred
+/// to as dst_out henceforth. src and dst_in must have the same
+/// size_elements.
+struct CopyOp {
+  Value dst_out;  ///< New version of destination after the copy
+  Value src;      ///< Source value (read)
+  Value dst_in;   ///< Destination value before copy (consumed)
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+  [[nodiscard]] std::string ToString() const {
+    return std::format("{} = copy({}, {})", dst_out.ToString(), src.ToString(),
+                       dst_in.ToString());
+  }
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::cir
 //==============================================================================

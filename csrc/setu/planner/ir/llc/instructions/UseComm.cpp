@@ -14,31 +14,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/ir/llc/instructions/UseComm.h"
 //==============================================================================
-#include "commons/StdCommon.h"
-//==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
-//==============================================================================
-namespace setu::planner {
+namespace setu::planner::ir::llc {
 //==============================================================================
 
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+std::string UseComm::ToString() const {
+  std::string hex;
+  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
+    hex +=
+        std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
+  }
+  return std::format("UseComm(comm_id={})", hex);
+}
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
+void UseComm::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(comm_id);
+}
 
- private:
-  std::unique_ptr<targets::Backend> backend_;
-};
+UseComm UseComm::Deserialize(const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [comm_id] = reader.ReadFields<ncclUniqueId>();
+  return UseComm(comm_id);
+}
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::ir::llc
 //==============================================================================

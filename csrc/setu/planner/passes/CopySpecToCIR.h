@@ -20,25 +20,28 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/targets/backend.h"
+#include "planner/ir/cir/Program.h"
 //==============================================================================
-namespace setu::planner {
+namespace setu::planner::passes {
 //==============================================================================
 
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
-using setu::planner::ir::llc::Program;
+namespace cir = setu::planner::ir::cir;
 
-class Planner {
- public:
-  explicit Planner(std::unique_ptr<targets::Backend> backend);
-  [[nodiscard]] Plan Compile(CopySpec& spec, MetaStore& metastore);
-
- private:
-  std::unique_ptr<targets::Backend> backend_;
+/// CopySpec → CIR lowering pass.
+///
+/// Walks the source and destination TensorOwnershipMaps with a two-pointer
+/// algorithm, matching buffer regions in row-major order.  For each matched
+/// chunk it emits:
+///   %src = view(src_device, &src_shard, [offset, size], dtype)
+///   %dst = view(dst_device, &dst_shard, [offset, size], dtype)
+///   %dst' = copy(%src, %dst)
+struct CopySpecToCIR {
+  [[nodiscard]] static cir::Program Run(const CopySpec& copy_spec /*[in]*/,
+                                        MetaStore& metastore /*[in]*/);
 };
 
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::planner::passes
 //==============================================================================

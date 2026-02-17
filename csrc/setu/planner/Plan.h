@@ -16,52 +16,53 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
 #include "commons/utils/Serialization.h"
-#include "messaging/BaseRequest.h"
+#include "planner/Participant.h"
 #include "planner/ir/llc/Instruction.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::planner {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
+
+using setu::commons::BinaryBuffer;
+using setu::commons::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 using setu::planner::ir::llc::Program;
+
 //==============================================================================
 
-struct ExecuteProgramRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  explicit ExecuteProgramRequest(Program program_param)
-      : BaseRequest(), program(std::move(program_param)) {}
-
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  ExecuteProgramRequest(RequestId request_id_param, Program program_param)
-      : BaseRequest(request_id_param), program(std::move(program_param)) {}
+struct Plan {
+  std::unordered_map<NodeId, Plan> Fragments();
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("ExecuteProgramRequest(request_id={}, program_size={})",
-                       request_id, program.size());
+    return std::format("Plan(participants={}, programs={})", participants,
+                       program);
   }
 
   void Serialize(BinaryBuffer& buffer) const {
     BinaryWriter writer(buffer);
-    writer.WriteFields(request_id, program);
+    writer.WriteFields(participants, program);
   }
 
-  static ExecuteProgramRequest Deserialize(const BinaryRange& range) {
+  static Plan Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    auto [request_id_val, program_val] =
-        reader.ReadFields<RequestId, Program>();
-    return ExecuteProgramRequest(request_id_val, std::move(program_val));
+    auto [participants_val, program_val] =
+        reader.ReadFields<Participants,
+                          std::unordered_map<Participant, Program>>();
+    Plan plan;
+    plan.participants = std::move(participants_val);
+    plan.program = std::move(program_val);
+    return plan;
   }
 
-  const Program program;
+  Participants participants;
+  std::unordered_map<Participant, Program> program;
 };
-using ExecuteProgramRequestPtr = std::shared_ptr<ExecuteProgramRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::planner
 //==============================================================================
