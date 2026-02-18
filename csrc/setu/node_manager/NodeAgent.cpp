@@ -150,9 +150,12 @@ void NodeAgent::Stop() {
     executor_->Stop();
     executor_ = nullptr;
   }
+  // Stop workers before closing zmq_context — workers hold sockets on this
+  // context and must close them first.
   for (auto& [device_rank, worker] : workers_) {
     worker->Stop();
   }
+  workers_.clear();
 
   if (zmq_context_) {
     zmq_context_->close();

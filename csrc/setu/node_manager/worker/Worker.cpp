@@ -44,13 +44,8 @@ void Worker::Start() {
     return;  // Already running
   }
 
-  InitZmqSockets();
-
-  if (!worker_running_.load()) {
-    worker_running_ = true;
-    worker_thread_ = std::thread(
-        SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
-  }
+  worker_thread_ = std::thread(
+      SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
 }
 
 void Worker::Stop() {
