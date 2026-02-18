@@ -6,8 +6,8 @@ import uuid
 
 import torch
 
-from setu._planner import MetaStore, NCCLPlanner
-from setu._commons.datatypes import (
+from setu._native import MetaStore, NCCLPlanner
+from setu._native.datatypes import (
     CopySpec,
     Device,
     TensorDim,
