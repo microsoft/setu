@@ -51,8 +51,10 @@ using setu::planner::Participant;
 // NCCLWorker
 //==============================================================================
 
-NCCLWorker::NCCLWorker(NodeId node_id, Device device)
-    : Worker(node_id, device), stream_(nullptr) {}
+NCCLWorker::NCCLWorker(NodeId node_id, Device device, RegisterSet register_set)
+    : Worker(node_id, device),
+      stream_(nullptr),
+      register_file_(std::move(register_set)) {}
 
 NCCLWorker::~NCCLWorker() {
   if (stream_) {
@@ -66,6 +68,13 @@ NCCLWorker::~NCCLWorker() {
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
   CUDA_CHECK(cudaStreamCreate(&stream_));
+
+  if (!register_file_.Empty()) {
+    register_file_.Allocate();
+    LOG_DEBUG("Allocated {} registers on device {}",
+              register_file_.NumRegisters(), device_);
+  }
+
   LOG_DEBUG("NCCLWorker setup complete for device {}", device_);
 }
 
@@ -149,8 +158,8 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
                       static_cast<char*>(inst.src_ptr) + inst.src_offset_bytes,
                       bytes, cudaMemcpyDeviceToDevice, stream_));
 
-  LOG_DEBUG("Copy: {} bytes from {} to {}", bytes, inst.src_shard.ToString(),
-            inst.dst_shard.ToString());
+  LOG_DEBUG("Copy: {} bytes from {} to {}", bytes, inst.src_ref.ToString(),
+            inst.dst_ref.ToString());
 }
 
 void NCCLWorker::ExecuteSend(const Send& inst) {
@@ -161,7 +170,7 @@ void NCCLWorker::ExecuteSend(const Send& inst) {
                       entry.nccl_comm, stream_));
 
   LOG_DEBUG("Send: {} elements from {} to device rank: {}", inst.count,
-            inst.src_shard.ToString(), inst.peer_rank);
+            inst.src_ref.ToString(), inst.peer_rank);
 }
 
 void NCCLWorker::ExecuteReceive(const Receive& inst) {
@@ -172,7 +181,11 @@ void NCCLWorker::ExecuteReceive(const Receive& inst) {
                       entry.nccl_comm, stream_));
 
   LOG_DEBUG("Receive: {} elements to {} from device rank: {}", inst.count,
-            inst.dst_shard.ToString(), inst.peer_rank);
+            inst.dst_ref.ToString(), inst.peer_rank);
+}
+
+DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {
+  return register_file_.GetPtr(ref.register_index);
 }
 
 //==============================================================================

@@ -16,62 +16,29 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
-#include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
-#include "commons/utils/Serialization.h"
-#include "ir/Instruction.h"
 #include "metastore/MetaStore.h"
-#include "planner/Participant.h"
+#include "planner/Plan.h"
+#include "planner/targets/backend.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
 
-using setu::commons::BinaryBuffer;
-using setu::commons::BinaryRange;
 using setu::commons::datatypes::CopySpec;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
-using setu::ir::Program;
 using setu::metastore::MetaStore;
-
-//==============================================================================
-
-struct Plan {
-  std::unordered_map<NodeId, Plan> Fragments();
-
-  [[nodiscard]] std::string ToString() const {
-    return std::format("Plan(participants={}, programs={})", participants,
-                       program);
-  }
-
-  void Serialize(BinaryBuffer& buffer) const {
-    BinaryWriter writer(buffer);
-    writer.WriteFields(participants, program);
-  }
-
-  static Plan Deserialize(const BinaryRange& range) {
-    BinaryReader reader(range);
-    auto [participants_val, program_val] =
-        reader.ReadFields<Participants,
-                          std::unordered_map<Participant, Program>>();
-    Plan plan;
-    plan.participants = std::move(participants_val);
-    plan.program = std::move(program_val);
-    return plan;
-  }
-
-  Participants participants;
-  std::unordered_map<Participant, Program> program;
-};
+using setu::planner::ir::llc::Program;
 
 class Planner {
  public:
-  virtual ~Planner() = default;
-  virtual Plan Compile(CopySpec& spec, MetaStore& metastore) = 0;
+  explicit Planner(std::unique_ptr<targets::Backend> backend);
+  [[nodiscard]] Plan Compile(const CopySpec& spec, MetaStore& metastore);
+
+ private:
+  std::unique_ptr<targets::Backend> backend_;
 };
+
 //==============================================================================
 }  // namespace setu::planner
 //==============================================================================

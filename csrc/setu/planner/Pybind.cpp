@@ -22,18 +22,17 @@
 #include "commons/utils/Pybind.h"
 //==============================================================================
 #include "metastore/MetaStore.h"
-#include "planner/Participant.h"
+#include "planner/Plan.h"
 #include "planner/Planner.h"
-#include "planner/backends/nccl.h"
+#include "planner/ir/llc/Pybind.h"
+#include "planner/targets/nccl.h"
+#include "setu/planner/Participant.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
 using setu::commons::NodeId;
-using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
-using setu::commons::datatypes::TensorShardSpec;
 using setu::metastore::MetaStore;
-using setu::planner::backends::nccl::NCCLPlanner;
 //==============================================================================
 void InitParticipantPybind(py::module_& m) {
   py::class_<Participant>(m, "Participant")
@@ -53,6 +52,17 @@ void InitParticipantPybind(py::module_& m) {
       });
 }
 //==============================================================================
+void InitPlanPybind(py::module_& m) {
+  py::class_<Plan>(m, "Plan")
+      .def_readonly("participants", &Plan::participants,
+                    "Set of participants in the plan")
+      .def_readonly("program", &Plan::program,
+                    "Mapping from participant to LLC program")
+      .def("to_string", &Plan::ToString, "String representation of the plan")
+      .def("__str__", &Plan::ToString)
+      .def("__repr__", &Plan::ToString);
+}
+//==============================================================================
 void InitMetaStorePybind(py::module_& m) {
   py::class_<MetaStore>(m, "MetaStore")
       .def(py::init<>(), "Create an empty metadata store")
@@ -61,42 +71,29 @@ void InitMetaStorePybind(py::module_& m) {
            "Register a tensor shard and return its metadata")
       .def("all_shards_registered", &MetaStore::AllShardsRegistered,
            py::arg("tensor_name"),
-           "Check if all shards for a tensor are registered")
+           "Check if all shards for a tensor have been registered")
       .def("get_num_shards_for_tensor", &MetaStore::GetNumShardsForTensor,
            py::arg("tensor_name"),
-           "Get number of shards registered for a tensor")
+           "Get number of registered shards for a tensor")
       .def("get_tensor_metadata", &MetaStore::GetTensorMetadata,
            py::arg("tensor_name"),
-           "Get tensor metadata if fully registered, None otherwise");
-}
-//==============================================================================
-void InitPlanPybind(py::module_& m) {
-  py::class_<Plan>(m, "Plan")
-      .def_readonly("participants", &Plan::participants,
-                    "Set of participants in this plan")
-      .def_readonly("program", &Plan::program,
-                    "Map from participant to program (instruction list)")
-      .def("to_string", &Plan::ToString, "Get string representation of plan")
-      .def("__str__", &Plan::ToString)
-      .def("__repr__", &Plan::ToString);
+           "Get tensor metadata (returns None if not fully registered)");
 }
 //==============================================================================
 void InitNCCLPlannerPybind(py::module_& m) {
-  py::class_<NCCLPlanner>(m, "NCCLPlanner")
-      .def(py::init<>(), "Create an NCCL planner")
-      .def(
-          "compile",
-          [](NCCLPlanner& self, CopySpec& copy_spec, MetaStore& metastore) {
-            return self.Compile(copy_spec, metastore);
-          },
-          py::arg("copy_spec"), py::arg("metastore"),
-          "Compile a copy spec into an execution plan");
+  py::class_<Planner>(m, "NCCLPlanner")
+      .def(py::init([]() {
+             return Planner(std::make_unique<targets::NCCL>());
+           }),
+           "Create a planner with the NCCL backend")
+      .def("compile", &Planner::Compile, py::arg("copy_spec"),
+           py::arg("metastore"), "Compile a CopySpec into an execution plan");
 }
 //==============================================================================
 void InitPlannerPybind(py::module_& m) {
   InitParticipantPybind(m);
-  InitMetaStorePybind(m);
   InitPlanPybind(m);
+  InitMetaStorePybind(m);
   InitNCCLPlannerPybind(m);
 }
 //==============================================================================
@@ -105,5 +102,6 @@ void InitPlannerPybind(py::module_& m) {
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   setu::commons::Logger::InitializeLogLevel();
   setu::planner::InitPlannerPybind(m);
+  setu::planner::ir::llc::InitLLCPybind(m);
 }
 //==============================================================================

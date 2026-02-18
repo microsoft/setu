@@ -17,24 +17,20 @@
 #include "planner/Planner.h"
 //==============================================================================
 #include "commons/Logging.h"
+#include "planner/passes/CopySpecToCIR.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
-
-std::unordered_map<NodeId, Plan> Plan::Fragments() {
-  std::unordered_map<NodeId, Plan> fragments;
-
-  // Group programs by NodeId, keeping participants the same across all
-  // fragments
-  for (const auto& [participant, prog] : program) {
-    auto& fragment = fragments[participant.node_id];
-    fragment.participants = participants;
-    fragment.program[participant] = prog;
-  }
-
-  return fragments;
+Planner::Planner(std::unique_ptr<targets::Backend> backend)
+    : backend_(std::move(backend)) {
+  ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
-
+//==============================================================================
+Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore) {
+  auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
+  auto plan = backend_->Run(cir);
+  return plan;
+}
 //==============================================================================
 }  // namespace setu::planner
 //==============================================================================

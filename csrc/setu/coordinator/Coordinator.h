@@ -30,7 +30,7 @@
 #include "coordinator/datatypes/CopyOperation.h"
 #include "messaging/Messages.h"
 #include "metastore/MetaStore.h"
-#include "planner/backends/nccl.h"
+#include "planner/Planner.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -54,7 +54,7 @@ using setu::commons::utils::ZmqSocketPtr;
 using setu::coordinator::datatypes::CopyOperationPtr;
 using setu::metastore::MetaStore;
 using setu::planner::Plan;
-using setu::planner::backends::nccl::NCCLPlanner;
+using setu::planner::Planner;
 
 /// @brief Shared state for tracking a copy operation across Handler and
 /// Executor threads.
@@ -197,6 +197,9 @@ class Coordinator {
     void HandleExecuteResponse(
         const Identity& node_identity,
         const setu::commons::messages::ExecuteResponse& response);
+    void HandleGetTensorSpecRequest(
+        const Identity& node_agent_identity,
+        const setu::commons::messages::GetTensorSpecRequest& request);
 
     /// @brief Unified shard submission logic for both Copy and Pull.
     void HandleShardSubmission(const Identity& node_agent_identity,
@@ -251,7 +254,7 @@ class Coordinator {
     Queue<PlannerTask>& planner_queue_;
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
-    NCCLPlanner planner_;
+    Planner planner_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};

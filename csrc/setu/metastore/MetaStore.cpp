@@ -24,6 +24,7 @@ namespace setu::metastore {
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorShardMetadata;
+using setu::commons::datatypes::TensorSpec;
 //==============================================================================
 TensorShardMetadataPtr MetaStore::RegisterTensorShard(
     const TensorShardSpec& shard_spec, const NodeId& owner_node_id) {
@@ -47,13 +48,18 @@ TensorShardMetadataPtr MetaStore::RegisterTensorShard(
   // Calculate and track sizes
   std::size_t shard_num_elements = shard_spec.GetNumElements();
 
-  // Initialize expected size on first shard registration
+  // Initialize expected size and cache TensorSpec on first shard registration
   if (registered_data.expected_size == 0) {
     std::size_t total_tensor_size = 1;
+    TensorDimMap dims;
     for (const auto& dim_spec : shard_spec.dims) {
       total_tensor_size *= dim_spec.size;
+      dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
     }
     registered_data.expected_size = total_tensor_size;
+    tensor_spec_cache_.emplace(
+        shard_spec.name,
+        TensorSpec(shard_spec.name, std::move(dims), shard_spec.dtype));
   }
 
   registered_data.registered_size += shard_num_elements;
@@ -183,6 +189,17 @@ TensorMetadataPtr MetaStore::GetTensorMetadata(const TensorName& tensor_name) {
   tensor_metadata_cache_.emplace(tensor_name, metadata);
 
   return metadata;
+}
+//==============================================================================
+const TensorSpec* MetaStore::GetTensorSpec(
+    const TensorName& tensor_name) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  auto it = tensor_spec_cache_.find(tensor_name);
+  if (it != tensor_spec_cache_.end()) {
+    return &it->second;
+  }
+  return nullptr;
 }
 //==============================================================================
 }  // namespace setu::metastore

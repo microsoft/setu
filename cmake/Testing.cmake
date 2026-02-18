@@ -51,7 +51,8 @@ endfunction()
 
 # Add test suites
 add_setu_test_suite(kernel "csrc/test/kernels" "_kernels_static")
-add_setu_test_suite(native "csrc/test/native" "_commons_static;_metastore_static;_planner_static")
+add_setu_test_suite(native "csrc/test/native"
+                    "_commons_static;_metastore_static;_planner_static;_cir_static;_ir_static")
 # Define all_tests target
 
 add_custom_target(

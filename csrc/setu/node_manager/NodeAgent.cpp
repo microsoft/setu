@@ -31,9 +31,11 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorDim;
 using setu::commons::datatypes::TensorDimMap;
+using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardRef;
+using setu::commons::datatypes::TensorShardSpecPtr;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -46,6 +48,10 @@ using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::GetTensorSelectionRequest;
+using setu::commons::messages::GetTensorSelectionResponse;
+using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::NodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
@@ -61,9 +67,9 @@ using setu::commons::utils::AddWaiterResult;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
-using setu::ir::Instruction;
-using setu::ir::Program;
 using setu::planner::Plan;
+using setu::planner::ir::llc::Instruction;
+using setu::planner::ir::llc::Program;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
@@ -103,9 +109,22 @@ void NodeAgent::Start() {
   handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
                                        coordinator_endpoint_, executor_queue_,
                                        shard_id_to_tensor_, lock_base_dir_);
-  executor_ = std::make_unique<Executor>(node_id_, zmq_context_,
-                                         coordinator_endpoint_, devices_,
-                                         executor_queue_, shard_id_to_tensor_);
+  // Build register resolver from workers — captures workers_ by reference,
+  // safe because NodeAgent outlives the Executor.
+  RegisterResolver register_resolver =
+      [this](const RegisterRef& ref) -> DevicePtr {
+    ASSERT_VALID_RUNTIME(ref.participant.has_value(),
+                         "RegisterRef must have a participant for resolution");
+    auto device_rank = ref.participant->LocalDeviceIndex();
+    auto it = workers_.find(device_rank);
+    ASSERT_VALID_RUNTIME(it != workers_.end(), "No worker for device_rank: {}",
+                         device_rank);
+    return it->second->ResolveRegister(ref);
+  };
+
+  executor_ = std::make_unique<Executor>(
+      node_id_, zmq_context_, coordinator_endpoint_, devices_, executor_queue_,
+      shard_id_to_tensor_, std::move(register_resolver));
 
   for (auto& [device_rank, worker] : workers_) {
     worker->Start();
@@ -245,6 +264,8 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
           HandleGetTensorHandleRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, WaitForShardAllocationRequest>) {
           HandleWaitForShardAllocationRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, GetTensorSelectionRequest>) {
+          HandleGetTensorSelectionRequest(client_identity, msg);
         }
       },
       request);
@@ -431,6 +452,47 @@ void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
   }
 }
 
+void NodeAgent::Handler::HandleGetTensorSelectionRequest(
+    const Identity& client_identity, const GetTensorSelectionRequest& request) {
+  // Check local cache first
+  auto it = tensor_spec_cache_.find(request.tensor_name);
+  if (it != tensor_spec_cache_.end()) {
+    auto selection = TensorSelection(it->second.name, it->second.dims);
+    GetTensorSelectionResponse response(request.request_id, ErrorCode::kSuccess,
+                                        selection);
+    Comm::Send<GetTensorSelectionResponse>(client_socket_, client_identity,
+                                           response);
+    return;
+  }
+
+  // Sync: send GetTensorSpecRequest via REQ socket, block for response
+  GetTensorSpecRequest spec_request(request.tensor_name);
+  Comm::Send<NodeAgentRequest>(sync_socket_, spec_request);
+  auto coordinator_response = Comm::Recv<CoordinatorMessage>(sync_socket_);
+
+  const auto& spec_response =
+      std::get<GetTensorSpecResponse>(coordinator_response);
+
+  ASSERT_VALID_RUNTIME(spec_response.error_code == ErrorCode::kSuccess,
+                       "Failed to get TensorSpec for tensor {}",
+                       request.tensor_name);
+  ASSERT_VALID_RUNTIME(spec_response.tensor_spec.has_value(),
+                       "TensorSpec missing in response for tensor {}",
+                       request.tensor_name);
+
+  const auto& spec = spec_response.tensor_spec.value();
+
+  // Cache the spec locally for future lookups
+  tensor_spec_cache_.emplace(spec.name, spec);
+
+  // Build spanning selection and respond to client
+  auto selection = TensorSelection(spec.name, spec.dims);
+  GetTensorSelectionResponse response(request.request_id, ErrorCode::kSuccess,
+                                      selection);
+  Comm::Send<GetTensorSelectionResponse>(client_socket_, client_identity,
+                                         response);
+}
+
 void NodeAgent::Handler::HandleAllocateTensorRequest(
     const AllocateTensorRequest& request) {
   for (const auto& shard_id : request.shard_ids) {
@@ -513,13 +575,15 @@ NodeAgent::Executor::Executor(
     NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
     const std::string& coordinator_endpoint, const std::vector<Device>& devices,
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-    TensorShardsConcurrentMap const& shard_id_to_tensor)
+    TensorShardsConcurrentMap const& shard_id_to_tensor,
+    RegisterResolver register_resolver)
     : node_id_(node_id),
       zmq_context_(zmq_context),
       coordinator_endpoint_(coordinator_endpoint),
       devices_(devices),
       executor_queue_(executor_queue),
-      shard_id_to_tensor_(shard_id_to_tensor) {
+      shard_id_to_tensor_(shard_id_to_tensor),
+      register_resolver_(std::move(register_resolver)) {
   InitSockets();
 }
 
@@ -631,21 +695,25 @@ void NodeAgent::Executor::Loop() {
 }
 
 void NodeAgent::Executor::EmbellishProgram(Program& program) {
-  auto const DevicePtrLookup = [this](const ShardRef& ref) -> DevicePtr {
-    DevicePtr result = nullptr;
-    bool found = this->shard_id_to_tensor_.visit(
-        ref.shard_id,
-        [&result](const auto& entry) { result = entry.second.data_ptr(); });
-    ASSERT_VALID_RUNTIME(found,
-                         "Embellish failed: Tensor: {}, Shard: {} not found in "
-                         "NodeAgent registry.",
-                         ref.tensor_name ? *ref.tensor_name : "<unknown>",
-                         ref.shard_id);
-    return result;
+  auto const resolver = [this](const BufferRef& ref) -> DevicePtr {
+    if (ref.IsShard()) {
+      const auto& shard = ref.AsShard();
+      DevicePtr result = nullptr;
+      bool found = this->shard_id_to_tensor_.visit(
+          shard.shard_id,
+          [&result](const auto& entry) { result = entry.second.data_ptr(); });
+      ASSERT_VALID_RUNTIME(
+          found,
+          "Embellish failed: Tensor: {}, Shard: {} not found in "
+          "NodeAgent registry.",
+          shard.tensor_name ? *shard.tensor_name : "<unknown>", shard.shard_id);
+      return result;
+    }
+    return register_resolver_(ref.AsRegister());
   };
 
   for (auto& instr : program) {
-    instr.Embellish(DevicePtrLookup);
+    instr.Embellish(resolver);
   }
 }
 //==============================================================================

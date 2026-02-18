@@ -19,8 +19,8 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/utils/Serialization.h"
-#include "ir/Instruction.h"
 #include "messaging/BaseRequest.h"
+#include "planner/ir/llc/Instruction.h"
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
@@ -28,7 +28,7 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
-using setu::ir::Program;
+using setu::planner::ir::llc::Program;
 //==============================================================================
 
 struct ExecuteProgramRequest : public BaseRequest {

@@ -36,6 +36,7 @@
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::CopyOperationId;
+using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::Identity;
 using setu::commons::NodeId;
@@ -51,6 +52,8 @@ using setu::commons::datatypes::TensorShardMetadataMap;
 using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
+using setu::commons::datatypes::TensorSpec;
+using setu::commons::datatypes::TensorSpecMap;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::CoordinatorMessage;
@@ -58,6 +61,10 @@ using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
+using setu::commons::messages::GetTensorSelectionRequest;
+using setu::commons::messages::GetTensorSelectionResponse;
+using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
@@ -69,10 +76,14 @@ using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Program;
-using setu::ir::ShardRef;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
+using setu::planner::ir::llc::Program;
+using setu::planner::ir::ref::BufferRef;
+using setu::planner::ir::ref::RegisterRef;
+using setu::planner::ir::ref::ShardRef;
+
+using RegisterResolver = std::function<DevicePtr(const RegisterRef&)>;
 //==============================================================================
 class NodeAgent {
  public:
@@ -137,6 +148,9 @@ class NodeAgent {
     void HandleWaitForShardAllocationRequest(
         const Identity& client_identity,
         const WaitForShardAllocationRequest& request);
+    void HandleGetTensorSelectionRequest(
+        const Identity& client_identity,
+        const GetTensorSelectionRequest& request);
 
     // Async coordinator message handlers (received on DEALER socket)
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
@@ -171,6 +185,7 @@ class NodeAgent {
     setu::commons::utils::PendingOperations<ShardId> pending_shard_allocs_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
+    TensorSpecMap tensor_spec_cache_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
     std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
   };
@@ -183,7 +198,8 @@ class NodeAgent {
              const std::string& coordinator_endpoint,
              const std::vector<Device>& devices,
              Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-             TensorShardsConcurrentMap const& shard_id_to_tensor);
+             TensorShardsConcurrentMap const& shard_id_to_tensor,
+             RegisterResolver register_resolver);
     ~Executor();
 
     void Start();
@@ -207,6 +223,7 @@ class NodeAgent {
     std::thread thread_;
     std::atomic<bool> running_{false};
     TensorShardsConcurrentMap const& shard_id_to_tensor_;
+    RegisterResolver register_resolver_;
   };
 
   NodeId node_id_;

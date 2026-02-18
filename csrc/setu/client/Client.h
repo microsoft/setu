@@ -19,6 +19,7 @@
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 #include "commons/datatypes/CopySpec.h"
+#include "commons/datatypes/TensorSelection.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/enums/Enums.h"
@@ -31,6 +32,7 @@ using setu::commons::CopyOperationId;
 using setu::commons::ShardId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CopySpec;
+using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardRefPtr;
 using setu::commons::datatypes::TensorShardSpec;
@@ -65,6 +67,8 @@ class Client {
   void WaitForShardAllocation(ShardId shard_id);
 
   GetTensorHandleResponse GetTensorHandle(const TensorShardRef& shard_ref);
+
+  TensorSelectionPtr Select(const TensorName& name);
 
   [[nodiscard]] std::vector<TensorShardRefPtr> GetShards() const;
 

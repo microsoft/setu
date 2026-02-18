@@ -38,7 +38,7 @@
 namespace setu::commons::datatypes {
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
-  py::class_<Device>(m, "Device", py::module_local())
+  py::class_<Device>(m, "Device")
       .def(py::init<torch::Device>(), py::arg("torch_device"))
       .def_readonly("torch_device", &Device::torch_device,
                     "PyTorch device (type + local index)")
@@ -85,7 +85,7 @@ void InitTensorDimPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorDimSpecPybind(py::module_& m) {
-  py::class_<TensorDimSpec>(m, "TensorDimSpec", py::module_local())
+  py::class_<TensorDimSpec>(m, "TensorDimSpec")
       .def(py::init<TensorDimName, std::size_t, TensorIndex, TensorIndex>(),
            py::arg("name"), py::arg("size"), py::arg("start"), py::arg("end"))
       .def_readonly("name", &TensorDimSpec::name,
@@ -104,8 +104,7 @@ void InitTensorDimSpecPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorSelectionPybind(py::module_& m) {
-  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection",
-                                                  py::module_local())
+  py::class_<TensorSelection, TensorSelectionPtr>(m, "TensorSelection")
       .def(py::init<TensorName, TensorDimMap>(), py::arg("name"),
            py::arg("dims"))
       .def(py::init<TensorName, TensorIndicesMap>(), py::arg("name"),
@@ -129,13 +128,17 @@ void InitTensorSelectionPybind(py::module_& m) {
                &TensorSelection::Where, py::const_),
            py::arg("dim_name"), py::arg("slice"),
            "Create new selection with specified slice for a dimension")
+      .def("__eq__", &TensorSelection::operator==, py::arg("other"),
+           "Check equality with another TensorSelection")
+      .def("__ne__", &TensorSelection::operator!=, py::arg("other"),
+           "Check inequality with another TensorSelection")
       .def("__str__", &TensorSelection::ToString)
       .def("__repr__", &TensorSelection::ToString);
 }
 //==============================================================================
 //==============================================================================
 void InitCopySpecPybind(py::module_& m) {
-  py::class_<CopySpec, CopySpecPtr>(m, "CopySpec", py::module_local())
+  py::class_<CopySpec, CopySpecPtr>(m, "CopySpec")
       .def(py::init<TensorName, TensorName, TensorSelectionPtr,
                     TensorSelectionPtr>(),
            py::arg("src_name"), py::arg("dst_name"), py::arg("src_selection"),
@@ -207,7 +210,7 @@ void InitTensorShardPybind(py::module_& m) {
 }
 //==============================================================================
 void InitTensorShardSpecPybind(py::module_& m) {
-  py::class_<TensorShardSpec>(m, "TensorShardSpec", py::module_local())
+  py::class_<TensorShardSpec>(m, "TensorShardSpec")
       .def(py::init<TensorName, std::vector<TensorDimSpec>, torch::Dtype,
                     Device>(),
            py::arg("name"), py::arg("dims"), py::arg("dtype"),

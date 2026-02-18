@@ -65,7 +65,9 @@ void InitClientPybindClass(py::module_& m) {
           "Get the IPC handle for a tensor shard. Returns "
           "(TensorIPCSpec, TensorShardMetadata, lock_base_dir)")
       .def("get_shards", &Client::GetShards,
-           "Get all registered tensor shard references");
+           "Get all registered tensor shard references")
+      .def("select", &Client::Select, py::arg("name"),
+           "Get a TensorSelection covering the full tensor dimensions");
 }
 //==============================================================================
 void InitEnumsPybindClass(py::module_& m) {

@@ -24,8 +24,10 @@
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
-#include "ir/Instruction.h"
+#include "node_manager/worker/RegisterFile.h"
 #include "node_manager/worker/Worker.h"
+#include "planner/Constants.h"
+#include "planner/ir/llc/Instruction.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -37,22 +39,27 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
-using setu::ir::Copy;
-using setu::ir::InitComm;
-using setu::ir::Instruction;
-using setu::ir::Program;
-using setu::ir::Receive;
-using setu::ir::Send;
-using setu::ir::UseComm;
+using setu::planner::ir::llc::Copy;
+using setu::planner::ir::llc::InitComm;
+using setu::planner::ir::llc::Instruction;
+using setu::planner::ir::llc::Program;
+using setu::planner::ir::llc::Receive;
+using setu::planner::ir::llc::Send;
+using setu::planner::ir::llc::UseComm;
 //==============================================================================
 
 class NCCLWorker : public Worker {
  public:
-  NCCLWorker(NodeId node_id, Device device);
+  NCCLWorker(NodeId node_id, Device device,
+             RegisterSet register_set =
+                 RegisterSet::Uniform(1, setu::planner::kRegisterSize));
   ~NCCLWorker();
 
   void Execute(const Program& program) override;
   void Setup() override;
+
+  [[nodiscard]] DevicePtr ResolveRegister(
+      const RegisterRef& ref) const override;
 
  private:
   void ExecuteInstruction(const Instruction& instruction, bool& group_started);
@@ -74,6 +81,8 @@ class NCCLWorker : public Worker {
   std::unordered_map<std::string, CommCacheEntry> comm_cache_;
   std::string active_comm_key_;
   cudaStream_t stream_;
+
+  RegisterFile register_file_;
 };
 
 //==============================================================================
