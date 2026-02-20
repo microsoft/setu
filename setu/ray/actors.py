@@ -73,6 +73,22 @@ class CoordinatorActor:
             self._coordinator = None
             logger.info("CoordinatorActor stopped")
 
+    def add_hint(self, hint) -> None:
+        """Add a compiler hint to the Coordinator.
+
+        Args:
+            hint: A compiler hint (e.g. RoutingHint).
+        """
+        if self._coordinator is None:
+            raise RuntimeError("Coordinator is not started")
+        self._coordinator.add_hint(hint)
+
+    def clear_hints(self) -> None:
+        """Clear all compiler hints from the Coordinator."""
+        if self._coordinator is None:
+            raise RuntimeError("Coordinator is not started")
+        self._coordinator.clear_hints()
+
     def is_alive(self) -> bool:
         """Check if the Coordinator is running."""
         return self._coordinator is not None

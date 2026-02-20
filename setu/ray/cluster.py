@@ -263,3 +263,19 @@ class SetuCluster:
         self._started = False
 
         logger.info("Setu cluster fully shut down")
+
+    def add_hint(self, hint) -> None:
+        """Add a compiler hint to the Coordinator.
+
+        Args:
+            hint: A compiler hint (e.g. RoutingHint).
+        """
+        if self._coordinator_actor is None:
+            raise RuntimeError("SetuCluster is not started")
+        ray.get(self._coordinator_actor.add_hint.remote(hint))
+
+    def clear_hints(self) -> None:
+        """Clear all compiler hints from the Coordinator."""
+        if self._coordinator_actor is None:
+            raise RuntimeError("SetuCluster is not started")
+        ray.get(self._coordinator_actor.clear_hints.remote())
