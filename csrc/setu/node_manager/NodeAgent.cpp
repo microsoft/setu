@@ -702,5 +702,10 @@ void NodeAgent::Executor::EmbellishProgram(Program& program) {
   }
 }
 //==============================================================================
+std::string NodeAgent::GetDefaultLockBaseDir() {
+  auto base = std::filesystem::temp_directory_path() / "setu" / "locks";
+  return base.string();
+}
+//==============================================================================
 }  // namespace setu::node_manager
 //==============================================================================

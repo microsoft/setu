@@ -69,7 +69,7 @@ void InitNodeAgentPybindClass(py::module_& m) {
       .def(py::init<NodeId, std::size_t, std::string,
                     const std::vector<Device>&, std::string>(),
            py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
-           py::arg("devices"), py::arg("lock_base_dir") = "/tmp/setu/locks",
+           py::arg("devices"), py::arg("lock_base_dir") = NodeAgent::GetDefaultLockBaseDir(),
            "Create a NodeAgent with specified port, coordinator endpoint, "
            "devices, and lock directory")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")

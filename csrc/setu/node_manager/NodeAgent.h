@@ -89,11 +89,14 @@ class NodeAgent {
  public:
   NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
             const std::vector<Device>& devices,
-            std::string lock_base_dir = "/tmp/setu/locks");
+            std::string lock_base_dir = GetDefaultLockBaseDir());
   ~NodeAgent();
 
   void Start();
   void Stop();
+
+  /// Returns a per-user default lock directory under the system temp path.
+  [[nodiscard]] static std::string GetDefaultLockBaseDir();
 
  private:
   //============================================================================
