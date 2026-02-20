@@ -26,15 +26,7 @@ def _find_free_port() -> int:
         return sock.getsockname()[1]
 
 
-# "NCCL_DEBUG": "INFO", "NCCL_DEBUG_SUBSYS": "ALL"
-@ray.remote(
-    runtime_env={
-        "env_vars": {
-            "SETU_LOG_LEVEL": "DEBUG",
-            "NCCL_SOCKET_IFNAME": "^lo,docker0,enxbe3af2b6059f",
-        }
-    }
-)
+@ray.remote
 class CoordinatorActor:
     """Ray actor wrapping the native Coordinator.
 
@@ -86,15 +78,7 @@ class CoordinatorActor:
         return self._coordinator is not None
 
 
-# "NCCL_DEBUG": "INFO", "NCCL_DEBUG_SUBSYS": "ALL"
-@ray.remote(
-    runtime_env={
-        "env_vars": {
-            "SETU_LOG_LEVEL": "DEBUG",
-            "NCCL_SOCKET_IFNAME": "^lo,docker0,enxbe3af2b6059f",
-        }
-    }
-)
+@ray.remote
 class NodeAgentActor:
     """Ray actor wrapping the native NodeAgent.
 

@@ -35,6 +35,7 @@ dependencies:
       - build
       - cmake>=4.0 # python wrapper
       - codespell
+      - colorama
       - datasets
       - huggingface-hub
       - isort

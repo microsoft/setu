@@ -3,7 +3,9 @@ from test.fixtures.client_processes import (
     run_dest_client,
     run_source_client,
 )
-from test.fixtures.cluster import ClusterSpec, DeviceSpec, SetuTestCluster
+from test.fixtures.cluster import SetuTestCluster
+
+from setu.cluster import ClusterSpec, DeviceSpec
 
 __all__ = [
     "ClusterSpec",

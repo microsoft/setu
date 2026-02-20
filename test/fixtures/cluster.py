@@ -1,53 +1,16 @@
 """
 Cluster abstraction for E2E tests.
 
-Provides ClusterSpec (picklable cluster description using real C++ types)
-and SetuTestCluster (spins up coordinator + node agents from a spec).
+Provides SetuTestCluster which spins up coordinator + node agents from a
+ClusterSpec for integration testing.
 """
 
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import torch.multiprocessing as mp
 
-from setu._commons.datatypes import Device
-from setu._coordinator import RegisterSet, Topology
-
-
-@dataclass
-class DeviceSpec:
-    """A device with optional register set configuration."""
-
-    device: Device
-    register_set: Optional[RegisterSet] = None
-
-
-@dataclass
-class ClusterSpec:
-    """Picklable specification for a Setu cluster.
-
-    Uses real C++ types (Topology, Device, RegisterSet) which are
-    picklable thanks to C++ pickle support.
-
-    Attributes:
-        coordinator_port: Port for the coordinator to bind on.
-        nodes: Mapping from node_id to (port, device_specs).
-        topology: Optional topology for routing passes.
-    """
-
-    coordinator_port: int
-    nodes: Dict[uuid.UUID, Tuple[int, List[DeviceSpec]]]
-    topology: Optional[Topology] = None
-
-    @property
-    def coordinator_endpoint(self) -> str:
-        return f"tcp://localhost:{self.coordinator_port}"
-
-    def client_endpoint(self, node_id: uuid.UUID) -> str:
-        port, _ = self.nodes[node_id]
-        return f"tcp://localhost:{port}"
+from setu.cluster import ClusterSpec
 
 
 def _run_coordinator_process(spec, ready_event, stop_event):
