@@ -21,6 +21,7 @@
 #include "commons/datatypes/CopySpec.h"
 #include "metastore/MetaStore.h"
 #include "planner/Plan.h"
+#include "planner/hints/HintStore.h"
 #include "planner/passes/PassManager.h"
 #include "planner/targets/backend.h"
 //==============================================================================
@@ -29,12 +30,14 @@ namespace setu::planner {
 
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
+using setu::planner::hints::HintStore;
 using setu::planner::ir::llc::Program;
 
 class Planner {
  public:
   Planner(targets::BackendPtr backend, passes::PassManagerPtr pass_manager);
-  [[nodiscard]] Plan Compile(const CopySpec& spec, MetaStore& metastore);
+  [[nodiscard]] Plan Compile(const CopySpec& spec, MetaStore& metastore,
+                             const HintStore& hints);
 
  private:
   targets::BackendPtr backend_;

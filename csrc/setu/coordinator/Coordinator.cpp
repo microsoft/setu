@@ -56,7 +56,7 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
                                        planner_queue_);
   executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
-                                         metastore_, *planner_);
+                                         metastore_, *planner_, hint_store_);
 }
 
 Coordinator::~Coordinator() {
@@ -101,6 +101,12 @@ std::optional<CopyOperationId> Coordinator::SubmitCopy(
   // TODO: Implement copy submission and plan generation
   return std::nullopt;
 }
+
+void Coordinator::AddHint(setu::planner::hints::CompilerHint hint) {
+  hint_store_.AddHint(std::move(hint));
+}
+
+void Coordinator::ClearHints() { hint_store_.Clear(); }
 
 void Coordinator::PlanExecuted(CopyOperationId copy_op_id) {
   LOG_DEBUG("Plan executed for copy operation ID: {}", copy_op_id);
@@ -451,11 +457,13 @@ void Coordinator::Handler::HandleGetTensorSpecRequest(
 //==============================================================================
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
-                                MetaStore& metastore, Planner& planner)
+                                MetaStore& metastore, Planner& planner,
+                                HintStore& hint_store)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
-      planner_(planner) {}
+      planner_(planner),
+      hint_store_(hint_store) {}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {
@@ -481,7 +489,8 @@ void Coordinator::Executor::Loop() {
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-      Plan plan = planner_.Compile(task.copy_spec, metastore_);
+      auto hints = hint_store_.Snapshot();
+      Plan plan = planner_.Compile(task.copy_spec, metastore_, hints);
 
       LOG_DEBUG("Compiled plan:\n{}", plan);
 

@@ -27,9 +27,10 @@ Planner::Planner(targets::BackendPtr backend,
   ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
 //==============================================================================
-Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore) {
+Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore,
+                      const HintStore& hints) {
   auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
-  cir = pass_manager_->Run(std::move(cir));
+  cir = pass_manager_->Run(std::move(cir), hints);
   return backend_->Run(cir);
 }
 //==============================================================================

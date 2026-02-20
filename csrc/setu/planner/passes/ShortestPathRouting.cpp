@@ -1,12 +1,24 @@
 #include "planner/passes/ShortestPathRouting.h"
 
 #include "planner/Constants.h"
+#include "planner/hints/Hint.h"
 
 namespace setu::planner::passes {
 
+using setu::planner::Participant;
+using setu::planner::hints::RoutingHint;
 using setu::planner::topo::Link;
+using setu::planner::topo::Path;
 
-cir::Program ShortestPathRouting::Run(const cir::Program& program) {
+cir::Program ShortestPathRouting::Run(const cir::Program& program,
+                                      const HintStore& hints) {
+  // Build override map from routing hints
+  std::map<std::pair<Participant, Participant>, const Path*> overrides;
+  for (const auto& hint_ref : hints.GetHints<RoutingHint>()) {
+    const auto& hint = hint_ref.get();
+    overrides[{hint.src, hint.dst}] = &hint.path;
+  }
+
   auto rw = cir::ProgramRewriter(program);
   for (std::size_t i = 0; i < program.NumOperations(); ++i) {
     const auto& op = program.Operations()[i];
@@ -19,16 +31,24 @@ cir::Program ShortestPathRouting::Run(const cir::Program& program) {
             // builder guarantees that num bytes is the same for src, dst values
             auto bytes = src_val_info.NumBytes();
 
-            auto path_opt =
-                topo_->ShortestPath(src_val_info.device, dst_val_info.device,
-                                    [bytes](const Link& l) -> float {
-                                      return l.TransferTimeUs(bytes);
-                                    });
-            ASSERT_VALID_RUNTIME(path_opt.has_value(),
-                                 "No path exists between {} and {}",
-                                 src_val_info.device, dst_val_info.device);
+            // Check for routing hint override first
+            auto override_it =
+                overrides.find({src_val_info.device, dst_val_info.device});
 
-            auto path = path_opt.value();
+            topo::Path path = [&]() -> topo::Path {
+              if (override_it != overrides.end()) {
+                return *override_it->second;
+              }
+              auto path_opt =
+                  topo_->ShortestPath(src_val_info.device, dst_val_info.device,
+                                      [bytes](const Link& l) -> float {
+                                        return l.TransferTimeUs(bytes);
+                                      });
+              ASSERT_VALID_RUNTIME(path_opt.has_value(),
+                                   "No path exists between {} and {}",
+                                   src_val_info.device, dst_val_info.device);
+              return path_opt.value();
+            }();
 
             // shortest path is the same as direct transfer
             // no additional hops required

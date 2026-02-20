@@ -28,7 +28,8 @@ class PassManager : public setu::commons::NonCopyable {
  public:
   PassManager() = default;
   void AddPass(PassPtr pass);
-  [[nodiscard]] cir::Program Run(cir::Program program) const;
+  [[nodiscard]] cir::Program Run(cir::Program program,
+                                 const HintStore& hints) const;
   [[nodiscard]] std::size_t NumPasses() const;
 
  private:

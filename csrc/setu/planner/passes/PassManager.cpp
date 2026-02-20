@@ -25,9 +25,10 @@ void PassManager::AddPass(PassPtr pass) {
   passes_.emplace_back(std::move(pass));
 }
 //==============================================================================
-cir::Program PassManager::Run(cir::Program program) const {
+cir::Program PassManager::Run(cir::Program program,
+                              const HintStore& hints) const {
   for (const auto& pass : passes_) {
-    program = pass->Run(program);
+    program = pass->Run(program, hints);
     LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
   }
   return program;

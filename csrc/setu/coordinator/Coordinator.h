@@ -31,6 +31,7 @@
 #include "messaging/Messages.h"
 #include "metastore/MetaStore.h"
 #include "planner/Planner.h"
+#include "planner/hints/HintStore.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -56,6 +57,7 @@ using setu::metastore::MetaStore;
 using setu::planner::Plan;
 using setu::planner::Planner;
 using setu::planner::PlannerPtr;
+using setu::planner::hints::HintStore;
 
 /// @brief Shared state for tracking a copy operation across Handler and
 /// Executor threads.
@@ -95,6 +97,9 @@ class Coordinator {
   std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
 
   void PlanExecuted(CopyOperationId copy_op_id);
+
+  void AddHint(setu::planner::hints::CompilerHint hint);
+  void ClearHints();
 
   void Start();
   void Stop();
@@ -244,7 +249,7 @@ class Coordinator {
   struct Executor {
     Executor(Queue<PlannerTask>& planner_queue,
              Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-             Planner& planner);
+             Planner& planner, HintStore& hint_store);
 
     void Start();
     void Stop();
@@ -256,6 +261,7 @@ class Coordinator {
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Planner& planner_;
+    HintStore& hint_store_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
@@ -267,6 +273,7 @@ class Coordinator {
 
   MetaStore metastore_;
   PlannerPtr planner_;
+  HintStore hint_store_;
 
   // Internal message queues
   Queue<InboxMessage> inbox_queue_;
