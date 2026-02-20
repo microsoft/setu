@@ -85,6 +85,10 @@ class Topology {
       const Participant& src, const Participant& dst,
       std::function<float(const Link&)> cost_fn) const;
 
+  using Edge = std::tuple<Participant, Participant, Link>;
+
+  [[nodiscard]] std::vector<Edge> GetEdges() const;
+
  private:
   std::unordered_map<Participant, std::vector<std::pair<Participant, Link>>>
       adj_;

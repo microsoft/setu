@@ -38,12 +38,27 @@
 namespace setu::commons::datatypes {
 //==============================================================================
 void InitDevicePybind(py::module_& m) {
-  py::class_<Device>(m, "Device", py::module_local())
+  py::class_<Device>(m, "Device")
       .def(py::init<torch::Device>(), py::arg("torch_device"))
       .def_readonly("torch_device", &Device::torch_device,
                     "PyTorch device (type + local index)")
       .def("__str__", &Device::ToString)
-      .def("__repr__", &Device::ToString);
+      .def("__repr__", &Device::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const Device& d) {  // __getstate__
+            return py::make_tuple(
+                static_cast<std::int8_t>(d.torch_device.type()),
+                static_cast<std::int16_t>(d.torch_device.index()));
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for Device");
+            }
+            return Device(torch::Device(
+                static_cast<torch::DeviceType>(t[0].cast<std::int8_t>()),
+                t[1].cast<torch::DeviceIndex>()));
+          }));
 }
 //==============================================================================
 void InitTensorSlicePybind(py::module_& m) {
@@ -100,7 +115,20 @@ void InitTensorDimSpecPybind(py::module_& m) {
       .def("contains_index", &TensorDimSpec::ContainsIndex, py::arg("index"),
            "Check if index is within owned range")
       .def("__str__", &TensorDimSpec::ToString)
-      .def("__repr__", &TensorDimSpec::ToString);
+      .def("__repr__", &TensorDimSpec::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const TensorDimSpec& s) {  // __getstate__
+            return py::make_tuple(s.name, s.size, s.start, s.end);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 4) {
+              throw std::runtime_error("Invalid state for TensorDimSpec");
+            }
+            return TensorDimSpec(
+                t[0].cast<TensorDimName>(), t[1].cast<std::size_t>(),
+                t[2].cast<TensorIndex>(), t[3].cast<TensorIndex>());
+          }));
 }
 //==============================================================================
 void InitTensorSelectionPybind(py::module_& m) {

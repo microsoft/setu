@@ -19,6 +19,7 @@
 #include "commons/StdCommon.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
+#include "planner/ir/llc/instructions/Barrier.h"
 #include "planner/ir/llc/instructions/Copy.h"
 #include "planner/ir/llc/instructions/InitComm.h"
 #include "planner/ir/llc/instructions/Receive.h"
@@ -56,9 +57,11 @@ enum class InstructionType : std::uint8_t {
   kCopy = 3,
   kSend = 4,
   kReceive = 5,
+  kBarrier = 6,
 };
 
-using InstructionVariant = std::variant<InitComm, UseComm, Copy, Send, Receive>;
+using InstructionVariant =
+    std::variant<InitComm, UseComm, Copy, Send, Receive, Barrier>;
 
 /// A single LLC instruction.  Wraps one of the five concrete instruction
 /// types in a variant.  Supports serialization for wire transfer and

@@ -140,6 +140,13 @@ void InitUseCommInstructionPybind(py::module_& m) {
       .def("__repr__", &UseComm::ToString);
 }
 //==============================================================================
+void InitBarrierInstructionPybind(py::module_& m) {
+  py::class_<Barrier>(m, "Barrier")
+      .def(py::init<>(), "Create a synchronization barrier instruction")
+      .def("__str__", &Barrier::ToString)
+      .def("__repr__", &Barrier::ToString);
+}
+//==============================================================================
 void InitInstructionPybind(py::module_& m) {
   py::class_<Instruction>(m, "Instruction")
       .def(py::init<Copy>(), py::arg("copy"), "Create instruction from Copy")
@@ -150,6 +157,8 @@ void InitInstructionPybind(py::module_& m) {
            "Create instruction from InitComm")
       .def(py::init<UseComm>(), py::arg("use_comm"),
            "Create instruction from UseComm")
+      .def(py::init<Barrier>(), py::arg("barrier"),
+           "Create instruction from Barrier")
       .def(
           "embellish",
           [](Instruction& self, py::function py_resolver) {
@@ -209,6 +218,7 @@ void InitLLCPybind(py::module_& m) {
   InitReceiveInstructionPybind(m);
   InitInitCommInstructionPybind(m);
   InitUseCommInstructionPybind(m);
+  InitBarrierInstructionPybind(m);
   InitInstructionPybind(m);
 }
 //==============================================================================

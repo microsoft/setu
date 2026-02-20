@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/ir/cir/Value.h"
 //==============================================================================
@@ -95,10 +96,28 @@ struct RegisterAllocation {
   ///
   /// @param program The CIR program
   /// @param liveness Pre-computed liveness info
-  /// @param pool_sizes Number of physical register slots available per device
+  /// @param register_sets Per-device register set specifying available slots
   [[nodiscard]] static RegisterAllocation Build(
       const Program& program /*[in]*/, const LivenessInfo& liveness /*[in]*/,
-      const std::unordered_map<Device, std::uint32_t>& pool_sizes /*[in]*/);
+      const std::unordered_map<Device, setu::planner::RegisterSet>&
+          register_sets /*[in]*/);
+};
+
+//==============================================================================
+
+/// Copy-depth analysis: for each CopyOp, the number of CopyOp ancestors
+/// along the src chain.  Used to stage multi-hop relay copies so that
+/// NCCL sends at depth N only execute after depth N-1 receives complete.
+struct CopyDepthAnalysis {
+  /// Indexed by CIR operation index. Only populated for CopyOp operations.
+  /// Depth 0 = src has no CopyOp ancestor (reads directly from View/AllocTmp).
+  /// Depth N = src traces through Slice/Consume to a CopyOp at depth N-1.
+  std::vector<std::optional<std::uint32_t>> depth;
+
+  /// Maximum depth across all CopyOps (0 if no copies, or all are depth 0).
+  std::uint32_t max_depth;
+
+  [[nodiscard]] static CopyDepthAnalysis Build(const Program& program);
 };
 
 //==============================================================================

@@ -21,15 +21,16 @@
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
-Planner::Planner(std::unique_ptr<targets::Backend> backend)
-    : backend_(std::move(backend)) {
+Planner::Planner(targets::BackendPtr backend,
+                 passes::PassManagerPtr pass_manager)
+    : backend_(std::move(backend)), pass_manager_(std::move(pass_manager)) {
   ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
 //==============================================================================
 Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore) {
   auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
-  auto plan = backend_->Run(cir);
-  return plan;
+  cir = pass_manager_->Run(std::move(cir));
+  return backend_->Run(cir);
 }
 //==============================================================================
 }  // namespace setu::planner

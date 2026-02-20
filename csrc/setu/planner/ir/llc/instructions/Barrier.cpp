@@ -14,25 +14,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/ir/llc/instructions/Barrier.h"
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
-//==============================================================================
-namespace setu::planner::targets {
+namespace setu::planner::ir::llc {
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
+std::string Barrier::ToString() const { return "Barrier()"; }
 
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
-};
+void Barrier::Serialize(BinaryBuffer& /*buffer*/) const {
+  // No fields to serialize — the type tag is written by Instruction::Serialize
+}
 
-using BackendPtr = std::shared_ptr<Backend>;
+Barrier Barrier::Deserialize(const BinaryRange& /*range*/) { return Barrier(); }
 
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner::ir::llc
 //==============================================================================

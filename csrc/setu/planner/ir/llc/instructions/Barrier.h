@@ -16,23 +16,37 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "setu/commons/StdCommon.h"
+#include "setu/commons/utils/Serialization.h"
 //==============================================================================
-namespace setu::planner::targets {
+namespace setu::planner::ir::llc {
+//==============================================================================
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
+/// Synchronization barrier between communication stages.
+///
+/// Instructs the backend to complete all in-flight communication operations
+/// before proceeding.  This ensures all receives from a prior stage are
+/// visible before subsequent sends read the received data (multi-hop relay
+/// correctness).  The concrete synchronization mechanism is backend-defined.
+struct Barrier {
+  Barrier() = default;
 
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
+  ~Barrier() = default;
+  Barrier(const Barrier&) = default;
+  Barrier& operator=(const Barrier&) = default;
+  Barrier(Barrier&&) = default;
+  Barrier& operator=(Barrier&&) = default;
+
+  [[nodiscard]] std::string ToString() const;
+
+  void Serialize(BinaryBuffer& buffer) const;
+
+  static Barrier Deserialize(const BinaryRange& range);
 };
 
-using BackendPtr = std::shared_ptr<Backend>;
-
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner::ir::llc
 //==============================================================================

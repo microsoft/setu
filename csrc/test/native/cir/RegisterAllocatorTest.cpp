@@ -19,11 +19,13 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 //==============================================================================
 namespace setu::test::native {
 //==============================================================================
+using setu::planner::RegisterSet;
 using setu::planner::ir::cir::Device;
 using setu::planner::ir::cir::LivenessInfo;
 using setu::planner::ir::cir::Program;
@@ -63,8 +65,9 @@ TEST(CIRRegisterAllocatorTest, SingleAllocTmp_AssignsRegisterZero) {
   auto v0 = program.EmitAllocTmp(dev, 128, torch::kFloat16);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 4}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   ASSERT_TRUE(alloc.allocation[v0.id].has_value())
       << "AllocTmp value should be assigned a physical register";
@@ -96,9 +99,10 @@ TEST(CIRRegisterAllocatorTest, NonOverlapping_ReusesSameRegister) {
 
   auto liveness = LivenessInfo::Build(program);
 
-  // Only 2 slots in the pool -- enough if reuse works
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 2}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  // Only 2 registers in the set -- enough if reuse works
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(2, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   ASSERT_TRUE(alloc.allocation[v0.id].has_value());
   ASSERT_TRUE(alloc.allocation[v1.id].has_value());
@@ -139,8 +143,9 @@ TEST(CIRRegisterAllocatorTest, Overlapping_AssignsDistinctRegisters) {
   (void)program.EmitCopy(v1, v3);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 4}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   ASSERT_TRUE(alloc.allocation[v0.id].has_value());
   ASSERT_TRUE(alloc.allocation[v1.id].has_value());
@@ -170,9 +175,10 @@ TEST(CIRRegisterAllocatorTest, MultiDevice_IndependentPools) {
   auto vb = program.EmitAllocTmp(dev_b, 64, torch::kFloat16);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev_a, 2},
-                                                          {dev_b, 2}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev_a, RegisterSet::Uniform(2, 1024)},
+      {dev_b, RegisterSet::Uniform(2, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   ASSERT_TRUE(alloc.allocation[va.id].has_value());
   ASSERT_TRUE(alloc.allocation[vb.id].has_value());
@@ -204,8 +210,9 @@ TEST(CIRRegisterAllocatorTest, ViewValues_NotAllocated) {
   auto v_copy = program.EmitCopy(v_view, v_tmp);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 4}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   // View value should not be allocated a physical register
   EXPECT_FALSE(alloc.allocation[v_view.id].has_value())
@@ -250,8 +257,9 @@ TEST(CIRRegisterAllocatorTest, Chain_ReusesRegistersSequentially) {
   auto t6 = program.EmitAllocTmp(dev, 64, torch::kFloat16);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 1}};
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(1, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   ASSERT_TRUE(alloc.allocation[t0.id].has_value());
   ASSERT_TRUE(alloc.allocation[t3.id].has_value());
@@ -278,9 +286,10 @@ TEST(CIRRegisterAllocatorTest, PoolExhausted_Asserts) {
   (void)program.EmitCopy(v0, v1);
 
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes = {{dev, 1}};
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(1, 1024)}};
 
-  EXPECT_THROW(RegisterAllocation::Build(program, liveness, pool_sizes),
+  EXPECT_THROW(RegisterAllocation::Build(program, liveness, register_sets),
                std::runtime_error)
       << "Should throw when pool cannot satisfy simultaneous live registers";
 }
@@ -292,8 +301,8 @@ TEST(CIRRegisterAllocatorTest, PoolExhausted_Asserts) {
 TEST(CIRRegisterAllocatorTest, EmptyProgram_ProducesEmptyAllocation) {
   Program program;
   auto liveness = LivenessInfo::Build(program);
-  std::unordered_map<Device, std::uint32_t> pool_sizes;
-  auto alloc = RegisterAllocation::Build(program, liveness, pool_sizes);
+  std::unordered_map<Device, RegisterSet> register_sets;
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
 
   EXPECT_TRUE(alloc.allocation.empty());
 }

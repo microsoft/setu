@@ -39,8 +39,26 @@ struct Plan {
   std::unordered_map<NodeId, Plan> Fragments();
 
   [[nodiscard]] std::string ToString() const {
-    return std::format("Plan(participants={}, programs={})", participants,
-                       program);
+    std::string result = "Plan\n";
+
+    // Participants section
+    result += std::format("  Participants ({}):\n", participants.size());
+    for (const auto& p : participants) {
+      result += std::format("    {}\n", p.ToString());
+    }
+
+    // Programs section
+    result += std::format("\n  Programs ({}):\n", program.size());
+    for (const auto& [participant, instructions] : program) {
+      result += std::format("    {} [{} instructions]:\n",
+                            participant.ToString(), instructions.size());
+      for (std::size_t i = 0; i < instructions.size(); ++i) {
+        result += std::format("      [{}] {}\n", i, instructions[i].ToString());
+      }
+      result += "\n";
+    }
+
+    return result;
   }
 
   void Serialize(BinaryBuffer& buffer) const;

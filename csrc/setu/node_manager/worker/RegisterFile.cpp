@@ -16,19 +16,11 @@
 //==============================================================================
 #include "node_manager/worker/RegisterFile.h"
 //==============================================================================
-#include <cuda_runtime.h>
-//==============================================================================
 #include "commons/Logging.h"
+#include "commons/utils/CUDAUtils.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
-
-#define CUDA_CHECK(call)                                                \
-  do {                                                                  \
-    cudaError_t err = (call);                                           \
-    ASSERT_VALID_RUNTIME(err == cudaSuccess, "CUDA error: {} at {}:{}", \
-                         cudaGetErrorString(err), __FILE__, __LINE__);  \
-  } while (0)
 
 void RegisterFile::Allocate() {
   for (std::uint32_t i = 0; i < spec_.NumRegisters(); ++i) {
@@ -45,13 +37,11 @@ void RegisterFile::Allocate() {
 void RegisterFile::Free() {
   for (auto& ptr : ptrs_) {
     if (ptr != nullptr) {
-      cudaFree(ptr);
+      CUDA_CHECK(cudaFree(ptr));
       ptr = nullptr;
     }
   }
 }
-
-#undef CUDA_CHECK
 
 //==============================================================================
 }  // namespace setu::node_manager::worker

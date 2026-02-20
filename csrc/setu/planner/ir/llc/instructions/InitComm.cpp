@@ -22,13 +22,21 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string InitComm::ToString() const {
-  std::string hex;
-  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
-    hex +=
+  // Show only the first 8 bytes of the comm_id as a short identifier
+  std::string short_hex;
+  for (std::size_t i = 0; i < 8; ++i) {
+    short_hex +=
         std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
   }
-  return std::format("InitComm(comm_id={}, participant_to_rank={})", hex,
-                     participant_to_rank);
+
+  std::string ranks_str;
+  for (const auto& [participant, rank] : participant_to_rank) {
+    if (!ranks_str.empty()) ranks_str += ", ";
+    ranks_str += std::format("{}={}", participant.ToString(), rank);
+  }
+
+  return std::format("InitComm(comm_id={}..., ranks={{{}}})", short_hex,
+                     ranks_str);
 }
 
 void InitComm::Serialize(BinaryBuffer& buffer) const {

@@ -17,10 +17,29 @@
 #pragma once
 //==============================================================================
 #include <cuda_runtime_api.h>
+#include <nccl.h>
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
+//==============================================================================
+
+// clang-format off
+#define CUDA_CHECK(call)                                                \
+  do {                                                                  \
+    cudaError_t err = (call);                                           \
+    ASSERT_VALID_RUNTIME(err == cudaSuccess, "CUDA error: {} at {}:{}", \
+                         cudaGetErrorString(err), __FILE__, __LINE__);  \
+  } while (0)
+
+#define NCCL_CHECK(call)                                                \
+  do {                                                                  \
+    ncclResult_t res = (call);                                          \
+    ASSERT_VALID_RUNTIME(res == ncclSuccess, "NCCL error: {} at {}:{}", \
+                         ncclGetErrorString(res), __FILE__, __LINE__);  \
+  } while (0)
+// clang-format on
+
 //==============================================================================
 namespace setu::commons::utils {
 //==============================================================================

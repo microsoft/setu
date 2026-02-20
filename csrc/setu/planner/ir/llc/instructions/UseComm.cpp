@@ -20,12 +20,12 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string UseComm::ToString() const {
-  std::string hex;
-  for (std::size_t i = 0; i < NCCL_UNIQUE_ID_BYTES; ++i) {
-    hex +=
+  std::string short_hex;
+  for (std::size_t i = 0; i < 8; ++i) {
+    short_hex +=
         std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
   }
-  return std::format("UseComm(comm_id={})", hex);
+  return std::format("UseComm(comm_id={}...)", short_hex);
 }
 
 void UseComm::Serialize(BinaryBuffer& buffer) const {

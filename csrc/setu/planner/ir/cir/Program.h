@@ -64,6 +64,10 @@ class Program : public setu::commons::NonCopyable {
   /// Requires: src.size_elements == dst_in.size_elements
   [[nodiscard]] Value EmitCopy(Value src /*[in]*/, Value dst_in /*[in]*/);
 
+  /// %out = consume(%src)
+  /// Consumes src, returning a new SSA value for the underlying buffer.
+  [[nodiscard]] Value EmitConsume(Value src /*[in]*/);
+
   /// %dst_out = pack(srcs, %dst_in)
   /// Requires: sum(src_i.size_elements) == dst_in.size_elements
   [[nodiscard]] Value EmitPack(std::vector<Value> srcs /*[in]*/,

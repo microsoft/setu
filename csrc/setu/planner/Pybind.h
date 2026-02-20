@@ -16,23 +16,12 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 //==============================================================================
-namespace setu::planner::targets {
+namespace setu::planner {
 //==============================================================================
-
-namespace cir = setu::planner::ir::cir;
-
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
-};
-
-using BackendPtr = std::shared_ptr<Backend>;
-
+void InitPlannerPybind(py::module_& m);
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner
 //==============================================================================

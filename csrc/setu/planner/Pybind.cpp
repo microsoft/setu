@@ -21,8 +21,13 @@
 #include "commons/TorchCommon.h"
 #include "commons/utils/Pybind.h"
 //==============================================================================
+#include "planner/Participant.h"
+#include "planner/Plan.h"
+#include "planner/Planner.h"
 #include "planner/ir/llc/Pybind.h"
-#include "setu/planner/Participant.h"
+#include "planner/passes/Pybind.h"
+#include "planner/targets/Pybind.h"
+#include "planner/topo/Pybind.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
@@ -40,20 +45,57 @@ void InitParticipantPybind(py::module_& m) {
       .def("__lt__", &Participant::operator<)
       .def("__hash__",
            [](const Participant& p) { return std::hash<Participant>{}(p); })
-      .def("__repr__", [](const Participant& p) {
-        return std::format("Participant(node_id={}, device={})",
-                           boost::uuids::to_string(p.node_id),
-                           p.device.ToString());
-      });
+      .def("__repr__",
+           [](const Participant& p) {
+             return std::format("Participant(node_id={}, device={})",
+                                boost::uuids::to_string(p.node_id),
+                                p.device.ToString());
+           })
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const Participant& p) {  // __getstate__
+            return py::make_tuple(p.node_id, p.device);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for Participant");
+            }
+            return Participant(t[0].cast<NodeId>(), t[1].cast<Device>());
+          }));
 }
 //==============================================================================
-void InitPlannerPybind(py::module_& m) { InitParticipantPybind(m); }
+void InitPlanPybind(py::module_& m) {
+  using setu::planner::ir::llc::Program;
+
+  py::class_<Plan>(m, "Plan")
+      .def(py::init<>(), "Create an empty Plan")
+      .def_readwrite("participants", &Plan::participants,
+                     "Set of participants in this plan")
+      .def_readwrite("program", &Plan::program,
+                     "Mapping from participant to their LLC program")
+      .def("fragments", &Plan::Fragments,
+           "Split the plan into per-node fragments")
+      .def("__str__", &Plan::ToString)
+      .def("__repr__", &Plan::ToString);
+}
+//==============================================================================
+void InitPlannerClassPybind(py::module_& m) {
+  py::class_<Planner, PlannerPtr>(m, "Planner")
+      .def(py::init<targets::BackendPtr, passes::PassManagerPtr>(),
+           py::arg("backend"), py::arg("pass_manager"),
+           "Create a Planner with the given backend and pass manager")
+      .def("compile", &Planner::Compile);
+}
+//==============================================================================
+void InitPlannerPybind(py::module_& m) {
+  InitParticipantPybind(m);
+  topo::InitTopoPybind(m);
+  targets::InitTargetsPybind(m);
+  passes::InitPassesPybind(m);
+  ir::llc::InitLLCPybind(m);
+  InitPlanPybind(m);
+  InitPlannerClassPybind(m);
+}
 //==============================================================================
 }  // namespace setu::planner
-//==============================================================================
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  setu::commons::Logger::InitializeLogLevel();
-  setu::planner::InitPlannerPybind(m);
-  setu::planner::ir::llc::InitLLCPybind(m);
-}
 //==============================================================================

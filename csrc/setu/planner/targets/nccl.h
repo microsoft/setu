@@ -19,6 +19,7 @@
 #include <nccl.h>
 //==============================================================================
 #include "planner/Planner.h"
+#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/targets/backend.h"
 //==============================================================================
@@ -36,15 +37,23 @@ namespace cir = setu::planner::ir::cir;
 /// with the same participant set reuse the existing communicator (UseComm)
 /// instead of creating a new one (InitComm).
 ///
-/// Currently supported CIR operations:
-///   view  — records shard/offset metadata for later use by copy
-///   copy  — emits LLC Copy (same-device) or Send+Receive (cross-device)
+/// Supported CIR operations:
+///   view      — records shard/offset metadata for later use by copy
+///   alloc_tmp — allocates a temporary register buffer (register allocation
+///               is performed internally using pool_sizes)
+///   slice     — creates a sub-region view of an existing value
+///   copy      — emits LLC Copy (same-device) or Send+Receive (cross-device)
 ///
-/// Unsupported (will assert): alloc_tmp, pack, unpack
+/// Unsupported (will assert): pack, unpack
 struct NCCL : public Backend {
+  explicit NCCL(std::unordered_map<cir::Device, setu::planner::RegisterSet>
+                    register_sets = {});
+
   [[nodiscard]] Plan Run(const cir::Program& program /*[in]*/) override;
 
  private:
+  std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets_;
+
   struct CommCacheEntry {
     ncclUniqueId id;
     std::unordered_map<Participant, DeviceRank> ranks;

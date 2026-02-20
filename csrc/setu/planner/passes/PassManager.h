@@ -16,23 +16,27 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "commons/StdCommon.h"
 //==============================================================================
-namespace setu::planner::targets {
+#include "commons/ClassTraits.h"
+#include "planner/passes/Pass.h"
+//==============================================================================
+namespace setu::planner::passes {
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
-
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
+class PassManager : public setu::commons::NonCopyable {
  public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
+  PassManager() = default;
+  void AddPass(PassPtr pass);
+  [[nodiscard]] cir::Program Run(cir::Program program) const;
+  [[nodiscard]] std::size_t NumPasses() const;
+
+ private:
+  std::vector<PassPtr> passes_;
 };
 
-using BackendPtr = std::shared_ptr<Backend>;
+using PassManagerPtr = std::shared_ptr<PassManager>;
 
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner::passes
 //==============================================================================

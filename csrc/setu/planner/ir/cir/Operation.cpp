@@ -35,6 +35,8 @@ OpType Operation::Type() const {
           return OpType::kUnpack;
         } else if constexpr (std::is_same_v<T, SliceOp>) {
           return OpType::kSlice;
+        } else if constexpr (std::is_same_v<T, ConsumeOp>) {
+          return OpType::kConsume;
         }
       },
       op);
@@ -55,6 +57,8 @@ std::vector<Value> Operation::Defs() const {
         } else if constexpr (std::is_same_v<T, UnpackOp>) {
           return op.dst_outs;
         } else if constexpr (std::is_same_v<T, SliceOp>) {
+          return {op.out};
+        } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           return {op.out};
         }
       },
@@ -81,6 +85,8 @@ std::vector<Value> Operation::Uses() const {
           return uses;
         } else if constexpr (std::is_same_v<T, SliceOp>) {
           return {op.src};
+        } else if constexpr (std::is_same_v<T, ConsumeOp>) {
+          return {op.src};
         }
       },
       op);
@@ -102,6 +108,8 @@ std::vector<Value> Operation::ConsumedOperands() const {
           return op.dst_ins;
         } else if constexpr (std::is_same_v<T, SliceOp>) {
           return {};
+        } else if constexpr (std::is_same_v<T, ConsumeOp>) {
+          return {op.src};
         }
       },
       op);

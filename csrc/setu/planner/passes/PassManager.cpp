@@ -1,6 +1,6 @@
 //==============================================================================
-// Copyright 2025 Vajra Team; Georgia Institute of Technology; Microsoft
-// Corporation
+// Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
+// Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,34 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/Pybind.h"
-
+#include "planner/passes/PassManager.h"
+//==============================================================================
 #include "commons/Logging.h"
-#include "commons/StdCommon.h"
-#include "commons/TorchCommon.h"
-#include "coordinator/Coordinator.h"
-#include "metastore/Pybind.h"
 //==============================================================================
-namespace setu::coordinator {
+namespace setu::planner::passes {
 //==============================================================================
-using setu::planner::PlannerPtr;
-//==============================================================================
-void InitCoordinatorPybindClass(py::module_& m) {
-  py::class_<Coordinator, std::shared_ptr<Coordinator>>(m, "Coordinator")
-      .def(py::init<std::size_t, PlannerPtr>(), py::arg("port"),
-           py::arg("planner"),
-           "Create a Coordinator with specified port and planner")
-      .def("start", &Coordinator::Start, "Start the Coordinator loops")
-      .def("stop", &Coordinator::Stop, "Stop the Coordinator loops");
+void PassManager::AddPass(PassPtr pass) {
+  ASSERT_VALID_POINTER_ARGUMENT(pass);
+  passes_.emplace_back(std::move(pass));
 }
 //==============================================================================
-}  // namespace setu::coordinator
-//==============================================================================
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  setu::commons::Logger::InitializeLogLevel();
-
-  setu::metastore::InitMetastorePybind(m);
-  setu::planner::InitPlannerPybind(m);
-  setu::coordinator::InitCoordinatorPybindClass(m);
+cir::Program PassManager::Run(cir::Program program) const {
+  for (const auto& pass : passes_) {
+    program = pass->Run(program);
+    LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
+  }
+  return program;
 }
+//==============================================================================
+std::size_t PassManager::NumPasses() const { return passes_.size(); }
+//==============================================================================
+}  // namespace setu::planner::passes
 //==============================================================================

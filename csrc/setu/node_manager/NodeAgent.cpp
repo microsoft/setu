@@ -666,6 +666,8 @@ void NodeAgent::Executor::Loop() {
         // Populate device ptrs for instructions
         EmbellishProgram(program);
 
+        LOG_DEBUG("Embellished program: {} {}", participant, program);
+
         // Send ExecuteProgramRequest to worker
         LOG_DEBUG("Sending program with {} instructions to worker {}",
                   program.size(), device_rank);

@@ -16,23 +16,27 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "commons/StdCommon.h"
 //==============================================================================
-namespace setu::planner::targets {
+#include "planner/ir/cir/Value.h"
+//==============================================================================
+namespace setu::planner::ir::cir {
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
+/// %out = consume(%src)
+///
+/// Marker operation that consumes a value, producing a new SSA value that
+/// is the canonical way to reference the underlying buffer going forward.
+/// Linearity checking treats src as consumed (dead after this op).
+struct ConsumeOp {
+  Value out;  ///< Result value (new reference to the consumed buffer)
+  Value src;  ///< Value to consume (ownership transferred, value becomes dead)
 
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
+  [[nodiscard]] std::string ToString() const {
+    return std::format("{} = consume({})", out.ToString(), src.ToString());
+  }
 };
 
-using BackendPtr = std::shared_ptr<Backend>;
-
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner::ir::cir
 //==============================================================================

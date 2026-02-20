@@ -19,6 +19,7 @@
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
+#include "commons/utils/CUDAUtils.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "messaging/Messages.h"
@@ -31,21 +32,6 @@ using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
 using setu::planner::Participant;
-//==============================================================================
-
-#define CUDA_CHECK(call)                                                \
-  do {                                                                  \
-    cudaError_t err = (call);                                           \
-    ASSERT_VALID_RUNTIME(err == cudaSuccess, "CUDA error: {} at {}:{}", \
-                         cudaGetErrorString(err), __FILE__, __LINE__);  \
-  } while (0)
-
-#define NCCL_CHECK(call)                                                \
-  do {                                                                  \
-    ncclResult_t res = (call);                                          \
-    ASSERT_VALID_RUNTIME(res == ncclSuccess, "NCCL error: {} at {}:{}", \
-                         ncclGetErrorString(res), __FILE__, __LINE__);  \
-  } while (0)
 
 //==============================================================================
 // NCCLWorker
@@ -119,6 +105,12 @@ void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
             group_started = true;
           }
           ExecuteReceive(inst);
+        } else if constexpr (std::is_same_v<T, Barrier>) {
+          if (group_started) {
+            NCCL_CHECK(ncclGroupEnd());
+            CUDA_CHECK(cudaStreamSynchronize(stream_));
+            group_started = false;
+          }
         }
       },
       instruction.instr);

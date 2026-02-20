@@ -14,25 +14,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "planner/passes/Pybind.h"
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "commons/Logging.h"
+#include "commons/StdCommon.h"
+#include "commons/TorchCommon.h"
 //==============================================================================
-namespace setu::planner::targets {
+#include "planner/passes/PassManager.h"
+#include "planner/passes/ShortestPathRouting.h"
 //==============================================================================
-
-namespace cir = setu::planner::ir::cir;
-
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
-};
-
-using BackendPtr = std::shared_ptr<Backend>;
-
+namespace setu::planner::passes {
 //==============================================================================
-}  // namespace setu::planner::targets
+using setu::planner::topo::TopologyPtr;
+//==============================================================================
+void InitPassesPybind(py::module_& m) {
+  py::class_<Pass, PassPtr>(m, "Pass");
+
+  py::class_<PassManager, PassManagerPtr>(m, "PassManager")
+      .def(py::init<>(), "Create an empty PassManager")
+      .def("add_pass", &PassManager::AddPass, py::arg("pass_"),
+           "Add a pass to the pipeline")
+      .def("num_passes", &PassManager::NumPasses,
+           "Return the number of passes in the pipeline");
+
+  py::class_<ShortestPathRouting, Pass, std::shared_ptr<ShortestPathRouting>>(
+      m, "ShortestPathRouting")
+      .def(py::init<TopologyPtr>(), py::arg("topology"),
+           "Create a ShortestPathRouting pass with the given topology");
+}
+//==============================================================================
+}  // namespace setu::planner::passes
 //==============================================================================

@@ -87,6 +87,18 @@ Value Program::EmitCopy(Value src, Value dst_in) {
   return dst_out;
 }
 
+Value Program::EmitConsume(Value src) {
+  const auto& src_info = GetValueInfo(src);
+
+  auto op_index = static_cast<std::uint32_t>(ops_.size());
+  auto out = AllocateValue(src_info.device, src_info.size_elements,
+                           src_info.dtype, op_index);
+
+  ops_.emplace_back(ConsumeOp{.out = out, .src = src});
+
+  return out;
+}
+
 Value Program::EmitPack(std::vector<Value> srcs, Value dst_in) {
   ASSERT_VALID_ARGUMENTS(!srcs.empty(), "pack requires at least one source");
   const auto& dst_info = GetValueInfo(dst_in);
@@ -250,6 +262,10 @@ void ProgramRewriter::CloneOp(std::size_t op_index) {
         } else if constexpr (std::is_same_v<T, SliceOp>) {
           auto new_val =
               target_.EmitSlice(Lookup(concrete_op.src), concrete_op.slice);
+          MapValue(concrete_op.out, new_val);
+
+        } else if constexpr (std::is_same_v<T, ConsumeOp>) {
+          auto new_val = target_.EmitConsume(Lookup(concrete_op.src));
           MapValue(concrete_op.out, new_val);
         }
       },

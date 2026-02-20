@@ -39,6 +39,7 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::planner::ir::llc::Barrier;
 using setu::planner::ir::llc::Copy;
 using setu::planner::ir::llc::InitComm;
 using setu::planner::ir::llc::Instruction;

@@ -7,64 +7,13 @@ for thread-safe tensor shard access.
 
 import time
 import uuid
+from test.fixtures import ClusterSpec, DeviceSpec, SetuTestCluster
 
 import pytest
 import torch
 import torch.multiprocessing as mp
 
-
-def _run_coordinator(
-    port: int,
-    ready_event,
-    stop_event,
-):
-    """Run the Coordinator in a separate process."""
-    from setu._coordinator import Coordinator
-
-    coordinator = Coordinator(port)
-    coordinator.start()
-    ready_event.set()
-
-    while not stop_event.is_set():
-        time.sleep(0.05)
-
-    coordinator.stop()
-
-
-def _run_node_agent(
-    port: int,
-    coordinator_endpoint: str,
-    ready_event,
-    stop_event,
-    node_id=None,
-    device_index: int = 0,
-):
-    """Run the NodeAgent in a separate process."""
-    from setu._commons.datatypes import Device
-    from setu._node_manager import NodeAgent
-
-    if node_id is None:
-        node_id = uuid.uuid4()
-
-    devices = [
-        Device(
-            torch_device=torch.device(f"cuda:{device_index}"),
-        )
-    ]
-
-    node_agent = NodeAgent(
-        node_id=node_id,
-        port=port,
-        coordinator_endpoint=coordinator_endpoint,
-        devices=devices,
-    )
-    node_agent.start()
-    ready_event.set()
-
-    while not stop_event.is_set():
-        time.sleep(0.05)
-
-    node_agent.stop()
+from setu._commons.datatypes import Device
 
 
 @pytest.fixture(scope="module")
@@ -75,57 +24,16 @@ def infrastructure():
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
-    coordinator_port = 29300
-    node_agent_port = 29301
-    coordinator_endpoint = f"tcp://localhost:{coordinator_port}"
-    client_endpoint = f"tcp://localhost:{node_agent_port}"
-
-    ctx = mp.get_context("spawn")
-    coordinator_ready = ctx.Event()
-    node_agent_ready = ctx.Event()
-    stop_event = ctx.Event()
-
-    # Start Coordinator
-    coordinator_proc = ctx.Process(
-        target=_run_coordinator,
-        args=(
-            coordinator_port,
-            coordinator_ready,
-            stop_event,
-        ),
+    node_id = uuid.uuid4()
+    spec = ClusterSpec(
+        coordinator_port=29300,
+        nodes={node_id: (29301, [DeviceSpec(Device(torch.device("cuda:0")))])},
     )
-    coordinator_proc.start()
-    assert coordinator_ready.wait(timeout=10), "Coordinator failed to start"
 
-    # Start NodeAgent
-    node_agent_proc = ctx.Process(
-        target=_run_node_agent,
-        args=(
-            node_agent_port,
-            coordinator_endpoint,
-            node_agent_ready,
-            stop_event,
-        ),
-    )
-    node_agent_proc.start()
-    assert node_agent_ready.wait(timeout=10), "NodeAgent failed to start"
-
-    # Brief delay for initialization
-    time.sleep(0.1)
-
-    # Yield infrastructure for tests to use
-    yield {
-        "client_endpoint": client_endpoint,
-    }
-
-    # Cleanup
-    stop_event.set()
-    time.sleep(0.1)
-    for proc in [node_agent_proc, coordinator_proc]:
-        proc.join(timeout=3)
-        if proc.is_alive():
-            proc.terminate()
-            proc.join(timeout=1)
+    with SetuTestCluster(spec) as cluster:
+        yield {
+            "client_endpoint": cluster.client_endpoint(node_id),
+        }
 
 
 @pytest.mark.gpu

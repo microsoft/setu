@@ -21,14 +21,12 @@
 #include "commons/TorchCommon.h"
 #include "commons/enums/Pybind.h"
 #include "commons/utils/Pybind.h"
-#include "messaging/Pybind.h"
 //==============================================================================
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   setu::commons::Logger::InitializeLogLevel();
 
   setu::commons::enums::InitEnumsPybindSubmodule(m);
   setu::commons::datatypes::InitDatatypesPybindSubmodule(m);
-  setu::commons::messages::InitMessagesPybindSubmodule(m);
   setu::commons::utils::InitPybindSubmodule(m);
 }
 //==============================================================================

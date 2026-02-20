@@ -16,23 +16,28 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/ir/cir/Program.h"
+#include "commons/StdCommon.h"
 //==============================================================================
-namespace setu::planner::targets {
+#include "planner/passes/Pass.h"
+#include "planner/topo/Topology.h"
+//==============================================================================
+namespace setu::planner::passes {
+//==============================================================================
+using setu::planner::topo::TopologyPtr;
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
-
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
+class ShortestPathRouting : public Pass {
  public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
+  explicit ShortestPathRouting(TopologyPtr topo) : topo_(std::move(topo)) {}
+  [[nodiscard]] cir::Program Run(const cir::Program& program) override;
+  [[nodiscard]] std::string Name() const override {
+    return "ShortestPathRouting";
+  }
+
+ private:
+  TopologyPtr topo_;
 };
 
-using BackendPtr = std::shared_ptr<Backend>;
-
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner::passes
 //==============================================================================

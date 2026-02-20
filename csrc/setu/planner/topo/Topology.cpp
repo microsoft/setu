@@ -108,4 +108,14 @@ std::optional<Path> Topology::ShortestPath(
   return Path(std::move(hops), std::move(links));
 }
 
+std::vector<Topology::Edge> Topology::GetEdges() const {
+  std::vector<Edge> edges;
+  for (const auto& [src, neighbors] : adj_) {
+    for (const auto& [dst, link] : neighbors) {
+      edges.emplace_back(src, dst, link);
+    }
+  }
+  return edges;
+}
+
 }  // namespace setu::planner::topo

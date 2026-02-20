@@ -19,7 +19,6 @@
 #include "commons/Logging.h"
 #include "commons/QueueUtils.h"
 #include "commons/utils/Comm.h"
-#include "planner/targets/nccl.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -48,6 +47,19 @@ constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
 // Coordinator Implementation
 //==============================================================================
+
+Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
+    : port_(port),
+      zmq_context_(std::make_shared<zmq::context_t>()),
+      planner_(planner) {
+  gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
+                                       outbox_queue_);
+  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
+                                       planner_queue_);
+  executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
+                                         metastore_, *planner_);
+}
+  
 Coordinator::Coordinator(std::size_t port) : port_(port) {}
 
 Coordinator::~Coordinator() { Stop(); }
@@ -61,13 +73,6 @@ void Coordinator::Start() {
 
   // Create ZMQ context and components
   zmq_context_ = std::make_shared<zmq::context_t>();
-  gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
-                                       outbox_queue_);
-  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_);
-
-  executor_ =
-      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_);
 
   gateway_->Start();
   handler_->Start();
@@ -470,11 +475,11 @@ void Coordinator::Handler::HandleGetTensorSpecRequest(
 //==============================================================================
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
-                                MetaStore& metastore)
+                                MetaStore& metastore, Planner& planner)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
-      planner_(std::make_unique<setu::planner::targets::NCCL>()) {}
+      planner_(planner) {}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {
@@ -496,20 +501,18 @@ void Coordinator::Executor::Loop() {
   running_ = true;
   while (running_) {
     try {
-      // Pull the next planner task from the queue
       PlannerTask task = planner_queue_.pull();
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-      // Compile the CopySpec into a Plan using NCCLPlanner
       Plan plan = planner_.Compile(task.copy_spec, metastore_);
 
       LOG_DEBUG("Compiled plan:\n{}", plan);
 
-      // Fragment the plan by NodeId
+      // Fragment the plan to into per-node fragments
       auto fragments = plan.Fragments();
 
-      // Send ExecuteRequest to each node agent's async (DEALER) socket
+      // Send ExecuteRequest to each node agent
       for (auto& [node_id, node_plan] : fragments) {
         Identity node_identity = boost::uuids::to_string(node_id) + "_dealer";
 
@@ -518,8 +521,9 @@ void Coordinator::Executor::Loop() {
         outbox_queue_.push(OutboxMessage{node_identity, execute_request});
       }
 
-      // Set expected responses (atomic write with release ordering for
-      // visibility to Handler thread)
+      // Set expected responses
+      // memory order release so Handler thread can pick it up (using memory
+      // order aqcuire)
       task.state->expected_responses.store(fragments.size(),
                                            std::memory_order_release);
       LOG_DEBUG("Executor: Set expected_responses={} for copy_op_id={}",
