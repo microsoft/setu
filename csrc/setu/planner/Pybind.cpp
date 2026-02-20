@@ -24,6 +24,7 @@
 #include "planner/Participant.h"
 #include "planner/Plan.h"
 #include "planner/Planner.h"
+#include "planner/hints/Pybind.h"
 #include "planner/ir/llc/Pybind.h"
 #include "planner/passes/Pybind.h"
 #include "planner/targets/Pybind.h"
@@ -90,6 +91,7 @@ void InitPlannerClassPybind(py::module_& m) {
 void InitPlannerPybind(py::module_& m) {
   InitParticipantPybind(m);
   topo::InitTopoPybind(m);
+  hints::InitHintsPybind(m);
   targets::InitTargetsPybind(m);
   passes::InitPassesPybind(m);
   ir::llc::InitLLCPybind(m);

@@ -20,9 +20,11 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/Participant.h"
 #include "planner/topo/Topology.h"
 //==============================================================================
 namespace setu::planner::topo {
+using setu::planner::Participant;
 //==============================================================================
 void InitTopoPybind(py::module_& m) {
   py::class_<Link>(m, "Link")
@@ -42,6 +44,17 @@ void InitTopoPybind(py::module_& m) {
             return Link(t[0].cast<float>(), t[1].cast<float>(),
                         t[2].cast<std::optional<std::string>>());
           }));
+
+  py::class_<Path>(m, "Path")
+      .def(py::init<std::vector<Participant>, std::vector<Link>>(),
+           py::arg("hops"), py::arg("links"),
+           "Create a path with hops and links")
+      .def_readonly("hops", &Path::hops, "Intermediate hops (Participants)")
+      .def_readonly("links", &Path::links, "Links connecting the hops")
+      .def_readonly("total_latency_us", &Path::total_latency_us)
+      .def_readonly("bottleneck_bandwidth_gbps",
+                    &Path::bottleneck_bandwidth_gbps)
+      .def("__repr__", &Path::ToString);
 
   py::class_<Topology, TopologyPtr>(m, "Topology")
       .def(py::init<>(), "Create an empty topology")

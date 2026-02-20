@@ -21,10 +21,13 @@
 #include "commons/TorchCommon.h"
 #include "coordinator/Coordinator.h"
 #include "metastore/Pybind.h"
+#include "planner/hints/Hint.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
 using setu::planner::PlannerPtr;
+using setu::planner::hints::CompilerHint;
+using setu::planner::hints::RoutingHint;
 //==============================================================================
 void InitCoordinatorPybindClass(py::module_& m) {
   py::class_<Coordinator, std::shared_ptr<Coordinator>>(m, "Coordinator")
@@ -32,7 +35,14 @@ void InitCoordinatorPybindClass(py::module_& m) {
            py::arg("planner"),
            "Create a Coordinator with specified port and planner")
       .def("start", &Coordinator::Start, "Start the Coordinator loops")
-      .def("stop", &Coordinator::Stop, "Stop the Coordinator loops");
+      .def("stop", &Coordinator::Stop, "Stop the Coordinator loops")
+      .def(
+          "add_hint",
+          [](Coordinator& self, const RoutingHint& hint) {
+            self.AddHint(CompilerHint{hint});
+          },
+          py::arg("hint"), "Add a compiler hint (e.g. RoutingHint)")
+      .def("clear_hints", &Coordinator::ClearHints, "Clear all compiler hints");
 }
 //==============================================================================
 }  // namespace setu::coordinator
