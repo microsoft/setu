@@ -36,6 +36,15 @@ void InitCoordinatorPybindClass(py::module_& m) {
            "Create a Coordinator with specified port and planner")
       .def("start", &Coordinator::Start, "Start the Coordinator loops")
       .def("stop", &Coordinator::Stop, "Stop the Coordinator loops")
+      // TODO: Ideally we'd bind AddHint directly:
+      //   .def("add_hint", &Coordinator::AddHint)
+      // and let pybind11/stl.h auto-cast RoutingHint -> CompilerHint
+      // (std::variant). However, this fails at compile time —
+      // pybind11 can't default-construct the type_caster tuple for
+      // the member function pointer's arguments. Root cause is
+      // unclear, investigate later as this is not a blocking concern.
+      // Using a per-type lambda as a workaround; needs a new overload
+      // for each hint type added to CompilerHint.
       .def(
           "add_hint",
           [](Coordinator& self, const RoutingHint& hint) {
