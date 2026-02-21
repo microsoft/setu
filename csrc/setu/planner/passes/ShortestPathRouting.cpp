@@ -12,11 +12,13 @@ using setu::planner::topo::Path;
 
 cir::Program ShortestPathRouting::Run(const cir::Program& program,
                                       const HintStore& hints) {
-  // Build override map from routing hints
-  std::map<std::pair<Participant, Participant>, const Path*> overrides;
+  // Calculate override map from routing hints
+  std::map<std::pair<Participant, Participant>,
+           std::reference_wrapper<const Path>>
+      overrides;
   for (const auto& hint_ref : hints.GetHints<RoutingHint>()) {
     const auto& hint = hint_ref.get();
-    overrides[{hint.src, hint.dst}] = &hint.path;
+    overrides.emplace(std::pair{hint.src, hint.dst}, std::cref(hint.path));
   }
 
   auto rw = cir::ProgramRewriter(program);
@@ -31,14 +33,14 @@ cir::Program ShortestPathRouting::Run(const cir::Program& program,
             // builder guarantees that num bytes is the same for src, dst values
             auto bytes = src_val_info.NumBytes();
 
-            // Check for routing hint override first
-            auto override_it =
-                overrides.find({src_val_info.device, dst_val_info.device});
-
             topo::Path path = [&]() -> topo::Path {
+              // First, check if hint defined an override
+              auto override_it =
+                  overrides.find({src_val_info.device, dst_val_info.device});
               if (override_it != overrides.end()) {
-                return *override_it->second;
+                return override_it->second.get();
               }
+              // No override defined, calculate shortest path
               auto path_opt =
                   topo_->ShortestPath(src_val_info.device, dst_val_info.device,
                                       [bytes](const Link& l) -> float {
