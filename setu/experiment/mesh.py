@@ -68,8 +68,7 @@ class Mesh:
             return self._axis_names.index(axis_name)
         except ValueError:
             raise ValueError(
-                f"Unknown axis {axis_name!r}; "
-                f"mesh has axes {self._axis_names}"
+                f"Unknown axis {axis_name!r}; " f"mesh has axes {self._axis_names}"
             )
 
 
