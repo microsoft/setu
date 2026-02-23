@@ -11,7 +11,7 @@ import pytest
 import ray
 import torch
 
-from setu.cluster.ray import Cluster, ClusterInfo, NodeAgentInfo
+from setu.cluster.ray import Cluster, ClusterInfo, NodeInfo
 
 
 @pytest.fixture(scope="module")
@@ -51,19 +51,18 @@ class TestCluster:
         assert info.coordinator_endpoint.startswith("tcp://")
         assert info.num_nodes >= 1
         assert info.total_gpus >= 1
-        assert len(info.node_agents) >= 1
+        assert len(info.nodes) >= 1
 
     @pytest.mark.gpu
-    def test_node_agent_info_structure(self, cluster):
-        """Test that each NodeAgentInfo has the expected fields."""
+    def test_node_info_structure(self, cluster):
+        """Test that each NodeInfo has the expected fields."""
         _, info = cluster
 
-        for na in info.node_agents:
-            assert isinstance(na, NodeAgentInfo)
-            assert na.node_id
-            assert na.ip_address
-            assert na.node_agent_endpoint.startswith("tcp://")
-            assert na.num_gpus >= 1
+        for node in info.nodes:
+            assert isinstance(node, NodeInfo)
+            assert node.node_id
+            assert node.node_agent_endpoint.startswith("tcp://")
+            assert len(node.devices) >= 1
 
     @pytest.mark.gpu
     def test_node_agent_endpoints_property(self, cluster):
