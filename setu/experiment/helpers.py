@@ -1,16 +1,39 @@
-"""Helper functions for building shards, topologies, and copy specs."""
+"""Helper functions for building shards and copy specs."""
 
-from typing import List
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set, Union
 
 import numpy as np
 import torch
 
 from setu._commons.datatypes import (
+    CopySpec,
     TensorDim,
     TensorDimSpec,
+    TensorSelection,
     TensorShardSpec,
 )
 from setu.cluster.mesh import Mesh, PartitionSpec
+
+
+@dataclass(frozen=True)
+class ShardedTensor:
+    """A global tensor with its mesh-based sharding description.
+
+    Wraps the tensor metadata (name, dims, dtype) together with the Mesh and
+    PartitionSpec that describe how it is distributed.  The ``.shards``
+    property materialises the concrete ``TensorShardSpec`` list on demand.
+    """
+
+    name: str
+    dims: List[TensorDim]
+    mesh: Mesh
+    partition: PartitionSpec
+    dtype: torch.dtype = torch.float32
+
+    @property
+    def shards(self) -> List[TensorShardSpec]:
+        return shard_tensor(self.name, self.dims, self.mesh, self.partition, self.dtype)
 
 
 def shard_tensor(
@@ -78,3 +101,44 @@ def shard_tensor(
         )
 
     return shards
+
+
+# ---------------------------------------------------------------------------
+# CopySpec builder
+# ---------------------------------------------------------------------------
+
+
+def build_copy_spec(
+    src_name: str,
+    dst_name: str,
+    dims: List[TensorDim],
+    src_selections: Optional[Dict[str, Union[Set[int], list]]] = None,
+    dst_selections: Optional[Dict[str, Union[Set[int], list]]] = None,
+) -> CopySpec:
+    """Build a CopySpec from tensor dim descriptions and optional selections.
+
+    Args:
+        src_name: Source tensor name.
+        dst_name: Destination tensor name.
+        dims: List of TensorDim describing the tensor shape.
+        src_selections: Optional dict mapping dim name -> index set to
+            apply via ``.where()`` on the source selection.
+        dst_selections: Optional dict mapping dim name -> index set to
+            apply via ``.where()`` on the destination selection.
+
+    Returns:
+        A CopySpec ready for ``client.submit_pull()``.
+    """
+    dim_map = {d.name: d for d in dims}
+
+    src_sel = TensorSelection(src_name, dim_map)
+    if src_selections:
+        for dim_name, indices in src_selections.items():
+            src_sel = src_sel.where(dim_name, set(indices))
+
+    dst_sel = TensorSelection(dst_name, dim_map)
+    if dst_selections:
+        for dim_name, indices in dst_selections.items():
+            dst_sel = dst_sel.where(dim_name, set(indices))
+
+    return CopySpec(src_name, dst_name, src_sel, dst_sel)
