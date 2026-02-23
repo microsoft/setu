@@ -6,10 +6,15 @@ import pytest
 import torch
 
 from setu._commons.datatypes import Device, TensorDim
-from setu._coordinator import Participant
+from setu._coordinator import Link, Participant
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.cluster.mesh import Mesh, P, PartitionSpec
-from setu.experiment.helpers import shard_tensor
+from setu.experiment.helpers import (
+    ShardedTensor,
+    build_copy_spec,
+    shard_tensor,
+)
+from setu.experiment.runner import CopyMode, run_experiment
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data
@@ -36,6 +41,58 @@ def _make_cluster_spec(
         ]
         nodes[node_id] = (base_port + 100 + n, device_specs)
     return ClusterSpec(coordinator_port=base_port, nodes=nodes)
+
+
+def _build_full_mesh(spec: ClusterSpec, intra: Link, inter: Link) -> "Topology":
+    """Build a full-mesh Topology for testing."""
+    from setu._coordinator import Topology
+
+    topo = Topology()
+    all_participants = []
+    node_ids = []
+
+    for node_id in sorted(spec.nodes.keys()):
+        _, device_specs = spec.nodes[node_id]
+        for ds in device_specs:
+            all_participants.append(Participant(node_id, ds.device))
+            node_ids.append(node_id)
+
+    for i in range(len(all_participants)):
+        for j in range(i + 1, len(all_participants)):
+            link = intra if node_ids[i] == node_ids[j] else inter
+            topo.add_bidirectional_link(all_participants[i], all_participants[j], link)
+
+    return topo
+
+
+def _build_hierarchical(
+    spec: ClusterSpec, intra: Link, inter_sym: Link, inter_cross: Link
+) -> "Topology":
+    """Build a hierarchical Topology for testing."""
+    from setu._coordinator import Topology
+
+    topo = Topology()
+    entries = []
+    for node_id in sorted(spec.nodes.keys()):
+        _, device_specs = spec.nodes[node_id]
+        for dev_idx, ds in enumerate(device_specs):
+            entries.append((Participant(node_id, ds.device), node_id, dev_idx))
+
+    for i in range(len(entries)):
+        for j in range(i + 1, len(entries)):
+            p_i, nid_i, didx_i = entries[i]
+            p_j, nid_j, didx_j = entries[j]
+
+            if nid_i == nid_j:
+                link = intra
+            elif didx_i == didx_j:
+                link = inter_sym
+            else:
+                link = inter_cross
+
+            topo.add_bidirectional_link(p_i, p_j, link)
+
+    return topo
 
 
 # ===========================================================================
@@ -242,3 +299,218 @@ class TestShardTensor:
         dims = [TensorDim("a", 8), TensorDim("b", 4)]
         with pytest.raises(ValueError, match="entries"):
             shard_tensor("t", dims, mesh, P("x"))
+
+
+# ===========================================================================
+# ShardedTensor tests
+# ===========================================================================
+
+
+class TestShardedTensor:
+    def test_shards_property(self):
+        """ShardedTensor.shards should produce the same result as shard_tensor()."""
+        mesh = _make_mesh_2x4()
+        dims = [TensorDim("page", 64), TensorDim("head", 8)]
+        partition = P("x", "y")
+
+        st = ShardedTensor(
+            name="t", dims=dims, mesh=mesh, partition=partition, dtype=torch.float32
+        )
+        expected = shard_tensor("t", dims, mesh, partition, torch.float32)
+
+        assert len(st.shards) == len(expected)
+        for a, b in zip(st.shards, expected):
+            assert a.name == b.name
+            assert len(a.dims) == len(b.dims)
+            for da, db in zip(a.dims, b.dims):
+                assert da.name == db.name
+                assert da.size == db.size
+                assert da.start == db.start
+                assert da.end == db.end
+
+    def test_frozen(self):
+        """ShardedTensor should be immutable (frozen dataclass)."""
+        mesh = _make_mesh_2x4()
+        dims = [TensorDim("a", 8)]
+        st = ShardedTensor(name="t", dims=dims, mesh=mesh, partition=P("x"))
+        with pytest.raises(AttributeError):
+            st.name = "other"
+
+    def test_default_dtype(self):
+        """Default dtype should be torch.float32."""
+        mesh = _make_mesh_2x4()
+        dims = [TensorDim("a", 8)]
+        st = ShardedTensor(name="t", dims=dims, mesh=mesh, partition=P("x"))
+        assert st.dtype == torch.float32
+
+
+# ===========================================================================
+# Topology builder tests
+# ===========================================================================
+
+
+def _make_gpu_cluster_spec(
+    num_nodes: int, devices_per_node: int, base_port: int = 30000
+) -> ClusterSpec:
+    """Create a ClusterSpec with unique CUDA-like devices for topology tests."""
+    nodes = {}
+    dev_counter = 0
+    for n in range(num_nodes):
+        node_id = uuid.UUID(int=n)
+        device_specs = []
+        for _ in range(devices_per_node):
+            device_specs.append(
+                DeviceSpec(Device(torch_device=torch.device(f"cuda:{dev_counter}")))
+            )
+            dev_counter += 1
+        nodes[node_id] = (base_port + 100 + n, device_specs)
+    return ClusterSpec(coordinator_port=base_port, nodes=nodes)
+
+
+class TestBuildFullMesh:
+    def test_edge_count(self):
+        """Full mesh of N participants -> N*(N-1) directed edges."""
+        spec = _make_gpu_cluster_spec(num_nodes=2, devices_per_node=2)
+        intra = Link(0.0, 200.0)
+        inter = Link(10.0, 100.0)
+        topo = _build_full_mesh(spec, intra, inter)
+
+        edges = topo.get_edges()
+        n = 4  # 2 nodes * 2 devices
+        assert len(edges) == n * (n - 1)
+
+    def test_link_properties(self):
+        """Intra links should differ from inter links."""
+        spec = _make_gpu_cluster_spec(num_nodes=2, devices_per_node=2)
+        intra = Link(0.0, 200.0)
+        inter = Link(10.0, 100.0)
+        topo = _build_full_mesh(spec, intra, inter)
+
+        edges = topo.get_edges()
+
+        for src, dst, link in edges:
+            if src.node_id == dst.node_id:
+                assert link.latency_us == 0.0
+                assert link.bandwidth_gbps == 200.0
+            else:
+                assert link.latency_us == 10.0
+                assert link.bandwidth_gbps == 100.0
+
+
+class TestBuildHierarchical:
+    def test_symmetric_vs_cross(self):
+        """Symmetric inter-node links (same dev idx) should differ from cross."""
+        spec = _make_gpu_cluster_spec(num_nodes=2, devices_per_node=4)
+        intra = Link(0.0, 200.0)
+        inter_sym = Link(10.0, 100.0)
+        inter_cross = Link(10.0, 50.0)
+        topo = _build_hierarchical(spec, intra, inter_sym, inter_cross)
+
+        edges = topo.get_edges()
+        n = 8  # 2 nodes * 4 devices
+        assert len(edges) == n * (n - 1)
+
+        sym_count = 0
+        cross_count = 0
+        for src, dst, link in edges:
+            if src.node_id != dst.node_id:
+                if link.bandwidth_gbps == 100.0:
+                    sym_count += 1
+                elif link.bandwidth_gbps == 50.0:
+                    cross_count += 1
+
+        # 4 symmetric pairs * 2 directions = 8
+        assert sym_count == 8
+        # 4*3 cross pairs * 2 directions = 24
+        assert cross_count == 24
+
+
+# ===========================================================================
+# CopySpec builder tests
+# ===========================================================================
+
+
+class TestBuildCopySpec:
+    def test_full_copy(self):
+        """build_copy_spec without selections produces a full-tensor copy."""
+        dims = [TensorDim("page", 64), TensorDim("head", 8)]
+        cs = build_copy_spec("src", "dst", dims)
+        assert cs.src_name == "src"
+        assert cs.dst_name == "dst"
+        assert cs.src_selection.is_spanning()
+        assert cs.dst_selection.is_spanning()
+
+    def test_partial_selections(self):
+        """build_copy_spec with selections applies .where() correctly."""
+        dims = [TensorDim("page", 64), TensorDim("head", 8)]
+        cs = build_copy_spec(
+            "src",
+            "dst",
+            dims,
+            src_selections={"page": {0, 1, 2}},
+            dst_selections={"page": {10, 11, 12}},
+        )
+        assert cs.src_name == "src"
+        assert cs.dst_name == "dst"
+        # With selections applied, should not be spanning
+        assert not cs.src_selection.is_spanning()
+        assert not cs.dst_selection.is_spanning()
+
+
+# ===========================================================================
+# run_experiment integration test (requires GPUs + Ray)
+# ===========================================================================
+
+
+@pytest.mark.gpu
+def test_run_experiment_simple_1d_copy():
+    """Simple 1D copy via run_experiment on a Ray cluster with 2+ GPUs."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    if torch.cuda.device_count() < 2:
+        pytest.skip(f"Need 2 CUDA devices, got {torch.cuda.device_count()}")
+
+    import ray
+
+    from setu.cluster.ray import Cluster
+
+    if not ray.is_initialized():
+        ray.init()
+
+    cluster = Cluster()
+    try:
+        cluster_info = cluster.start()
+
+        mesh = Mesh.from_cluster_info(cluster_info)
+        dims = [TensorDim("dim0", 1024)]
+
+        src = ShardedTensor(
+            name="src_t",
+            dims=dims,
+            mesh=mesh,
+            partition=P(None),
+            dtype=torch.float32,
+        )
+        dst = ShardedTensor(
+            name="dst_t",
+            dims=dims,
+            mesh=mesh,
+            partition=P(None),
+            dtype=torch.float32,
+        )
+
+        result = run_experiment(
+            cluster=cluster,
+            src=src,
+            dst=dst,
+            copy_mode=CopyMode.PULL,
+            init_value=7.0,
+        )
+
+        assert result.success, f"Experiment failed: {result.errors}"
+        assert result.elapsed_s > 0
+        assert len(result.source_results) == len(src.shards)
+        assert len(result.dest_results) == len(dst.shards)
+
+    finally:
+        cluster.stop()

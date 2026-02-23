@@ -119,6 +119,9 @@ class Client:
 
         return shard_ref
 
+    def wait_for_shard_allocation(self, shard_ref: TensorShardRef):
+        self._client.wait_for_shard_allocation(shard_ref.shard_id)
+
     def select(self, name: TensorName) -> TensorSelection:
         """
         Create a tensor selection covering only indices owned by this client's shards.
@@ -182,6 +185,21 @@ class Client:
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
 
         copy_op_id = self._client.submit_copy(copy_spec)
+
+        if copy_op_id is None:
+            raise RuntimeError("Copy operation submission failed")
+
+        logger.debug(
+            "Submitted copy operation %d: %s -> %s", copy_op_id, src.name, dst.name
+        )
+        return copy_op_id
+
+    def pull(
+        self, src: TensorSelection, dst: TensorSelection
+    ) -> Optional[CopyOperationId]:
+        copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
+
+        copy_op_id = self._client.submit_pull(copy_spec)
 
         if copy_op_id is None:
             raise RuntimeError("Copy operation submission failed")
