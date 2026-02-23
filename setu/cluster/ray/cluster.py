@@ -15,7 +15,7 @@ from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from setu._coordinator import Participant
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo, NodeInfo
-from setu.cluster.protocol import Cluster as ClusterABC
+from setu.cluster.protocol import Cluster as ClusterProto
 from setu.cluster.ray.actors import CoordinatorActor, NodeAgentActor
 from setu.logger import init_logger
 
@@ -114,7 +114,7 @@ class _RayClientHandle(ClientHandle[T]):
 # ---------------------------------------------------------------------------
 
 
-class Cluster(ClusterABC):
+class Cluster(ClusterProto):
     """Manages the lifecycle of Setu components on a Ray cluster.
 
     Creates one CoordinatorActor (cluster-wide) and one NodeAgentActor

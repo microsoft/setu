@@ -32,6 +32,12 @@ void InitTopoPybind(py::module_& m) {
            py::arg("latency_us"), py::arg("bandwidth_gbps"),
            py::arg("tag") = std::nullopt,
            "Create a link with latency and bandwidth")
+      .def_readonly("latency_us", &Link::latency_us, "Latency in microseconds")
+      .def_readonly("bandwidth_gbps", &Link::bandwidth_gbps,
+                    "Bandwidth in Gbps")
+      .def_readonly("tag", &Link::tag, "Optional tag for the link")
+      .def("__str__", &Link::ToString)
+      .def("__repr__", &Link::ToString)
       // Pickle support for multiprocessing
       .def(py::pickle(
           [](const Link& l) {  // __getstate__

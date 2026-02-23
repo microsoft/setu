@@ -1,7 +1,6 @@
-"""Abstract Cluster interface that all backends implement."""
+"""Cluster protocol that all backends implement."""
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Optional, Protocol, TypeVar, runtime_checkable
 
 from setu._coordinator import Participant
 from setu.cluster.handle import ClientHandle
@@ -10,25 +9,22 @@ from setu.cluster.info import ClusterInfo
 T = TypeVar("T")
 
 
-class Cluster(ABC):
-    """Abstract base that all cluster backends implement.
+@runtime_checkable
+class Cluster(Protocol):
+    """Protocol that all cluster backends implement.
 
     A cluster owns placement and client lifecycle.  Call ``spawn_client``
     to create a ``Client`` connected to the correct node, run an
     arbitrary body function, and get a handle back.
     """
 
-    @abstractmethod
     def start(self) -> ClusterInfo: ...
 
-    @abstractmethod
     def stop(self) -> None: ...
 
     @property
-    @abstractmethod
     def cluster_info(self) -> Optional[ClusterInfo]: ...
 
-    @abstractmethod
     def spawn_client(
         self,
         participant: Participant,

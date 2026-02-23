@@ -42,6 +42,8 @@ void InitDevicePybind(py::module_& m) {
       .def(py::init<torch::Device>(), py::arg("torch_device"))
       .def_readonly("torch_device", &Device::torch_device,
                     "PyTorch device (type + local index)")
+      .def("__eq__", &Device::operator==, py::arg("other"))
+      .def("__hash__", [](const Device& d) { return std::hash<Device>{}(d); })
       .def("__str__", &Device::ToString)
       .def("__repr__", &Device::ToString)
       // Pickle support for multiprocessing

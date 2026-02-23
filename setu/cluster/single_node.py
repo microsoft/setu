@@ -10,7 +10,7 @@ from setu._commons.datatypes import Device
 from setu._coordinator import Participant
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo, NodeInfo
-from setu.cluster.protocol import Cluster
+from setu.cluster.protocol import Cluster as ClusterProto
 from setu.cluster.spec import ClusterSpec
 
 T = TypeVar("T")
@@ -42,10 +42,7 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event):
                 p = Participant(node_id, ds.device)
                 register_sets[p] = ds.register_set
 
-    if register_sets:
-        backend = NCCLBackend(register_sets)
-    else:
-        backend = NCCLBackend()
+    backend = NCCLBackend(register_sets)
 
     planner = Planner(backend, pass_manager)
     coordinator = Coordinator(spec.coordinator_port, planner)
@@ -122,7 +119,7 @@ class _ProcessClientHandle(ClientHandle[T]):
 # ---------------------------------------------------------------------------
 
 
-class SingleNodeCluster(Cluster):
+class SingleNodeCluster(ClusterProto):
     """Manages a single-node Setu cluster for testing.
 
     All node agents run on the same physical machine. Spawns a coordinator
