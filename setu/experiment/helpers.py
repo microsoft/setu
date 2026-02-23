@@ -1,20 +1,15 @@
 """Helper functions for building shards, topologies, and copy specs."""
 
-from typing import Dict, List, Optional, Set, Union
+from typing import List
 
 import numpy as np
 import torch
 
 from setu._commons.datatypes import (
-    CopySpec,
-    Device,
     TensorDim,
     TensorDimSpec,
-    TensorSelection,
     TensorShardSpec,
 )
-from setu._coordinator import Link, Participant, Topology
-from setu.cluster import ClusterSpec
 from setu.experiment.mesh import Mesh, PartitionSpec
 
 
@@ -46,9 +41,7 @@ def shard_tensor(
     # Validate no duplicate axis names in the partition
     used_axes = [s for s in partition.specs if s is not None]
     if len(used_axes) != len(set(used_axes)):
-        raise ValueError(
-            f"Duplicate axis names in PartitionSpec: {partition.specs}"
-        )
+        raise ValueError(f"Duplicate axis names in PartitionSpec: {partition.specs}")
 
     # Validate all axis names exist in mesh
     for axis in used_axes:
@@ -68,9 +61,7 @@ def shard_tensor(
             axis_name = partition.specs[dim_i]
             if axis_name is None:
                 # Replicated: full range
-                dim_specs.append(
-                    TensorDimSpec(dim.name, dim.size, 0, dim.size)
-                )
+                dim_specs.append(TensorDimSpec(dim.name, dim.size, 0, dim.size))
             else:
                 axis_idx = mesh.axis_names.index(axis_name)
                 axis_size = mesh.shape[axis_idx]
@@ -78,9 +69,7 @@ def shard_tensor(
                 chunk = dim.size // axis_size
                 start = pos * chunk
                 end = start + chunk
-                dim_specs.append(
-                    TensorDimSpec(dim.name, dim.size, start, end)
-                )
+                dim_specs.append(TensorDimSpec(dim.name, dim.size, start, end))
 
         shards.append(
             TensorShardSpec(

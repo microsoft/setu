@@ -6,15 +6,15 @@ import pytest
 import torch
 
 from setu._commons.datatypes import Device, TensorDim
-from setu._coordinator import Participant, RegisterSet
+from setu._coordinator import Participant
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.experiment.helpers import shard_tensor
-from setu.experiment.mesh import Mesh, PartitionSpec, P
-
+from setu.experiment.mesh import Mesh, P, PartitionSpec
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data
 # ---------------------------------------------------------------------------
+
 
 def _make_participant(node_idx: int, dev_idx: int) -> Participant:
     """Create a Participant with a deterministic UUID for *node_idx*."""
@@ -53,9 +53,7 @@ class TestMesh:
         assert mesh.axis_names == ("devices",)
 
     def test_2d_mesh(self):
-        participants = [
-            [_make_participant(n, d) for d in range(4)] for n in range(2)
-        ]
+        participants = [[_make_participant(n, d) for d in range(4)] for n in range(2)]
         mesh = Mesh(participants, axis_names=("nodes", "devices"))
         assert mesh.shape == (2, 4)
         assert mesh.ndim == 2
@@ -63,8 +61,7 @@ class TestMesh:
 
     def test_3d_mesh(self):
         participants = [
-            [[_make_participant(r * 2 + n, d) for d in range(2)]
-             for n in range(2)]
+            [[_make_participant(r * 2 + n, d) for d in range(2)] for n in range(2)]
             for r in range(3)
         ]
         mesh = Mesh(participants, axis_names=("racks", "nodes", "devices"))
@@ -135,9 +132,7 @@ class TestPartitionSpec:
 
 def _make_mesh_2x4():
     """Build a (2, 4) mesh with distinct participants."""
-    participants = [
-        [_make_participant(n, d) for d in range(4)] for n in range(2)
-    ]
+    participants = [[_make_participant(n, d) for d in range(4)] for n in range(2)]
     return Mesh(participants, axis_names=("x", "y"))
 
 
@@ -207,8 +202,7 @@ class TestShardTensor:
     def test_3d_mesh(self):
         """3D mesh with P('rack', 'node', 'device') → 8 shards."""
         participants = [
-            [[_make_participant(r * 2 + n, d) for d in range(2)]
-             for n in range(2)]
+            [[_make_participant(r * 2 + n, d) for d in range(2)] for n in range(2)]
             for r in range(2)
         ]
         mesh = Mesh(participants, axis_names=("rack", "node", "device"))
@@ -217,9 +211,9 @@ class TestShardTensor:
 
         assert len(shards) == 8
         for s in shards:
-            assert s.dims[0].end - s.dims[0].start == 8   # 16 / 2
-            assert s.dims[1].end - s.dims[1].start == 4   # 8 / 2
-            assert s.dims[2].end - s.dims[2].start == 2   # 4 / 2
+            assert s.dims[0].end - s.dims[0].start == 8  # 16 / 2
+            assert s.dims[1].end - s.dims[1].start == 4  # 8 / 2
+            assert s.dims[2].end - s.dims[2].start == 2  # 4 / 2
 
     def test_shard_ranges_cover_full_dim(self):
         """All shard ranges along a sharded dim should tile the full extent."""
