@@ -1,7 +1,7 @@
 """
 Main orchestration for Setu on Ray.
 
-Provides SetuCluster which manages the lifecycle of Coordinator and
+Provides Cluster which manages the lifecycle of Coordinator and
 NodeAgent actors across a Ray cluster, along with ClusterInfo and
 NodeAgentInfo data classes for describing cluster topology.
 """
@@ -13,8 +13,9 @@ from typing import Dict, List, Optional
 import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
+from setu._commons.datatypes import Device
+from setu.cluster.ray.actors import CoordinatorActor, NodeAgentActor
 from setu.logger import init_logger
-from setu.ray.actors import CoordinatorActor, NodeAgentActor
 
 logger = init_logger(__name__)
 
@@ -30,6 +31,8 @@ class NodeAgentInfo:
     ip_address: str
     node_agent_endpoint: str
     num_gpus: int
+    devices: List[Device]
+    ray_node_id: str
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,13 @@ class ClusterInfo:
     def total_gpus(self) -> int:
         """Total number of GPUs across all nodes."""
         return sum(na.num_gpus for na in self.node_agents)
+
+    def node_agent_for_device(self, device: Device) -> NodeAgentInfo:
+        """Find the NodeAgentInfo that owns the given Device."""
+        for na in self.node_agents:
+            if device in na.devices:
+                return na
+        raise ValueError(f"Device {device} not found in any node agent of the cluster")
 
 
 def _discover_ray_nodes() -> List[Dict]:
@@ -93,7 +103,7 @@ def _discover_ray_nodes() -> List[Dict]:
     return result
 
 
-class SetuCluster:
+class Cluster:
     """Manages the lifecycle of Setu components on a Ray cluster.
 
     Creates one CoordinatorActor (cluster-wide) and one NodeAgentActor
@@ -101,7 +111,7 @@ class SetuCluster:
 
     Usage::
 
-        cluster = SetuCluster()
+        cluster = Cluster()
         info = cluster.start()
         # info.coordinator_endpoint, info.node_agent_endpoints, etc.
         cluster.stop()
@@ -201,6 +211,8 @@ class SetuCluster:
                 ip_address=result["ip_address"],
                 node_agent_endpoint=result["node_agent_endpoint"],
                 num_gpus=result["num_gpus"],
+                devices=result["devices"],
+                ray_node_id=result["ray_node_id"],
             )
             for result in node_agent_results
         ]
@@ -212,7 +224,7 @@ class SetuCluster:
         self._started = True
 
         logger.info(
-            "Setu cluster started: %d node(s), %d total GPU(s), " "coordinator at %s",
+            "Setu cluster started: %d node(s), %d total GPU(s), coordinator at %s",
             self._cluster_info.num_nodes,
             self._cluster_info.total_gpus,
             coordinator_endpoint,

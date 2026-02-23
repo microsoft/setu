@@ -5,7 +5,7 @@ Usage::
 
     setu-cluster
     setu-cluster --ray-address ray://10.0.0.1:10001
-    python -m setu.ray
+    python -m setu.cluster.ray
 """
 
 import argparse
@@ -17,8 +17,8 @@ import ray
 from rich.console import Console
 from rich.table import Table
 
+from setu.cluster.ray.cluster import Cluster, ClusterInfo
 from setu.logger import init_logger
-from setu.ray.cluster import ClusterInfo, SetuCluster
 
 logger = init_logger(__name__)
 
@@ -110,7 +110,7 @@ def main() -> None:
     ray.init(address=args.ray_address, ignore_reinit_error=True)
 
     env_vars = _build_env_vars(args)
-    cluster = SetuCluster(env_vars=env_vars)
+    cluster = Cluster(env_vars=env_vars)
     try:
         info = cluster.start()
         display_cluster_info(info)

@@ -154,6 +154,8 @@ class NodeAgentActor:
             "node_id": str(self._node_id),
             "ip_address": self._ip_address,
             "num_gpus": self._num_gpus,
+            "devices": devices,
+            "ray_node_id": ray.get_runtime_context().get_node_id(),
         }
 
     def stop(self) -> None:

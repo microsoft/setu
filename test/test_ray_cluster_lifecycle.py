@@ -1,5 +1,5 @@
 """
-Tests for SetuCluster lifecycle: stop, restart, and error handling.
+Tests for Cluster lifecycle: stop, restart, and error handling.
 
 These tests create and destroy their own clusters, so they must run
 in a separate module from tests that share a long-lived cluster fixture.
@@ -9,7 +9,7 @@ import pytest
 import ray
 import torch
 
-from setu.ray import SetuCluster
+from setu.cluster.ray import Cluster
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +30,7 @@ class TestClusterLifecycle:
     @pytest.mark.gpu
     def test_stop_and_restart(self, ray_context):
         """Test that a cluster can be stopped and a new one started."""
-        cluster1 = SetuCluster()
+        cluster1 = Cluster()
         info1 = cluster1.start()
         assert info1.num_nodes >= 1
         cluster1.stop()
@@ -38,7 +38,7 @@ class TestClusterLifecycle:
         assert cluster1.cluster_info is None
 
         # Start a new cluster
-        cluster2 = SetuCluster()
+        cluster2 = Cluster()
         info2 = cluster2.start()
         assert info2.num_nodes >= 1
         cluster2.stop()
@@ -46,10 +46,10 @@ class TestClusterLifecycle:
     @pytest.mark.gpu
     def test_start_fails_when_gpus_held(self, ray_context):
         """Test that starting a second cluster raises instead of hanging."""
-        cluster1 = SetuCluster()
+        cluster1 = Cluster()
         cluster1.start()
 
-        cluster2 = SetuCluster()
+        cluster2 = Cluster()
         try:
             with pytest.raises(RuntimeError, match="Timed out"):
                 cluster2.start()
