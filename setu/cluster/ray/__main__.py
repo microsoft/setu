@@ -17,8 +17,7 @@ import ray
 from rich.console import Console
 from rich.table import Table
 
-from setu.cluster.info import ClusterInfo
-from setu.cluster.ray.cluster import Cluster
+from setu.cluster.ray.cluster import Cluster, ClusterInfo
 from setu.logger import init_logger
 
 logger = init_logger(__name__)
@@ -69,14 +68,16 @@ def display_cluster_info(info: ClusterInfo) -> None:
 
     table = Table(title="Node Agents")
     table.add_column("Node ID", style="cyan")
+    table.add_column("IP Address", style="green")
     table.add_column("Endpoint", style="magenta")
     table.add_column("GPUs", justify="right", style="bold")
 
-    for node in info.nodes:
+    for na in info.node_agents:
         table.add_row(
-            node.node_id,
-            node.node_agent_endpoint,
-            str(len(node.devices)),
+            na.node_id,
+            na.ip_address,
+            na.node_agent_endpoint,
+            str(na.num_gpus),
         )
 
     console.print(table)
