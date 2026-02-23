@@ -10,7 +10,7 @@ from setu._commons.datatypes import (
     TensorDimSpec,
     TensorShardSpec,
 )
-from setu.experiment.mesh import Mesh, PartitionSpec
+from setu.cluster.mesh import Mesh, PartitionSpec
 
 
 def shard_tensor(

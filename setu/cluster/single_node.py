@@ -1,14 +1,20 @@
-"""Single-node Setu cluster for testing."""
+"""Single-node Setu cluster with spawn_client support."""
 
 import time
 import uuid
-from typing import Dict
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import torch.multiprocessing as mp
 
 from setu._commons.datatypes import Device
 from setu._coordinator import Participant
+from setu.cluster.handle import ClientHandle
+from setu.cluster.info import ClusterInfo, NodeInfo
+from setu.cluster.protocol import Cluster
 from setu.cluster.spec import ClusterSpec
+
+T = TypeVar("T")
+
 
 # ---------------------------------------------------------------------------
 # Process targets for coordinator and node agents
@@ -36,7 +42,11 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event):
                 p = Participant(node_id, ds.device)
                 register_sets[p] = ds.register_set
 
-    backend = NCCLBackend(register_sets)
+    if register_sets:
+        backend = NCCLBackend(register_sets)
+    else:
+        backend = NCCLBackend()
+
     planner = Planner(backend, pass_manager)
     coordinator = Coordinator(spec.coordinator_port, planner)
     coordinator.start()
@@ -70,11 +80,49 @@ def _run_node_agent_process(
 
 
 # ---------------------------------------------------------------------------
+# Process-based ClientHandle
+# ---------------------------------------------------------------------------
+
+
+def _client_process_target(
+    endpoint, participant, body, args, kwargs, result_queue, stop_event
+):
+    """Process target: create Client, run body, put result, wait for stop."""
+    from setu.client import Client
+
+    client = Client(endpoint)
+    try:
+        result = body(client, participant, *args, **kwargs)
+        result_queue.put(result)
+        stop_event.wait()
+    finally:
+        client.disconnect()
+
+
+class _ProcessClientHandle(ClientHandle[T]):
+    """Handle wrapping a multiprocessing.Process."""
+
+    def __init__(self, process, result_queue, stop_event) -> None:
+        self._process = process
+        self._result_queue = result_queue
+        self._stop_event = stop_event
+
+    def result(self, timeout: Optional[float] = None) -> T:
+        return self._result_queue.get(timeout=timeout)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._process.join(timeout=2)
+        if self._process.is_alive():
+            self._process.kill()
+
+
+# ---------------------------------------------------------------------------
 # SingleNodeCluster
 # ---------------------------------------------------------------------------
 
 
-class SingleNodeCluster:
+class SingleNodeCluster(Cluster):
     """Manages a single-node Setu cluster for testing.
 
     All node agents run on the same physical machine. Spawns a coordinator
@@ -86,8 +134,9 @@ class SingleNodeCluster:
     Example::
 
         with SingleNodeCluster(spec) as cluster:
-            ctx = cluster.mp_context
-            # spawn client processes...
+            handle = cluster.spawn_client(participant, my_fn)
+            result = handle.result()
+            handle.stop()
     """
 
     def __init__(
@@ -103,6 +152,7 @@ class SingleNodeCluster:
         self._ctx = mp.get_context("spawn")
         self._stop_event = self._ctx.Event()
         self._processes: list = []
+        self._cluster_info: Optional[ClusterInfo] = None
 
     @staticmethod
     def _validate_unique_devices(spec: ClusterSpec) -> None:
@@ -132,8 +182,12 @@ class SingleNodeCluster:
     def mp_context(self):
         return self._ctx
 
-    def start(self):
-        """Start coordinator and all node agents."""
+    @property
+    def cluster_info(self) -> Optional[ClusterInfo]:
+        return self._cluster_info
+
+    def start(self) -> ClusterInfo:
+        """Start coordinator and all node agents, build ClusterInfo."""
         coordinator_ready = self._ctx.Event()
         coordinator_proc = self._ctx.Process(
             target=_run_coordinator_process,
@@ -145,6 +199,7 @@ class SingleNodeCluster:
             timeout=self._startup_timeout
         ), "Coordinator failed to start"
 
+        nodes = []
         for node_id, (port, device_specs) in self._spec.nodes.items():
             devices = [ds.device for ds in device_specs]
             node_ready = self._ctx.Event()
@@ -165,9 +220,57 @@ class SingleNodeCluster:
                 timeout=self._startup_timeout
             ), f"NodeAgent for {node_id} failed to start"
 
+            nodes.append(
+                NodeInfo(
+                    node_id=str(node_id),
+                    node_agent_endpoint=f"tcp://localhost:{port}",
+                    devices=devices,
+                )
+            )
+
         time.sleep(self._settle_time)
 
-    def stop(self):
+        self._cluster_info = ClusterInfo(
+            coordinator_endpoint=self._spec.coordinator_endpoint,
+            nodes=nodes,
+        )
+        return self._cluster_info
+
+    def spawn_client(
+        self,
+        participant: Participant,
+        body: Callable[..., T],
+        *args: Any,
+        **kwargs: Any,
+    ) -> ClientHandle[T]:
+        """Spawn a Client in a subprocess connected to the correct node.
+
+        The subprocess creates a ``Client``, runs
+        ``body(client, participant, *args, **kwargs)``, puts the result
+        in a queue, then blocks until ``handle.stop()`` is called.
+        """
+        assert self._cluster_info is not None, "Cluster has not been started"
+
+        node = self._cluster_info.node_for_device(participant.device)
+        result_queue = self._ctx.Queue()
+        stop_event = self._ctx.Event()
+
+        proc = self._ctx.Process(
+            target=_client_process_target,
+            args=(
+                node.node_agent_endpoint,
+                participant,
+                body,
+                args,
+                kwargs,
+                result_queue,
+                stop_event,
+            ),
+        )
+        proc.start()
+        return _ProcessClientHandle(proc, result_queue, stop_event)
+
+    def stop(self) -> None:
         """Signal stop, terminate, and join all processes."""
         self._stop_event.set()
         time.sleep(0.2)
@@ -179,6 +282,7 @@ class SingleNodeCluster:
                 proc.kill()
 
         self._processes.clear()
+        self._cluster_info = None
 
     def __enter__(self):
         self.start()

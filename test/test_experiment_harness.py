@@ -5,11 +5,11 @@ import uuid
 import pytest
 import torch
 
-from setu._commons.datatypes import Device, TensorDim
+from setu._commons.datatypes import Device
 from setu._coordinator import Participant
 from setu.cluster import ClusterSpec, DeviceSpec
+from setu.cluster.mesh import Mesh, P, PartitionSpec
 from setu.experiment.helpers import shard_tensor
-from setu.experiment.mesh import Mesh, P, PartitionSpec
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data
@@ -138,7 +138,7 @@ def _make_mesh_2x4():
 
 class TestShardTensor:
     def test_full_sharding_2d(self):
-        """P('x', 'y', None) on (2, 4) mesh → 8 shards."""
+        """P('x', 'y', None) on (2, 4) mesh -> 8 shards."""
         mesh = _make_mesh_2x4()
         dims = [TensorDim("page", 64), TensorDim("head", 8), TensorDim("hd", 128)]
         shards = shard_tensor("t", dims, mesh, P("x", "y", None))
@@ -153,12 +153,12 @@ class TestShardTensor:
             # head: 8 / 4 = 2 each
             assert s.dims[1].size == 8
             assert s.dims[1].end - s.dims[1].start == 2
-            # hd: replicated → full range
+            # hd: replicated -> full range
             assert s.dims[2].start == 0
             assert s.dims[2].end == 128
 
     def test_swapped_axes(self):
-        """P('y', 'x', None) — axes swapped, different chunk sizes."""
+        """P('y', 'x', None) -- axes swapped, different chunk sizes."""
         mesh = _make_mesh_2x4()
         dims = [TensorDim("page", 64), TensorDim("head", 8), TensorDim("hd", 128)]
         shards = shard_tensor("t", dims, mesh, P("y", "x", None))
@@ -174,7 +174,7 @@ class TestShardTensor:
             assert s.dims[2].end == 128
 
     def test_partial_sharding(self):
-        """P('x', None, None) — only first dim sharded along 'x'."""
+        """P('x', None, None) -- only first dim sharded along 'x'."""
         mesh = _make_mesh_2x4()
         dims = [TensorDim("page", 64), TensorDim("head", 8), TensorDim("hd", 128)]
         shards = shard_tensor("t", dims, mesh, P("x", None, None))
@@ -188,7 +188,7 @@ class TestShardTensor:
             assert s.dims[2].start == 0 and s.dims[2].end == 128
 
     def test_full_replication(self):
-        """P(None, None, None) — all shards identical (fully replicated)."""
+        """P(None, None, None) -- all shards identical (fully replicated)."""
         mesh = _make_mesh_2x4()
         dims = [TensorDim("page", 64), TensorDim("head", 8), TensorDim("hd", 128)]
         shards = shard_tensor("t", dims, mesh, P(None, None, None))
@@ -200,7 +200,7 @@ class TestShardTensor:
             assert s.dims[2].start == 0 and s.dims[2].end == 128
 
     def test_3d_mesh(self):
-        """3D mesh with P('rack', 'node', 'device') → 8 shards."""
+        """3D mesh with P('rack', 'node', 'device') -> 8 shards."""
         participants = [
             [[_make_participant(r * 2 + n, d) for d in range(2)] for n in range(2)]
             for r in range(2)

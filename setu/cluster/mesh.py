@@ -1,11 +1,13 @@
 """Mesh and PartitionSpec: JAX-style named grid of participants."""
 
+import uuid
 from typing import Optional, Tuple
 
 import numpy as np
 
 from setu._coordinator import Participant
-from setu.cluster import ClusterSpec
+from setu.cluster.info import ClusterInfo
+from setu.cluster.spec import ClusterSpec
 
 
 class Mesh:
@@ -43,6 +45,23 @@ class Mesh:
         for node_id in sorted(spec.nodes.keys()):
             _, device_specs = spec.nodes[node_id]
             row = [Participant(node_id, ds.device) for ds in device_specs]
+            rows.append(row)
+        return cls(rows, axis_names)
+
+    @classmethod
+    def from_cluster_info(
+        cls,
+        cluster_info: ClusterInfo,
+        axis_names: Tuple[str, ...] = ("nodes", "devices"),
+    ) -> "Mesh":
+        """Build a 2D Mesh from a ClusterInfo.
+
+        Rows correspond to nodes (sorted by node_id), columns to
+        devices within each node.
+        """
+        rows = []
+        for node in sorted(cluster_info.nodes, key=lambda x: x.node_id):
+            row = [Participant(uuid.UUID(node.node_id), dev) for dev in node.devices]
             rows.append(row)
         return cls(rows, axis_names)
 
