@@ -65,6 +65,7 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
+  auto t_start = std::chrono::steady_clock::now();
   bool group_started = false;
 
   for (const auto& instruction : program) {
@@ -73,7 +74,18 @@ void NCCLWorker::Execute(const Program& program) {
 
   if (group_started) {
     NCCL_CHECK(ncclGroupEnd());
+    auto t_group_end = std::chrono::steady_clock::now();
     CUDA_CHECK(cudaStreamSynchronize(stream_));
+    auto t_sync = std::chrono::steady_clock::now();
+
+    auto to_us = [](auto d) {
+      return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+    };
+    LOG_INFO(
+        "NCCLWorker[{}]: ncclGroupEnd={}us, cudaStreamSync={}us, total={}us, "
+        "instructions={}",
+        device_, to_us(t_group_end - t_start), to_us(t_sync - t_group_end),
+        to_us(t_sync - t_start), program.size());
   }
 }
 
@@ -128,13 +140,18 @@ void NCCLWorker::ExecuteInitComm(const InitComm& inst) {
   auto part = Participant(node_id_, device_);
   const std::int32_t rank = inst.participant_to_rank.at(part);
 
+  auto t0 = std::chrono::steady_clock::now();
   ncclComm_t comm;
   NCCL_CHECK(ncclCommInitRank(&comm, num_ranks, inst.comm_id, rank));
+  auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count();
 
   comm_cache_[key] = CommCacheEntry{.nccl_comm = comm};
 
   active_comm_key_ = key;
-  LOG_DEBUG("InitComm complete: {} ranks, this rank={}", num_ranks, rank);
+  LOG_INFO("InitComm[{}]: ncclCommInitRank took {}ms, {} ranks, this rank={}",
+           device_, dt, num_ranks, rank);
 }
 
 void NCCLWorker::ExecuteUseComm(const UseComm& inst) {

@@ -370,9 +370,9 @@ void Coordinator::Handler::HandleShardSubmission(
   CopyOperationId copy_op_id = GenerateUUID();
 
   LOG_INFO(
-      "All shards submitted for {} -> {}, "
+      "All {} shards submitted for {} -> {}, "
       "copy_op_id={}, adding to planner queue",
-      copy_spec.src_name, copy_spec.dst_name, copy_op_id);
+      expected_shards, copy_spec.src_name, copy_spec.dst_name, copy_op_id);
 
   // Collect submitter identities
   std::vector<Identity> submitters;
@@ -486,11 +486,14 @@ void Coordinator::Executor::Loop() {
   while (running_) {
     try {
       PlannerTask task = planner_queue_.pull();
+      auto t_after_dequeue = std::chrono::steady_clock::now();
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
       auto hints = hint_store_.Snapshot();
+      auto t_compile_start = std::chrono::steady_clock::now();
       Plan plan = planner_.Compile(task.copy_spec, metastore_, hints);
+      auto t_compile_end = std::chrono::steady_clock::now();
 
       LOG_DEBUG("Compiled plan:\n{}", plan);
 
@@ -511,8 +514,16 @@ void Coordinator::Executor::Loop() {
       // order aqcuire)
       task.state->expected_responses.store(fragments.size(),
                                            std::memory_order_release);
-      LOG_DEBUG("Executor: Set expected_responses={} for copy_op_id={}",
-                fragments.size(), task.copy_op_id);
+
+      auto t_end = std::chrono::steady_clock::now();
+      auto to_us = [](auto d) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+      };
+      LOG_INFO(
+          "Executor: copy_op_id={}, compile={}us, fragment+dispatch={}us, "
+          "total={}us",
+          task.copy_op_id, to_us(t_compile_end - t_compile_start),
+          to_us(t_end - t_compile_end), to_us(t_end - t_after_dequeue));
 
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;

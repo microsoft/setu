@@ -631,6 +631,7 @@ void NodeAgent::Executor::Loop() {
     // Block until we receive a (copy_op_id, plan) pair from the queue
     try {
       auto [copy_op_id, plan] = executor_queue_.pull();
+      auto t_dequeued = std::chrono::steady_clock::now();
 
       // For each worker program in the plan, send it to the corresponding
       // worker. We send all programs first so workers can execute in parallel,
@@ -656,6 +657,8 @@ void NodeAgent::Executor::Loop() {
         sent_device_ranks.push_back(device_rank);
       }
 
+      auto t_sent = std::chrono::steady_clock::now();
+
       // Wait for acknowledgment from all workers
       for (auto device_rank : sent_device_ranks) {
         auto it = worker_sockets_.find(device_rank);
@@ -663,15 +666,22 @@ void NodeAgent::Executor::Loop() {
             Comm::Recv<ExecuteProgramResponse>(it->second);
       }
 
-      LOG_DEBUG("All workers completed execution for copy_op_id: {}",
-                copy_op_id);
+      auto t_workers_done = std::chrono::steady_clock::now();
 
       // Notify coordinator that execution is complete (async, fire-and-forget)
       ExecuteResponse response(RequestId{}, copy_op_id, ErrorCode::kSuccess);
+
+      auto to_us = [](auto d) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+      };
       LOG_INFO(
-          "NodeAgent Executor: Sending ExecuteResponse to Coordinator for "
-          "copy_op_id={}",
-          copy_op_id);
+          "NodeAgent Executor: copy_op_id={}, embellish+send={}us, "
+          "worker_execution={}us, total={}us, workers={}",
+          copy_op_id, to_us(t_sent - t_dequeued),
+          to_us(t_workers_done - t_sent),
+          to_us(t_workers_done - t_dequeued),
+          sent_device_ranks.size());
+
       Comm::Send<NodeAgentRequest>(async_socket_, response);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;

@@ -88,8 +88,16 @@ void Worker::WorkerLoop() {
     auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
     const auto& program = request.program;
 
+    auto t0 = std::chrono::steady_clock::now();
+
     // Execute each instruction in the program
     this->Execute(program);
+
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - t0)
+                  .count();
+    LOG_INFO("Worker[{}]: Execute took {}us, {} instructions", device_, dt,
+             program.size());
 
     // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);

@@ -29,9 +29,26 @@ Planner::Planner(targets::BackendPtr backend,
 //==============================================================================
 Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore,
                       const HintStore& hints) {
+  auto t0 = std::chrono::steady_clock::now();
+
   auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
+  auto t1 = std::chrono::steady_clock::now();
+
   cir = pass_manager_->Run(std::move(cir), hints);
-  return backend_->Run(cir);
+  auto t2 = std::chrono::steady_clock::now();
+
+  auto plan = backend_->Run(cir);
+  auto t3 = std::chrono::steady_clock::now();
+
+  auto to_us = [](auto d) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+  };
+  LOG_INFO(
+      "Planner::Compile: CopySpecToCIR={}us, PassManager={}us, Backend={}us, "
+      "total={}us",
+      to_us(t1 - t0), to_us(t2 - t1), to_us(t3 - t2), to_us(t3 - t0));
+
+  return plan;
 }
 //==============================================================================
 }  // namespace setu::planner

@@ -28,7 +28,12 @@ void PassManager::AddPass(PassPtr pass) {
 cir::Program PassManager::Run(cir::Program program,
                               const HintStore& hints) const {
   for (const auto& pass : passes_) {
+    auto t0 = std::chrono::steady_clock::now();
     program = pass->Run(program, hints);
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - t0)
+                  .count();
+    LOG_INFO("PassManager: pass '{}' took {}us", pass->Name(), dt);
     LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
   }
   return program;

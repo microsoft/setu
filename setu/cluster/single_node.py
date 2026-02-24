@@ -19,13 +19,34 @@ from setu.cluster.spec import ClusterSpec
 T = TypeVar("T")
 
 
-def _setup_child_logging(log_queue) -> None:
+def _redirect_native_stderr(log_dir: str, label: str) -> None:
+    """Redirect fd 2 (stderr) to a file so C++ LOG_* output is captured.
+
+    Must be called early in a child process, before any C++ code runs.
+    """
+    import os
+    import sys
+
+    os.makedirs(log_dir, exist_ok=True)
+    path = os.path.join(log_dir, f"{label}_pid{os.getpid()}.log")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    os.dup2(fd, 2)  # replace stderr fd
+    os.close(fd)
+    sys.stderr = os.fdopen(2, "w", buffering=1)
+
+
+def _setup_child_logging(log_queue, log_dir: str = "", label: str = "") -> None:
     """Replace handlers on the 'setu' logger with a QueueHandler.
 
     Called at the start of every child process so that log records are
     forwarded to the parent through *log_queue* instead of being written
     to the child's (invisible) stderr.
+
+    If *log_dir* is set, also redirects native (C++) stderr to a file.
     """
+    if log_dir:
+        _redirect_native_stderr(log_dir, label)
+
     root = logging.getLogger("setu")
     for h in root.handlers[:]:
         root.removeHandler(h)
@@ -38,9 +59,10 @@ def _setup_child_logging(log_queue) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_queue):
+def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_queue,
+                             log_dir=""):
     """Coordinator process target. Builds Planner from spec."""
-    _setup_child_logging(log_queue)
+    _setup_child_logging(log_queue, log_dir=log_dir, label="coordinator")
     from setu._coordinator import (
         Coordinator,
         NCCLBackend,
@@ -74,10 +96,11 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_que
 
 
 def _run_node_agent_process(
-    node_id, port, coordinator_endpoint, devices, ready_event, stop_event, log_queue
+    node_id, port, coordinator_endpoint, devices, ready_event, stop_event, log_queue,
+    log_dir=""
 ):
     """NodeAgent process target. Receives picklable Device objects directly."""
-    _setup_child_logging(log_queue)
+    _setup_child_logging(log_queue, log_dir=log_dir, label=f"node_agent_{port}")
     from setu._node_manager import NodeAgent
 
     agent = NodeAgent(
@@ -115,14 +138,18 @@ def _warmup_cuda(device) -> None:
 
 
 def _client_process_target(
-    endpoint, participant, body, result_queue, stop_event, log_queue
+    endpoint, participant, body, result_queue, stop_event, log_queue,
+    log_dir=""
 ):
     """Process target: create Client, run body, put result, wait for stop.
 
     The body is a plain function that runs to completion and returns a value.
     The return value (or an error tuple) is placed on *result_queue*.
     """
-    _setup_child_logging(log_queue)
+    _setup_child_logging(
+        log_queue, log_dir=log_dir,
+        label=f"client_{participant.device}".replace(":", "_"),
+    )
     import time
     import traceback
 
@@ -226,11 +253,13 @@ class SingleNodeCluster(ClusterProto):
         spec: ClusterSpec,
         startup_timeout: float = 10.0,
         settle_time: float = 0.5,
+        log_dir: str = "",
     ):
         self._validate_unique_devices(spec)
         self._spec = spec
         self._startup_timeout = startup_timeout
         self._settle_time = settle_time
+        self._log_dir = log_dir
         self._ctx = mp.get_context("spawn")
         self._stop_event = self._ctx.Event()
         self._processes: list = []
@@ -281,7 +310,8 @@ class SingleNodeCluster(ClusterProto):
         coordinator_ready = self._ctx.Event()
         coordinator_proc = self._ctx.Process(
             target=_run_coordinator_process,
-            args=(self._spec, coordinator_ready, self._stop_event, self._log_queue),
+            args=(self._spec, coordinator_ready, self._stop_event, self._log_queue,
+                  self._log_dir),
         )
         coordinator_proc.start()
         self._processes.append(coordinator_proc)
@@ -303,6 +333,7 @@ class SingleNodeCluster(ClusterProto):
                     node_ready,
                     self._stop_event,
                     self._log_queue,
+                    self._log_dir,
                 ),
             )
             node_proc.start()
@@ -355,6 +386,7 @@ class SingleNodeCluster(ClusterProto):
                 result_queue,
                 stop_event,
                 self._log_queue,
+                self._log_dir,
             ),
         )
         proc.start()

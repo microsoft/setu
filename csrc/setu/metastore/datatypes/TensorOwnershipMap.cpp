@@ -32,31 +32,57 @@ TensorOwnershipMap::BuildOwnershipMapping(TensorSelectionPtr selection,
                                           TensorShardMetadataMap shards) {
   ASSERT_VALID_POINTER_ARGUMENT(selection);
 
+  auto to_us = [](auto d) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+  };
+
   std::vector<std::pair<TensorSelectionPtr, TensorShardMetadataPtr>>
       ownership_map;
+
+  long long total_create_us = 0;
+  long long total_intersect_us = 0;
+  long long total_isempty_us = 0;
 
   // For each shard, determine which subset of the selection it owns
   for (const auto& [shard_id, shard] : shards) {
     ASSERT_VALID_POINTER_ARGUMENT(shard);
 
-    // Create selection from shard metadata and compute intersection
+    auto tc0 = std::chrono::steady_clock::now();
     TensorSelectionPtr shard_selection =
         CreateSelectionFromShardMetadata(shard);
+    auto tc1 = std::chrono::steady_clock::now();
     TensorSelectionPtr intersection =
         selection->GetIntersection(shard_selection);
+    auto tc2 = std::chrono::steady_clock::now();
 
     if (intersection->IsEmpty()) {
+      auto tc3 = std::chrono::steady_clock::now();
+      total_create_us += to_us(tc1 - tc0);
+      total_intersect_us += to_us(tc2 - tc1);
+      total_isempty_us += to_us(tc3 - tc2);
       continue;
     }
+    auto tc3 = std::chrono::steady_clock::now();
+    total_create_us += to_us(tc1 - tc0);
+    total_intersect_us += to_us(tc2 - tc1);
+    total_isempty_us += to_us(tc3 - tc2);
 
     ownership_map.push_back(std::make_pair(intersection, shard));
   }
 
+  auto ts0 = std::chrono::steady_clock::now();
   // Sort by shard's row-major start position for consistent iteration order
   std::sort(ownership_map.begin(), ownership_map.end(),
             [](const auto& a, const auto& b) {
               return a.second->spec < b.second->spec;
             });
+  auto ts1 = std::chrono::steady_clock::now();
+
+  LOG_INFO(
+      "BuildOwnershipMapping: shards={}, CreateSelection={}us, "
+      "Intersection={}us, IsEmpty={}us, Sort={}us",
+      shards.size(), total_create_us, total_intersect_us, total_isempty_us,
+      to_us(ts1 - ts0));
 
   return ownership_map;
 }
