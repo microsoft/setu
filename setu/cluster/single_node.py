@@ -1,7 +1,9 @@
 """Single-node Setu cluster with spawn_client support."""
 
+import logging
 import time
 import uuid
+from logging.handlers import QueueHandler, QueueListener
 from typing import Callable, Dict, Optional, TypeVar
 
 import torch.multiprocessing as mp
@@ -16,13 +18,28 @@ from setu.cluster.spec import ClusterSpec
 T = TypeVar("T")
 
 
+def _setup_child_logging(log_queue) -> None:
+    """Replace handlers on the 'setu' logger with a QueueHandler.
+
+    Called at the start of every child process so that log records are
+    forwarded to the parent through *log_queue* instead of being written
+    to the child's (invisible) stderr.
+    """
+    root = logging.getLogger("setu")
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    root.addHandler(QueueHandler(log_queue))
+    root.setLevel(logging.DEBUG)
+
+
 # ---------------------------------------------------------------------------
 # Process targets for coordinator and node agents
 # ---------------------------------------------------------------------------
 
 
-def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event):
+def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_queue):
     """Coordinator process target. Builds Planner from spec."""
+    _setup_child_logging(log_queue)
     from setu._coordinator import (
         Coordinator,
         NCCLBackend,
@@ -56,9 +73,10 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event):
 
 
 def _run_node_agent_process(
-    node_id, port, coordinator_endpoint, devices, ready_event, stop_event
+    node_id, port, coordinator_endpoint, devices, ready_event, stop_event, log_queue
 ):
     """NodeAgent process target. Receives picklable Device objects directly."""
+    _setup_child_logging(log_queue)
     from setu._node_manager import NodeAgent
 
     agent = NodeAgent(
@@ -82,35 +100,82 @@ def _run_node_agent_process(
 
 
 _SENTINEL = "__DONE__"
+_ERROR_TAG = "__ERROR__"
 
 
-def _client_process_target(endpoint, participant, body, result_queue, stop_event):
+def _warmup_cuda(device) -> None:
+    """Force CUDA runtime init on *device* so later ops aren't penalised."""
+    import torch
+
+    if device.torch_device.type == "cuda":
+        with torch.cuda.device(device.torch_device):
+            torch.cuda.init()
+            # Small alloc+free to fully warm the allocator.
+            torch.empty(1, device=device.torch_device)
+
+
+def _client_process_target(
+    endpoint, participant, body, result_queue, stop_event, log_queue
+):
     """Process target: create Client, run body, put results, wait for stop.
 
-    If *body* returns a generator, each yielded value and the final return
-    value are put into *result_queue* individually.  A sentinel is put last
-    so the handle knows the body is finished.
+    Uses :func:`execute_client_body` for generator/error handling so the
+    sentinel is always delivered and exceptions are forwarded to the parent.
     """
-    import inspect
+    _setup_child_logging(log_queue)
+    import time
+    import traceback
 
-    from setu.client import Client
+    from setu.cluster.handle import execute_client_body
+    from setu.logger import init_logger
 
-    client = Client(endpoint)
+    logger = init_logger(__name__)
+    t_proc_start = time.monotonic()
+
+    t0 = time.monotonic()
+    _warmup_cuda(participant.device)
+    logger.debug(
+        "client_process_target: CUDA warmup took %.3fs (pid=%d, device=%s)",
+        time.monotonic() - t0, __import__("os").getpid(), participant.device,
+    )
+
+    client = None
     try:
-        ret = body(client, participant)
-        if inspect.isgenerator(ret):
-            try:
-                while True:
-                    result_queue.put(next(ret))
-            except StopIteration as e:
-                if e.value is not None:
-                    result_queue.put(e.value)
-        else:
-            result_queue.put(ret)
+        from setu.client import Client
+
+        t0 = time.monotonic()
+        logger.debug("client_process_target: creating Client(%s)", endpoint)
+        client = Client(endpoint)
+        logger.debug(
+            "client_process_target: client created in %.3fs, running body",
+            time.monotonic() - t0,
+        )
+        execute_client_body(
+            body,
+            client,
+            participant,
+            put_result=result_queue.put,
+            put_error=lambda tb: result_queue.put((_ERROR_TAG, tb)),
+            put_done=lambda: result_queue.put(_SENTINEL),
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        logger.error("client_process_target: failed before body:\n%s", tb)
+        result_queue.put((_ERROR_TAG, tb))
         result_queue.put(_SENTINEL)
-        stop_event.wait()
     finally:
-        client.disconnect()
+        if client is not None:
+            t0 = time.monotonic()
+            client.disconnect()
+            logger.debug(
+                "client_process_target: disconnect took %.3fs", time.monotonic() - t0
+            )
+
+    logger.debug(
+        "client_process_target: body finished, total=%.3fs, waiting for stop_event",
+        time.monotonic() - t_proc_start,
+    )
+    stop_event.wait()
 
 
 class _ProcessClientHandle(ClientHandle[T]):
@@ -125,10 +190,19 @@ class _ProcessClientHandle(ClientHandle[T]):
     def next_result(self, timeout: Optional[float] = None) -> T:
         if self._exhausted:
             raise StopIteration
+        if not self._process.is_alive() and self._result_queue.empty():
+            self._exhausted = True
+            raise RuntimeError(
+                f"Client process died (exit code {self._process.exitcode}) "
+                "with no result on the queue"
+            )
         value = self._result_queue.get(timeout=timeout)
-        if value is _SENTINEL:
+        if value == _SENTINEL:
             self._exhausted = True
             raise StopIteration
+        if isinstance(value, tuple) and len(value) == 2 and value[0] == _ERROR_TAG:
+            self._exhausted = True
+            raise RuntimeError(f"Remote process error:\n{value[1]}")
         return value
 
     def result(self, timeout: Optional[float] = None) -> T:
@@ -186,6 +260,14 @@ class SingleNodeCluster(ClusterProto):
         self._processes: list = []
         self._cluster_info: Optional[ClusterInfo] = None
 
+        # Forward child-process log records to the parent's handlers.
+        self._log_queue = self._ctx.Queue()
+        parent_handlers = logging.getLogger("setu").handlers
+        self._log_listener = QueueListener(
+            self._log_queue, *parent_handlers, respect_handler_level=True
+        )
+        self._log_listener.start()
+
     @staticmethod
     def _validate_unique_devices(spec: ClusterSpec) -> None:
         """Ensure no device is claimed by more than one node agent."""
@@ -223,7 +305,7 @@ class SingleNodeCluster(ClusterProto):
         coordinator_ready = self._ctx.Event()
         coordinator_proc = self._ctx.Process(
             target=_run_coordinator_process,
-            args=(self._spec, coordinator_ready, self._stop_event),
+            args=(self._spec, coordinator_ready, self._stop_event, self._log_queue),
         )
         coordinator_proc.start()
         self._processes.append(coordinator_proc)
@@ -244,6 +326,7 @@ class SingleNodeCluster(ClusterProto):
                     devices,
                     node_ready,
                     self._stop_event,
+                    self._log_queue,
                 ),
             )
             node_proc.start()
@@ -295,6 +378,7 @@ class SingleNodeCluster(ClusterProto):
                 body,
                 result_queue,
                 stop_event,
+                self._log_queue,
             ),
         )
         proc.start()
@@ -313,6 +397,7 @@ class SingleNodeCluster(ClusterProto):
 
         self._processes.clear()
         self._cluster_info = None
+        self._log_listener.stop()
 
     def __enter__(self):
         self.start()

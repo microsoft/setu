@@ -70,16 +70,33 @@ def _source_body(
     filled so the orchestrator can wait for all sources to be ready before
     spawning destination clients.
     """
+    t_body = time.monotonic()
+    tag = f"source_body[{shard_spec.name}@{shard_spec.device}]"
+
+    t0 = time.monotonic()
     shard_ref = client.register_tensor_shard(shard_spec)
     assert shard_ref is not None, f"Failed to register source shard {shard_spec.name}"
-    client.wait_for_shard_allocation(shard_ref)
+    logger.debug("%s: register_tensor_shard took %.3fs", tag, time.monotonic() - t0)
 
+    t0 = time.monotonic()
+    client.wait_for_shard_allocation(shard_ref)
+    logger.debug("%s: wait_for_shard_allocation took %.3fs", tag, time.monotonic() - t0)
+
+    t0 = time.monotonic()
     with client.write(shard_ref) as tensor:
+        logger.debug(
+            "%s: tensor shape=%s dtype=%s device=%s",
+            tag, tensor.shape, tensor.dtype, tensor.device,
+        )
         tensor.fill_(init_value)
         if shard_spec.device.torch_device.type == "cuda":
             torch.cuda.synchronize()
+    logger.debug("%s: write+fill took %.3fs", tag, time.monotonic() - t0)
 
-    # Signal that this source shard is ready.
+    logger.debug(
+        "%s: ready, yielding (total setup=%.3fs)", tag, time.monotonic() - t_body
+    )
+
     yield {
         "success": True,
         "shard_name": shard_spec.name,
@@ -88,6 +105,7 @@ def _source_body(
 
     if copy_mode == CopyMode.COPY:
         # Two-sided: source must also call copy()
+        t0 = time.monotonic()
         src_selection = client.select(shard_spec.name)
         dst_selection = client.select(dst_name)
 
@@ -98,17 +116,30 @@ def _source_body(
 
         copy_op_id = client.copy(src_selection, dst_selection)
         assert copy_op_id is not None, "Copy operation returned None"
+        logger.debug("%s: submitted copy op %s, waiting...", tag, copy_op_id)
         client.wait(copy_op_id)
+        logger.debug("%s: copy complete in %.3fs", tag, time.monotonic() - t0)
+
+    logger.debug("%s: total body time=%.3fs", tag, time.monotonic() - t_body)
 
 
 def _dest_body(
     client, participant, shard_spec, src_name, copy_mode, value_to_match, selections
 ):
     """Register a dest shard, perform copy/pull, verify, return result dict."""
+    t_body = time.monotonic()
+    tag = f"dest_body[{shard_spec.name}@{shard_spec.device}]"
+
+    t0 = time.monotonic()
     shard_ref = client.register_tensor_shard(shard_spec)
     assert shard_ref is not None, f"Failed to register dest shard {shard_spec.name}"
-    client.wait_for_shard_allocation(shard_ref)
+    logger.debug("%s: register_tensor_shard took %.3fs", tag, time.monotonic() - t0)
 
+    t0 = time.monotonic()
+    client.wait_for_shard_allocation(shard_ref)
+    logger.debug("%s: wait_for_shard_allocation took %.3fs", tag, time.monotonic() - t0)
+
+    t0 = time.monotonic()
     src_selection = client.select(src_name)
     dst_selection = client.select(shard_spec.name)
 
@@ -116,19 +147,35 @@ def _dest_body(
         for dim_name, indices in selections.items():
             src_selection = src_selection.where(dim_name, indices)
             dst_selection = dst_selection.where(dim_name, indices)
+    logger.debug("%s: select+where took %.3fs", tag, time.monotonic() - t0)
 
+    t0 = time.monotonic()
     if copy_mode == CopyMode.PULL:
         copy_op_id = client.pull(src_selection, dst_selection)
     else:
         copy_op_id = client.copy(src_selection, dst_selection)
 
     assert copy_op_id is not None, "Copy operation returned None"
+    logger.debug(
+        "%s: submit %s op %s took %.3fs, waiting...",
+        tag, copy_mode.value, copy_op_id, time.monotonic() - t0,
+    )
+
+    t0 = time.monotonic()
     client.wait(copy_op_id)
+    logger.debug("%s: wait(copy_op) took %.3fs", tag, time.monotonic() - t0)
 
     # Read back and verify
+    t0 = time.monotonic()
     with client.read(shard_ref) as tensor:
         actual_value = tensor.mean().item()
         values_match = abs(actual_value - value_to_match) < 1e-5
+    logger.debug(
+        "%s: readback took %.3fs — expected=%s actual=%s match=%s",
+        tag, time.monotonic() - t0, value_to_match, actual_value, values_match,
+    )
+
+    logger.debug("%s: total body time=%.3fs", tag, time.monotonic() - t_body)
 
     return {
         "success": True,
@@ -180,10 +227,50 @@ def run_experiment(
     src_handles: List[ClientHandle] = []
     dst_handles: List[ClientHandle] = []
 
+    logger.debug(
+        "run_experiment: mode=%s init_value=%s selections=%s timeout=%s",
+        copy_mode,
+        init_value,
+        selections,
+        timeout,
+    )
+    logger.debug(
+        "run_experiment: src tensor=%s shards=%d mesh_shape=%s partition=%s",
+        src.name,
+        len(src_shards),
+        src.mesh.shape,
+        src.partition,
+    )
+    logger.debug(
+        "run_experiment: dst tensor=%s shards=%d mesh_shape=%s partition=%s",
+        dst.name,
+        len(dst_shards),
+        dst.mesh.shape,
+        dst.partition,
+    )
+    for i, (p, s) in enumerate(zip(src.mesh.participants, src_shards)):
+        logger.debug(
+            "run_experiment: src_shard[%d] name=%s participant=%s dims=%s",
+            i,
+            s.name,
+            p,
+            [(d.name, d.size, d.start, d.end) for d in s.dims],
+        )
+    for i, (p, s) in enumerate(zip(dst.mesh.participants, dst_shards)):
+        logger.debug(
+            "run_experiment: dst_shard[%d] name=%s participant=%s dims=%s",
+            i,
+            s.name,
+            p,
+            [(d.name, d.size, d.start, d.end) for d in s.dims],
+        )
+
     t0 = time.monotonic()
 
     try:
         # --- Spawn source clients ---
+        t_phase = time.monotonic()
+        logger.debug("run_experiment: spawning %d source clients", len(src_shards))
         for participant, shard in zip(src.mesh.participants, src_shards):
             body = functools.partial(
                 _source_body,
@@ -195,11 +282,30 @@ def run_experiment(
             )
             handle = cluster.spawn_client(participant, body)
             src_handles.append(handle)
+        logger.debug(
+            "run_experiment: spawned %d source clients in %.3fs",
+            len(src_shards), time.monotonic() - t_phase,
+        )
 
         # Wait for every source to signal that its shard is ready.
-        source_results = [h.next_result(timeout=timeout) for h in src_handles]
+        t_phase = time.monotonic()
+        logger.debug("run_experiment: waiting for source shards to be ready")
+        source_results = []
+        for i, h in enumerate(src_handles):
+            t_wait = time.monotonic()
+            r = h.next_result(timeout=timeout)
+            logger.debug(
+                "run_experiment: source[%d] ready in %.3fs", i, time.monotonic() - t_wait
+            )
+            source_results.append(r)
+        logger.debug(
+            "run_experiment: all %d sources ready in %.3fs",
+            len(src_handles), time.monotonic() - t_phase,
+        )
 
         # --- Spawn dest clients (sources are guaranteed ready) ---
+        t_phase = time.monotonic()
+        logger.debug("run_experiment: spawning %d dest clients", len(dst_shards))
         for participant, shard in zip(dst.mesh.participants, dst_shards):
             body = functools.partial(
                 _dest_body,
@@ -211,16 +317,48 @@ def run_experiment(
             )
             handle = cluster.spawn_client(participant, body)
             dst_handles.append(handle)
+        logger.debug(
+            "run_experiment: spawned %d dest clients in %.3fs",
+            len(dst_shards), time.monotonic() - t_phase,
+        )
 
         # Drain remaining source values (two-sided copy completion).
-        for h in src_handles:
+        t_phase = time.monotonic()
+        logger.debug("run_experiment: draining %d source handles", len(src_handles))
+        for i, h in enumerate(src_handles):
+            t_drain = time.monotonic()
             try:
                 while True:
-                    h.next_result(timeout=timeout)
+                    extra = h.next_result(timeout=timeout)
+                    logger.debug(
+                        "run_experiment: source handle[%d] extra value: %s", i, extra
+                    )
             except StopIteration:
                 pass
+            logger.debug(
+                "run_experiment: source handle[%d] drained in %.3fs",
+                i, time.monotonic() - t_drain,
+            )
+        logger.debug(
+            "run_experiment: all sources drained in %.3fs",
+            time.monotonic() - t_phase,
+        )
 
-        dest_results = [h.result(timeout=timeout) for h in dst_handles]
+        t_phase = time.monotonic()
+        logger.debug("run_experiment: collecting %d dest results", len(dst_handles))
+        dest_results = []
+        for i, h in enumerate(dst_handles):
+            t_wait = time.monotonic()
+            r = h.result(timeout=timeout)
+            logger.debug(
+                "run_experiment: dest[%d] result in %.3fs: %s",
+                i, time.monotonic() - t_wait, r,
+            )
+            dest_results.append(r)
+        logger.debug(
+            "run_experiment: all %d dest results collected in %.3fs",
+            len(dst_handles), time.monotonic() - t_phase,
+        )
 
         # Check dest results for value mismatches
         for result in dest_results:
@@ -238,9 +376,12 @@ def run_experiment(
 
     except Exception as e:
         errors.append(str(e))
-        logger.error("Experiment failed: %s", e)
+        logger.error("Experiment failed: %s", e, exc_info=True)
 
     finally:
+        logger.debug(
+            "run_experiment: stopping %d handles", len(dst_handles) + len(src_handles)
+        )
         for h in dst_handles + src_handles:
             try:
                 h.stop()
@@ -248,6 +389,12 @@ def run_experiment(
                 pass
 
     elapsed = time.monotonic() - t0
+    logger.debug(
+        "run_experiment: finished in %.3fs, success=%s, errors=%s",
+        elapsed,
+        len(errors) == 0,
+        errors,
+    )
     return ExperimentResult(
         success=len(errors) == 0,
         elapsed_s=elapsed,

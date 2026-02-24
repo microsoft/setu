@@ -74,10 +74,10 @@ def _discover_ray_nodes() -> List[Dict]:
 class _ClientActor:
     """Ray actor that creates a Client, runs a body function, and stays alive.
 
-    If the body is a generator, yielded values and the final return value
-    are pushed into an internal queue that ``next_result()`` drains.
-    ``max_concurrency=2`` allows ``next_result`` calls while ``run`` is
-    still executing the generator.
+    Uses :func:`execute_client_body` for generator/error handling so the
+    ``("done", None)`` sentinel is always delivered and exceptions are
+    forwarded to the parent.  ``max_concurrency=2`` allows
+    ``next_result`` calls while ``run`` is still executing.
     """
 
     def __init__(self, endpoint: str) -> None:
@@ -89,22 +89,18 @@ class _ClientActor:
 
     def run(self, body: Callable, participant: Participant):
         """Connect, run body(client, participant), queue results."""
-        import inspect
-
         from setu.client import Client
+        from setu.cluster.handle import execute_client_body
 
         self._client = Client(self._endpoint)
-        ret = body(self._client, participant)
-        if inspect.isgenerator(ret):
-            try:
-                while True:
-                    self._queue.put(("value", next(ret)))
-            except StopIteration as e:
-                if e.value is not None:
-                    self._queue.put(("value", e.value))
-        else:
-            self._queue.put(("value", ret))
-        self._queue.put(("done", None))
+        execute_client_body(
+            body,
+            self._client,
+            participant,
+            put_result=lambda v: self._queue.put(("value", v)),
+            put_error=lambda tb: self._queue.put(("error", tb)),
+            put_done=lambda: self._queue.put(("done", None)),
+        )
 
     def next_result(self):
         """Return the next value, or the sentinel ``("done", None)``."""
@@ -130,6 +126,9 @@ class _RayClientHandle(ClientHandle[T]):
         if tag == "done":
             self._exhausted = True
             raise StopIteration
+        if tag == "error":
+            self._exhausted = True
+            raise RuntimeError(f"Remote actor error:\n{value}")
         return value
 
     def result(self, timeout: Optional[float] = None) -> T:
