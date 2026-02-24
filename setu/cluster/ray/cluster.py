@@ -7,7 +7,7 @@ running arbitrary work on remote nodes.
 """
 
 import random
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Callable, Dict, List, Optional, TypeVar
 
 import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
@@ -70,20 +70,45 @@ def _discover_ray_nodes() -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=1, max_concurrency=2)
 class _ClientActor:
-    """Ray actor that creates a Client, runs a body function, and stays alive."""
+    """Ray actor that creates a Client, runs a body function, and stays alive.
+
+    If the body is a generator, yielded values and the final return value
+    are pushed into an internal queue that ``next_result()`` drains.
+    ``max_concurrency=2`` allows ``next_result`` calls while ``run`` is
+    still executing the generator.
+    """
 
     def __init__(self, endpoint: str) -> None:
+        import queue
+
         self._endpoint = endpoint
         self._client = None
+        self._queue: queue.Queue = queue.Queue()
 
-    def run(self, body: Callable, participant: Participant, *args, **kwargs):
-        """Connect, run body(client, participant, *args, **kwargs), return result."""
+    def run(self, body: Callable, participant: Participant):
+        """Connect, run body(client, participant), queue results."""
+        import inspect
+
         from setu.client import Client
 
         self._client = Client(self._endpoint)
-        return body(self._client, participant, *args, **kwargs)
+        ret = body(self._client, participant)
+        if inspect.isgenerator(ret):
+            try:
+                while True:
+                    self._queue.put(("value", next(ret)))
+            except StopIteration as e:
+                if e.value is not None:
+                    self._queue.put(("value", e.value))
+        else:
+            self._queue.put(("value", ret))
+        self._queue.put(("done", None))
+
+    def next_result(self):
+        """Return the next value, or the sentinel ``("done", None)``."""
+        return self._queue.get()
 
     def stop(self) -> None:
         if self._client is not None:
@@ -92,14 +117,28 @@ class _ClientActor:
 
 
 class _RayClientHandle(ClientHandle[T]):
-    """Handle wrapping a Ray actor + result ObjectRef."""
+    """Handle wrapping a Ray actor with a result queue."""
 
-    def __init__(self, actor, result_ref) -> None:
+    def __init__(self, actor) -> None:
         self._actor = actor
-        self._result_ref = result_ref
+        self._exhausted = False
+
+    def next_result(self, timeout: Optional[float] = None) -> T:
+        if self._exhausted:
+            raise StopIteration
+        tag, value = ray.get(self._actor.next_result.remote(), timeout=timeout)
+        if tag == "done":
+            self._exhausted = True
+            raise StopIteration
+        return value
 
     def result(self, timeout: Optional[float] = None) -> T:
-        return ray.get(self._result_ref, timeout=timeout)
+        last = None
+        while True:
+            try:
+                last = self.next_result(timeout=timeout)
+            except StopIteration:
+                return last
 
     def stop(self) -> None:
         try:
@@ -244,31 +283,33 @@ class Cluster(ClusterProto):
         self,
         participant: Participant,
         body: Callable[..., T],
-        *args: Any,
-        **kwargs: Any,
     ) -> ClientHandle[T]:
         """Spawn a Client on the Ray node owning *participant*.
 
         Creates a ``_ClientActor`` pinned to the correct node, which
-        connects a ``Client`` and calls ``body(client, participant, *args, **kwargs)``.
+        connects a ``Client`` and calls ``body(client, participant)``.
+
+        Use ``functools.partial`` to bind extra arguments into *body*.
         """
         assert self._cluster_info is not None, "Cluster has not been started"
 
-        node = self._cluster_info.node_for_device(participant.device)
-        assert (
-            node.ray_node_id is not None
-        ), f"NodeInfo for device {participant.device} has no ray_node_id"
+        node_info = self._cluster_info.node_info_for_participant(participant)
+        assert node_info.ray_node_id is not None, (
+            f"NodeInfo for device {participant.device} has no ray_node_id"
+        )
 
         scheduling = NodeAffinitySchedulingStrategy(
-            node_id=node.ray_node_id,
+            node_id=node_info.ray_node_id,
             soft=False,
         )
         actor = _ClientActor.options(
             scheduling_strategy=scheduling,
-        ).remote(node.node_agent_endpoint)
+        ).remote(node_info.node_agent_endpoint)
 
-        result_ref = actor.run.remote(body, participant, *args, **kwargs)
-        return _RayClientHandle(actor, result_ref)
+        # Fire-and-forget: run() pushes results into the actor's internal
+        # queue; the handle drains them via next_result().
+        actor.run.remote(body, participant)
+        return _RayClientHandle(actor)
 
     def _kill_all_actors(self) -> None:
         """Force-kill all actors and reset state. Used for cleanup on failure."""

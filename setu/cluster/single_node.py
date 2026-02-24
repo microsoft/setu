@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Callable, Dict, Optional, TypeVar
 
 import torch.multiprocessing as mp
 
@@ -81,16 +81,33 @@ def _run_node_agent_process(
 # ---------------------------------------------------------------------------
 
 
-def _client_process_target(
-    endpoint, participant, body, args, kwargs, result_queue, stop_event
-):
-    """Process target: create Client, run body, put result, wait for stop."""
+_SENTINEL = "__DONE__"
+
+
+def _client_process_target(endpoint, participant, body, result_queue, stop_event):
+    """Process target: create Client, run body, put results, wait for stop.
+
+    If *body* returns a generator, each yielded value and the final return
+    value are put into *result_queue* individually.  A sentinel is put last
+    so the handle knows the body is finished.
+    """
+    import inspect
+
     from setu.client import Client
 
     client = Client(endpoint)
     try:
-        result = body(client, participant, *args, **kwargs)
-        result_queue.put(result)
+        ret = body(client, participant)
+        if inspect.isgenerator(ret):
+            try:
+                while True:
+                    result_queue.put(next(ret))
+            except StopIteration as e:
+                if e.value is not None:
+                    result_queue.put(e.value)
+        else:
+            result_queue.put(ret)
+        result_queue.put(_SENTINEL)
         stop_event.wait()
     finally:
         client.disconnect()
@@ -103,9 +120,24 @@ class _ProcessClientHandle(ClientHandle[T]):
         self._process = process
         self._result_queue = result_queue
         self._stop_event = stop_event
+        self._exhausted = False
+
+    def next_result(self, timeout: Optional[float] = None) -> T:
+        if self._exhausted:
+            raise StopIteration
+        value = self._result_queue.get(timeout=timeout)
+        if value is _SENTINEL:
+            self._exhausted = True
+            raise StopIteration
+        return value
 
     def result(self, timeout: Optional[float] = None) -> T:
-        return self._result_queue.get(timeout=timeout)
+        last = None
+        while True:
+            try:
+                last = self.next_result(timeout=timeout)
+            except StopIteration:
+                return last
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -130,8 +162,11 @@ class SingleNodeCluster(ClusterProto):
 
     Example::
 
+        from functools import partial
+
         with SingleNodeCluster(spec) as cluster:
-            handle = cluster.spawn_client(participant, my_fn)
+            body = partial(my_fn, extra_arg=value)
+            handle = cluster.spawn_client(participant, body)
             result = handle.result()
             handle.stop()
     """
@@ -192,9 +227,9 @@ class SingleNodeCluster(ClusterProto):
         )
         coordinator_proc.start()
         self._processes.append(coordinator_proc)
-        assert coordinator_ready.wait(
-            timeout=self._startup_timeout
-        ), "Coordinator failed to start"
+        assert coordinator_ready.wait(timeout=self._startup_timeout), (
+            "Coordinator failed to start"
+        )
 
         nodes = []
         for node_id, (port, device_specs) in self._spec.nodes.items():
@@ -213,9 +248,9 @@ class SingleNodeCluster(ClusterProto):
             )
             node_proc.start()
             self._processes.append(node_proc)
-            assert node_ready.wait(
-                timeout=self._startup_timeout
-            ), f"NodeAgent for {node_id} failed to start"
+            assert node_ready.wait(timeout=self._startup_timeout), (
+                f"NodeAgent for {node_id} failed to start"
+            )
 
             nodes.append(
                 NodeInfo(
@@ -237,29 +272,27 @@ class SingleNodeCluster(ClusterProto):
         self,
         participant: Participant,
         body: Callable[..., T],
-        *args: Any,
-        **kwargs: Any,
     ) -> ClientHandle[T]:
         """Spawn a Client in a subprocess connected to the correct node.
 
         The subprocess creates a ``Client``, runs
-        ``body(client, participant, *args, **kwargs)``, puts the result
-        in a queue, then blocks until ``handle.stop()`` is called.
+        ``body(client, participant)``, puts the result in a queue, then
+        blocks until ``handle.stop()`` is called.
+
+        Use ``functools.partial`` to bind extra arguments into *body*.
         """
         assert self._cluster_info is not None, "Cluster has not been started"
 
-        node = self._cluster_info.node_for_device(participant.device)
+        node_info = self._cluster_info.node_info_for_participant(participant)
         result_queue = self._ctx.Queue()
         stop_event = self._ctx.Event()
 
         proc = self._ctx.Process(
             target=_client_process_target,
             args=(
-                node.node_agent_endpoint,
+                node_info.node_agent_endpoint,
                 participant,
                 body,
-                args,
-                kwargs,
                 result_queue,
                 stop_event,
             ),

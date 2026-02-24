@@ -1,13 +1,12 @@
 """Tests for the experiment harness (Mesh, PartitionSpec, helpers, runner)."""
 
 import uuid
-from test.fixtures.copy_spec_builder import build_copy_spec
 
 import pytest
 import torch
-
 from setu._commons.datatypes import Device, TensorDim
 from setu._coordinator import Link, Participant
+
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.cluster.mesh import Mesh, P, PartitionSpec
 from setu.experiment.helpers import (
@@ -15,6 +14,7 @@ from setu.experiment.helpers import (
     shard_tensor,
 )
 from setu.experiment.runner import CopyMode, run_experiment
+from test.fixtures.copy_spec_builder import build_copy_spec
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data
@@ -519,3 +519,151 @@ def test_run_experiment_simple_1d_copy():
 
     finally:
         cluster.stop()
+
+
+# ===========================================================================
+# run_experiment integration tests (SingleNodeCluster)
+# ===========================================================================
+
+
+@pytest.mark.gpu
+class TestExperimentRunnerSingleNode:
+    """Integration tests for run_experiment using SingleNodeCluster.
+
+    Source mesh uses GPUs 0-1 (2 shards), destination mesh uses GPUs 0-3
+    (4 shards).  The tensor is sharded along the single dimension so that
+    the copy redistributes data across a different number of devices.
+    """
+
+    MIN_GPUS = 4
+    TENSOR_SIZE = 1024
+
+    @pytest.fixture(autouse=True)
+    def _require_gpus(self):
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        if torch.cuda.device_count() < self.MIN_GPUS:
+            pytest.skip(
+                f"Need >= {self.MIN_GPUS} CUDA devices, got {torch.cuda.device_count()}"
+            )
+
+    def _make_cluster_spec(self, base_port: int = 50000) -> ClusterSpec:
+        """Create a ClusterSpec for a single node with MIN_GPUS devices."""
+        node_id = uuid.UUID(int=0)
+        device_specs = [
+            DeviceSpec(Device(torch_device=torch.device(f"cuda:{i}")))
+            for i in range(self.MIN_GPUS)
+        ]
+        nodes = {node_id: (base_port + 100, device_specs)}
+        return ClusterSpec(coordinator_port=base_port, nodes=nodes)
+
+    def _build_src_dst(self, cluster):
+        """Build sharded src (GPUs 0-1) and dst (GPUs 0-3) tensors."""
+        node = cluster.cluster_info.nodes[0]
+        node_id = uuid.UUID(node.node_id)
+        participants = [Participant(node_id, dev) for dev in node.devices]
+
+        src_mesh = Mesh([participants[0], participants[1]], axis_names=("devices",))
+        dst_mesh = Mesh(
+            [participants[0], participants[1], participants[2], participants[3]],
+            axis_names=("devices",),
+        )
+
+        dims = [TensorDim("dim0", self.TENSOR_SIZE)]
+        src = ShardedTensor(
+            name="src_t",
+            dims=dims,
+            mesh=src_mesh,
+            partition=P("devices"),
+            dtype=torch.float32,
+        )
+        dst = ShardedTensor(
+            name="dst_t",
+            dims=dims,
+            mesh=dst_mesh,
+            partition=P("devices"),
+            dtype=torch.float32,
+        )
+        return src, dst
+
+    def _assert_success(self, result, src, dst):
+        """Verify experiment completed successfully with matching values."""
+        assert result.success, f"Experiment failed: {result.errors}"
+        assert result.elapsed_s > 0
+        assert len(result.source_results) == len(src.shards)
+        assert len(result.dest_results) == len(dst.shards)
+        for dr in result.dest_results:
+            assert dr["values_match"], (
+                f"Shard {dr['shard_name']}: expected={dr['expected_value']} "
+                f"actual={dr['actual_value']}"
+            )
+
+    # -- PULL mode -----------------------------------------------------------
+
+    def test_pull_no_selections(self):
+        """PULL mode, no selections, src sharded over 2 GPUs -> dst over 4."""
+        from setu.cluster.single_node import SingleNodeCluster
+
+        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+            src, dst = self._build_src_dst(cluster)
+
+            result = run_experiment(
+                cluster=cluster,
+                src=src,
+                dst=dst,
+                copy_mode=CopyMode.PULL,
+                init_value=7.0,
+            )
+            self._assert_success(result, src, dst)
+
+    def test_pull_with_selections(self):
+        """PULL mode with slice selection covering the full dimension."""
+        from setu.cluster.single_node import SingleNodeCluster
+
+        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+            src, dst = self._build_src_dst(cluster)
+
+            result = run_experiment(
+                cluster=cluster,
+                src=src,
+                dst=dst,
+                copy_mode=CopyMode.PULL,
+                init_value=3.0,
+                selections={"dim0": slice(0, self.TENSOR_SIZE)},
+            )
+            self._assert_success(result, src, dst)
+
+    # -- COPY mode -----------------------------------------------------------
+
+    def test_copy_no_selections(self):
+        """COPY (two-sided) mode, no selections, 2 GPUs -> 4 GPUs."""
+        from setu.cluster.single_node import SingleNodeCluster
+
+        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+            src, dst = self._build_src_dst(cluster)
+
+            result = run_experiment(
+                cluster=cluster,
+                src=src,
+                dst=dst,
+                copy_mode=CopyMode.COPY,
+                init_value=7.0,
+            )
+            self._assert_success(result, src, dst)
+
+    def test_copy_with_selections(self):
+        """COPY (two-sided) mode with slice selection covering the full dim."""
+        from setu.cluster.single_node import SingleNodeCluster
+
+        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+            src, dst = self._build_src_dst(cluster)
+
+            result = run_experiment(
+                cluster=cluster,
+                src=src,
+                dst=dst,
+                copy_mode=CopyMode.COPY,
+                init_value=3.0,
+                selections={"dim0": slice(0, self.TENSOR_SIZE)},
+            )
+            self._assert_success(result, src, dst)

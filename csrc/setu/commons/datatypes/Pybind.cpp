@@ -258,7 +258,21 @@ void InitTensorShardSpecPybind(py::module_& m) {
       .def("get_num_dims", &TensorShardSpec::GetNumDims,
            "Get number of dimensions")
       .def("__str__", &TensorShardSpec::ToString)
-      .def("__repr__", &TensorShardSpec::ToString);
+      .def("__repr__", &TensorShardSpec::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const TensorShardSpec& s) {  // __getstate__
+            return py::make_tuple(s.name, s.dims, s.dtype, s.device);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 4) {
+              throw std::runtime_error("Invalid state for TensorShardSpec");
+            }
+            return TensorShardSpec(
+                t[0].cast<TensorName>(),
+                t[1].cast<std::vector<TensorDimSpec>>(),
+                t[2].cast<torch::Dtype>(), t[3].cast<Device>());
+          }));
 }
 //==============================================================================
 void InitTensorShardRefPybind(py::module_& m) {

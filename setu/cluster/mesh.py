@@ -1,7 +1,7 @@
 """Mesh and PartitionSpec: JAX-style named grid of participants."""
 
 import uuid
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -81,6 +81,11 @@ class Mesh:
         """Return the size of a named axis."""
         idx = self._axis_index(axis_name)
         return self._devices.shape[idx]
+
+    @property
+    def participants(self) -> List[Participant]:
+        """Return all participants in row-major order (matches shard_tensor order)."""
+        return list(self._devices.flat)
 
     def _axis_index(self, axis_name: str) -> int:
         try:

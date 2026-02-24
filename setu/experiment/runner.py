@@ -1,14 +1,13 @@
 """Experiment runner: cluster-agnostic orchestration for copy experiments."""
 
+import functools
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Union
 
 import torch
 
-from setu._coordinator import Participant
 from setu.cluster.handle import ClientHandle
 from setu.cluster.protocol import Cluster
 from setu.experiment.helpers import ShardedTensor
@@ -16,8 +15,8 @@ from setu.logger import init_logger
 
 logger = init_logger(__name__)
 
-# A per-dimension selection: a set of indices or a slice (start:stop).
-DimSelection = Union[set, slice]
+# A per-dimension selection accepted by TensorSelection.where().
+DimSelection = Union[int, slice, List[int], Set[int]]
 
 
 class CopyMode(Enum):
@@ -62,8 +61,15 @@ class ExperimentResult:
 # ---------------------------------------------------------------------------
 
 
-def _source_body(client, participant, shard_spec, init_value):
-    """Register a source shard, fill with init_value, return result dict."""
+def _source_body(
+    client, participant, shard_spec, init_value, copy_mode, dst_name, selections
+):
+    """Register a source shard, fill with init_value, participate in two-sided copy if needed.
+
+    This is a generator: it yields once after the shard is allocated and
+    filled so the orchestrator can wait for all sources to be ready before
+    spawning destination clients.
+    """
     shard_ref = client.register_tensor_shard(shard_spec)
     assert shard_ref is not None, f"Failed to register source shard {shard_spec.name}"
     client.wait_for_shard_allocation(shard_ref)
@@ -73,15 +79,30 @@ def _source_body(client, participant, shard_spec, init_value):
         if shard_spec.device.torch_device.type == "cuda":
             torch.cuda.synchronize()
 
-    return {
+    # Signal that this source shard is ready.
+    yield {
         "success": True,
         "shard_name": shard_spec.name,
         "device": str(shard_spec.device),
     }
 
+    if copy_mode == CopyMode.COPY:
+        # Two-sided: source must also call copy()
+        src_selection = client.select(shard_spec.name)
+        dst_selection = client.select(dst_name)
+
+        if selections is not None:
+            for dim_name, indices in selections.items():
+                src_selection = src_selection.where(dim_name, indices)
+                dst_selection = dst_selection.where(dim_name, indices)
+
+        copy_op_id = client.copy(src_selection, dst_selection)
+        assert copy_op_id is not None, "Copy operation returned None"
+        client.wait(copy_op_id)
+
 
 def _dest_body(
-    client, participant, shard_spec, src_name, copy_mode, init_value, selections
+    client, participant, shard_spec, src_name, copy_mode, value_to_match, selections
 ):
     """Register a dest shard, perform copy/pull, verify, return result dict."""
     shard_ref = client.register_tensor_shard(shard_spec)
@@ -107,13 +128,13 @@ def _dest_body(
     # Read back and verify
     with client.read(shard_ref) as tensor:
         actual_value = tensor.mean().item()
-        values_match = abs(actual_value - init_value) < 1e-5
+        values_match = abs(actual_value - value_to_match) < 1e-5
 
     return {
         "success": True,
         "shard_name": shard_spec.name,
         "device": str(shard_spec.device),
-        "expected_value": init_value,
+        "expected_value": value_to_match,
         "actual_value": actual_value,
         "values_match": values_match,
     }
@@ -163,39 +184,43 @@ def run_experiment(
 
     try:
         # --- Spawn source clients ---
-        for shard in src_shards:
-            node = cluster_info.node_for_device(shard.device)
-            participant = Participant(uuid.UUID(node.node_id), shard.device)
-            handle = cluster.spawn_client(
-                participant,
+        for participant, shard in zip(src.mesh.participants, src_shards):
+            body = functools.partial(
                 _source_body,
-                shard,
-                init_value,
+                shard_spec=shard,
+                init_value=init_value,
+                copy_mode=copy_mode,
+                dst_name=dst.name,
+                selections=selections,
             )
+            handle = cluster.spawn_client(participant, body)
             src_handles.append(handle)
 
-        # Wait for all sources to be ready
-        source_results = [h.result(timeout=timeout) for h in src_handles]
-        logger.info("All %d source shard(s) registered and filled", len(src_shards))
+        # Wait for every source to signal that its shard is ready.
+        source_results = [h.next_result(timeout=timeout) for h in src_handles]
 
-        # --- Spawn dest clients ---
-        for shard in dst_shards:
-            node = cluster_info.node_for_device(shard.device)
-            participant = Participant(uuid.UUID(node.node_id), shard.device)
-            handle = cluster.spawn_client(
-                participant,
+        # --- Spawn dest clients (sources are guaranteed ready) ---
+        for participant, shard in zip(dst.mesh.participants, dst_shards):
+            body = functools.partial(
                 _dest_body,
-                shard,
-                src.name,
-                copy_mode,
-                init_value,
-                selections,
+                shard_spec=shard,
+                src_name=src.name,
+                copy_mode=copy_mode,
+                value_to_match=init_value,
+                selections=selections,
             )
+            handle = cluster.spawn_client(participant, body)
             dst_handles.append(handle)
 
-        # Collect dest results
+        # Drain remaining source values (two-sided copy completion).
+        for h in src_handles:
+            try:
+                while True:
+                    h.next_result(timeout=timeout)
+            except StopIteration:
+                pass
+
         dest_results = [h.result(timeout=timeout) for h in dst_handles]
-        logger.info("All %d dest task(s) completed", len(dst_shards))
 
         # Check dest results for value mismatches
         for result in dest_results:

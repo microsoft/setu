@@ -1,6 +1,6 @@
 """Cluster protocol that all backends implement."""
 
-from typing import Any, Callable, Optional, Protocol, TypeVar, runtime_checkable
+from typing import Callable, Optional, Protocol, TypeVar, runtime_checkable
 
 from setu._coordinator import Participant
 from setu.cluster.handle import ClientHandle
@@ -29,14 +29,18 @@ class Cluster(Protocol):
         self,
         participant: Participant,
         body: Callable[..., T],
-        *args: Any,
-        **kwargs: Any,
     ) -> ClientHandle[T]:
         """Spawn a Client connected to the node owning *participant*.
 
         The cluster:
         1. Creates a Client and connects it to the correct endpoint.
-        2. Calls ``body(client, participant, *args, **kwargs)``.
+        2. Calls ``body(client, participant)``.
         3. Returns a handle -- the client stays alive until ``handle.stop()``.
+
+        *body* may be a plain function or a generator.  If it is a
+        generator, each yielded value and the final return value are
+        available via ``handle.next_result()``.
+
+        Use ``functools.partial`` to bind extra arguments into *body*.
         """
         ...
