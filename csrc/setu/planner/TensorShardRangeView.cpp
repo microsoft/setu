@@ -27,12 +27,8 @@ TensorShardRangeView::TensorShardRangeView(
 }
 //==============================================================================
 void TensorShardRangeView::ComputeRanges(TensorOwnershipMapPtr ownership_map) {
-  auto to_us = [](auto d) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-  };
-
-  long long total_localize_us = 0;
-  long long total_range_view_us = 0;
+  std::int64_t total_localize_us = 0;
+  std::int64_t total_range_view_us = 0;
 
   for (const auto& [selection_subset, shard_metadata] :
        ownership_map->shard_mapping) {
@@ -45,24 +41,25 @@ void TensorShardRangeView::ComputeRanges(TensorOwnershipMapPtr ownership_map) {
       dim_order.push_back(dim.name);
     }
 
-    auto tr0 = std::chrono::steady_clock::now();
     ContiguousBufferRangeView range_view(dim_order, localized);
-    auto tr1 = std::chrono::steady_clock::now();
 
     for (const auto& range : range_view) {
       ranges_.push_back(
           ShardBufferRange{.metadata = shard_metadata, .range = range});
     }
+    auto tl2 = std::chrono::steady_clock::now();
 
-    total_localize_us += to_us(tl1 - tl0);
-    total_range_view_us += to_us(tr1 - tr0);
+    total_localize_us +=
+        std::chrono::duration_cast<std::chrono::microseconds>(tl1 - tl0)
+            .count();
+    total_range_view_us +=
+        std::chrono::duration_cast<std::chrono::microseconds>(tl2 - tl1)
+            .count();
   }
 
-  LOG_INFO(
-      "TensorShardRangeView: shards={}, Localize={}us, "
-      "ContiguousBufferRangeView={}us, total_ranges={}",
-      ownership_map->shard_mapping.size(), total_localize_us,
-      total_range_view_us, ranges_.size());
+  LOG_INFO("TensorShardRangeView: localize={}us, range_view={}us, shards={}",
+           total_localize_us, total_range_view_us,
+           ownership_map->shard_mapping.size());
 }
 //==============================================================================
 }  // namespace setu::planner

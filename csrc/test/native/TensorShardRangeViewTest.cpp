@@ -47,21 +47,19 @@ using setu::planner::ShardBufferRange;
 using setu::planner::TensorShardRangeView;
 //==============================================================================
 
-// Helper to create a bitset with specific indices set
+// Helper to create an IndexRangeSet with specific indices set
 TensorIndicesBitset MakeBitset(std::size_t size,
                                const std::vector<std::size_t>& indices) {
-  TensorIndicesBitset bitset(size);
+  std::set<std::int64_t> index_set;
   for (auto idx : indices) {
-    bitset[idx] = true;
+    index_set.insert(static_cast<std::int64_t>(idx));
   }
-  return bitset;
+  return TensorIndicesBitset::FromIndices(size, index_set);
 }
 
-// Helper to create a full bitset
+// Helper to create a full IndexRangeSet
 TensorIndicesBitset MakeFullBitset(std::size_t size) {
-  TensorIndicesBitset bitset(size);
-  bitset.set();
-  return bitset;
+  return TensorIndicesBitset::MakeFull(size);
 }
 
 // Helper to create a 1D shard metadata
@@ -451,9 +449,6 @@ TEST(TensorShardRangeViewTest,
 
 TEST(TensorShardRangeViewTest, TwoDim_FourShards_GridPartitioned) {
   // 2D tensor 4x8, partitioned into 2x2 grid of shards
-  // Shard layout (row-major order of shard positions):
-  //   [0,2)x[0,4) = position 0   [0,2)x[4,8) = position 4
-  //   [2,4)x[0,4) = position 16  [2,4)x[4,8) = position 20
   // Selection: all
   // Expected: shards in row-major order of their start positions
 
@@ -681,7 +676,7 @@ TEST(TensorShardRangeViewTest, EmptySelection_NoRanges) {
   auto shard = Make1DShardMetadata(name, 10, 0, 10);
 
   TensorIndicesMap indices;
-  indices["x"] = TensorIndicesBitset(10);  // All zeros
+  indices["x"] = TensorIndicesBitset::MakeEmpty(10);
   auto selection = std::make_shared<TensorSelection>(name, indices);
 
   TensorShardMetadataMap shards;

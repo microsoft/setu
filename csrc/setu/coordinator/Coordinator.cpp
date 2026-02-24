@@ -53,10 +53,14 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
       planner_(planner) {
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
+
+  auto outbox_notify = [this]() { gateway_->NotifyOutbox(); };
+
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_);
+                                       planner_queue_, outbox_notify);
   executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
-                                         metastore_, *planner_, hint_store_);
+                                         metastore_, *planner_, hint_store_,
+                                         outbox_notify);
 }
 
 Coordinator::~Coordinator() {
@@ -136,9 +140,26 @@ Coordinator::Gateway::~Gateway() {
 void Coordinator::Gateway::InitSockets() {
   node_agent_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
+
+  // Create inproc PAIR sockets for self-pipe wakeup pattern
+  wakeup_recv_ = std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
+  wakeup_send_ = std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
+  wakeup_recv_->bind("inproc://gateway-wakeup");
+  wakeup_send_->connect("inproc://gateway-wakeup");
+}
+
+void Coordinator::Gateway::NotifyOutbox() {
+  // Send a single byte to wake the Gateway from zmq::poll().
+  // Uses dontwait to avoid blocking the caller if the pipe is full.
+  zmq::message_t signal(1);
+  static_cast<char*>(signal.data())[0] = 'W';
+  [[maybe_unused]] auto result =
+      wakeup_send_->send(std::move(signal), zmq::send_flags::dontwait);
 }
 
 void Coordinator::Gateway::CloseSockets() {
+  if (wakeup_send_) wakeup_send_->close();
+  if (wakeup_recv_) wakeup_recv_->close();
   if (node_agent_socket_) {
     node_agent_socket_->close();
   }
@@ -163,8 +184,9 @@ void Coordinator::Gateway::Stop() {
 void Coordinator::Gateway::Loop() {
   running_ = true;
   while (running_) {
-    // Poll for incoming messages from NodeAgents
-    auto ready = Comm::PollForRead({node_agent_socket_}, kPollTimeoutMs);
+    // Poll for incoming messages from NodeAgents OR wakeup signal
+    auto ready =
+        Comm::PollForRead({node_agent_socket_, wakeup_recv_}, kPollTimeoutMs);
 
     for (const auto& socket : ready) {
       if (socket == node_agent_socket_) {
@@ -174,6 +196,12 @@ void Coordinator::Gateway::Loop() {
             inbox_queue_.try_push(InboxMessage{node_agent_identity, request});
         if (status == boost::queue_op_status::closed) {
           return;
+        }
+      } else if (socket == wakeup_recv_) {
+        // Drain all wakeup signals (there may be multiple)
+        zmq::message_t drain;
+        while (wakeup_recv_->recv(drain, zmq::recv_flags::dontwait)
+                   .has_value()) {
         }
       }
     }
@@ -198,11 +226,18 @@ void Coordinator::Gateway::Loop() {
 Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
                               Queue<OutboxMessage>& outbox_queue,
                               MetaStore& metastore,
-                              Queue<PlannerTask>& planner_queue)
+                              Queue<PlannerTask>& planner_queue,
+                              OutboxNotifyFn outbox_notify)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
-      planner_queue_(planner_queue) {}
+      planner_queue_(planner_queue),
+      outbox_notify_(std::move(outbox_notify)) {}
+
+void Coordinator::Handler::PushOutbox(OutboxMessage msg) {
+  outbox_queue_.push(std::move(msg));
+  outbox_notify_();
+}
 
 void Coordinator::Handler::Start() {
   if (running_.load()) {
@@ -274,12 +309,12 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
   if (shard_metadata_ptr) {
     RegisterTensorShardCoordinatorResponse response(
         request.request_id, ErrorCode::kSuccess, *shard_metadata_ptr);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
   } else {
     LOG_ERROR("Failed to register tensor shard: {}", request.tensor_shard_spec);
     RegisterTensorShardCoordinatorResponse response(
         request.request_id, ErrorCode::kInvalidArguments);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -305,7 +340,7 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
     for (const auto& [owner_id, shard_ids] : owner_to_shard_ids) {
       Identity owner_identity = to_string(owner_id) + "_dealer";
       AllocateTensorRequest allocate_request(shard_ids);
-      outbox_queue_.push(OutboxMessage{owner_identity, allocate_request});
+      PushOutbox(OutboxMessage{owner_identity, allocate_request});
     }
   }
 }
@@ -395,7 +430,7 @@ void Coordinator::Handler::HandleShardSubmission(
   for (const auto& participant : result->participants) {
     SubmitCopyResponse response(participant.request_id, copy_op_id,
                                 ErrorCode::kSuccess);
-    outbox_queue_.push(OutboxMessage{participant.identity, response});
+    PushOutbox(OutboxMessage{participant.identity, response});
   }
 }
 
@@ -428,7 +463,7 @@ void Coordinator::Handler::HandleExecuteResponse(
     // Send CopyOperationFinishedRequest to all SUBMITTERS
     for (const auto& submitter_identity : state->submitters) {
       CopyOperationFinishedRequest finish_req(response.copy_op_id);
-      outbox_queue_.push(OutboxMessage{submitter_identity, finish_req});
+      PushOutbox(OutboxMessage{submitter_identity, finish_req});
     }
 
     copy_operations_.erase(it);
@@ -449,7 +484,7 @@ void Coordinator::Handler::HandleGetTensorSpecRequest(
 
   GetTensorSpecResponse response(request.request_id, ErrorCode::kSuccess,
                                  *tensor_spec);
-  outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+  PushOutbox(OutboxMessage{node_agent_identity, response});
 }
 
 //==============================================================================
@@ -458,12 +493,19 @@ void Coordinator::Handler::HandleGetTensorSpecRequest(
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
                                 MetaStore& metastore, Planner& planner,
-                                HintStore& hint_store)
+                                HintStore& hint_store,
+                                OutboxNotifyFn outbox_notify)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_(planner),
-      hint_store_(hint_store) {}
+      hint_store_(hint_store),
+      outbox_notify_(std::move(outbox_notify)) {}
+
+void Coordinator::Executor::PushOutbox(OutboxMessage msg) {
+  outbox_queue_.push(std::move(msg));
+  outbox_notify_();
+}
 
 void Coordinator::Executor::Start() {
   if (running_.load()) {
@@ -506,7 +548,7 @@ void Coordinator::Executor::Loop() {
 
         ExecuteRequest execute_request(task.copy_op_id, std::move(node_plan));
 
-        outbox_queue_.push(OutboxMessage{node_identity, execute_request});
+        PushOutbox(OutboxMessage{node_identity, execute_request});
       }
 
       // Set expected responses

@@ -65,9 +65,6 @@ class ContiguousBufferRangeView {
  private:
   std::vector<ContiguousBufferRange> ranges_;
 
-  static std::vector<ContiguousBufferRange> BitsetToRanges(
-      const TensorIndicesBitset& bitset);
-
   void ComputeRanges(const std::vector<TensorDimName>& dim_names,
                      TensorSelectionPtr selection);
 };

@@ -428,22 +428,21 @@ struct formatter<
   }
 };
 //==============================================================================
-// Formatter for Boost::dynamic_bitset<>
+// Formatter for IndexRangeSet (replacement for boost::dynamic_bitset<>)
 //==============================================================================
-/// @brief Formatter specialization for Boost::dynamic_bitset
+/// @brief Formatter specialization for IndexRangeSet
 /// @ingroup Formatters
 template <>
-struct formatter<boost::dynamic_bitset<>, char> {
+struct formatter<setu::commons::datatypes::IndexRangeSet, char> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& ctx) {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(const boost::dynamic_bitset<>& bitset, FormatContext& ctx) const {
-    std::basic_string<char, std::char_traits<char>> s;
-    boost::to_string(bitset, s);
-    return std::format_to(ctx.out(), "{}", s);
+  auto format(const setu::commons::datatypes::IndexRangeSet& range_set,
+              FormatContext& ctx) const {
+    return std::format_to(ctx.out(), "{}", range_set.ToString());
   }
 };
 //==============================================================================
@@ -485,7 +484,7 @@ template <typename T>
            !setu::commons::Printable<T> &&
            !std::is_same_v<T, c10::ScalarType> &&
            !std::is_same_v<T, torch::Tensor> &&
-           !std::is_same_v<T, boost::dynamic_bitset<>> &&
+           !std::is_same_v<T, setu::commons::datatypes::IndexRangeSet> &&
            !std::is_same_v<std::remove_cv_t<T>,
                            boost::concurrent::sync_queue<
                                typename std::remove_cv_t<T>::value_type>> &&

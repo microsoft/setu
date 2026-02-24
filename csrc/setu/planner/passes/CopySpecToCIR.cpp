@@ -62,32 +62,18 @@ struct ShardBufferState {
 
 cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec,
                                 MetaStore& metastore) {
-  auto to_us = [](auto d) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-  };
-
   auto t0 = std::chrono::steady_clock::now();
+
   auto src_meta = metastore.GetTensorMetadata(copy_spec.src_name);
-  auto t1 = std::chrono::steady_clock::now();
   auto dst_meta = metastore.GetTensorMetadata(copy_spec.dst_name);
-  auto t2 = std::chrono::steady_clock::now();
 
   auto src_own = src_meta->GetOwnershipMap(copy_spec.src_selection);
-  auto t3 = std::chrono::steady_clock::now();
   auto dst_own = dst_meta->GetOwnershipMap(copy_spec.dst_selection);
-  auto t4 = std::chrono::steady_clock::now();
+  auto t1 = std::chrono::steady_clock::now();
 
   auto src_view = TensorShardRangeView(src_own);
-  auto t5 = std::chrono::steady_clock::now();
   auto dst_view = TensorShardRangeView(dst_own);
-  auto t6 = std::chrono::steady_clock::now();
-
-  LOG_INFO(
-      "CopySpecToCIR: GetMeta(src)={}us, GetMeta(dst)={}us, "
-      "OwnershipMap(src)={}us, OwnershipMap(dst)={}us, "
-      "RangeView(src)={}us, RangeView(dst)={}us",
-      to_us(t1 - t0), to_us(t2 - t1), to_us(t3 - t2), to_us(t4 - t3),
-      to_us(t5 - t4), to_us(t6 - t5));
+  auto t2 = std::chrono::steady_clock::now();
 
   ASSERT_VALID_RUNTIME(!src_view.empty() && !dst_view.empty(),
                        "Source and destination views must not be empty");
@@ -145,6 +131,15 @@ cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec,
   ASSERT_VALID_RUNTIME(
       src_it == src_view.end() && dst_it == dst_view.end(),
       "Exited the loop before all src and dst buffers were consumed!");
+
+  auto t3 = std::chrono::steady_clock::now();
+  auto to_us = [](auto d) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+  };
+  LOG_INFO(
+      "CopySpecToCIR: ownership_map={}us, range_view={}us, emit={}us, "
+      "total={}us",
+      to_us(t1 - t0), to_us(t2 - t1), to_us(t3 - t2), to_us(t3 - t0));
 
   return program;
 }

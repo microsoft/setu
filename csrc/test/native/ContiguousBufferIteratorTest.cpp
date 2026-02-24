@@ -31,21 +31,19 @@ using setu::commons::utils::ContiguousBufferRangeView;
 //==============================================================================
 namespace {
 //==============================================================================
-// Helper to create a bitset from a list of selected indices
+// Helper to create an IndexRangeSet from a list of selected indices
 TensorIndicesBitset MakeBitset(std::size_t size,
                                const std::vector<std::size_t>& selected) {
-  TensorIndicesBitset bitset(size);
+  std::set<std::int64_t> index_set;
   for (auto idx : selected) {
-    bitset[idx] = true;
+    index_set.insert(static_cast<std::int64_t>(idx));
   }
-  return bitset;
+  return TensorIndicesBitset::FromIndices(size, index_set);
 }
 
-// Helper to create a fully selected bitset
+// Helper to create a fully selected IndexRangeSet
 TensorIndicesBitset MakeFullBitset(std::size_t size) {
-  TensorIndicesBitset bitset(size);
-  bitset.set();
-  return bitset;
+  return TensorIndicesBitset::MakeFull(size);
 }
 
 // Helper to collect ranges into a vector for easier testing
@@ -107,7 +105,7 @@ TEST(ContiguousBufferRangeViewTest,
 TEST(ContiguousBufferRangeViewTest, SingleDim_EmptySelection_NoRanges) {
   // tensor[8] with empty selection (nothing selected)
   TensorIndicesMap indices;
-  indices["x"] = TensorIndicesBitset(8);  // All zeros
+  indices["x"] = TensorIndicesBitset::MakeEmpty(8);
 
   auto selection = std::make_shared<TensorSelection>("tensor", indices);
   ContiguousBufferRangeView view({"x"}, selection);

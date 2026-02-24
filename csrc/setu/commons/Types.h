@@ -20,6 +20,8 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "commons/datatypes/IndexRangeSet.h"
+//==============================================================================
 /**
  * @namespace setu::commons
  * @brief Common types and type aliases used throughout the Setu system
@@ -60,8 +62,8 @@ using TensorIndex = std::int64_t;
 using TensorIndices = std::set<TensorIndex>;
 /// @brief Shared pointer to a set of tensor indices
 using TensorIndicesPtr = std::shared_ptr<TensorIndices>;
-/// @brief Efficient bitset representation for large index sets
-using TensorIndicesBitset = boost::dynamic_bitset<>;
+/// @brief Efficient range-based representation for large index sets
+using TensorIndicesBitset = datatypes::IndexRangeSet;
 /// @brief Map from dimension names to their corresponding index bitsets
 using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndicesBitset>;
 /// @brief Unique identifier for a tensor shard (UUID)
