@@ -1,8 +1,9 @@
 """Cluster protocol that all backends implement."""
 
-from typing import Callable, Optional, Protocol, TypeVar, runtime_checkable
+from typing import Callable, List, Optional, Protocol, TypeVar, runtime_checkable
 
 from setu._coordinator import Participant
+from setu.cluster.barrier import Barrier
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo
 
@@ -42,5 +43,13 @@ class Cluster(Protocol):
         available via ``handle.next_result()``.
 
         Use ``functools.partial`` to bind extra arguments into *body*.
+        """
+        ...
+
+    def create_barrier(self, num_clients: int) -> List[Barrier]:
+        """Create a synchronization barrier for SPMD client bodies.
+
+        Returns *num_clients* :class:`Barrier` handles -- pass one to each
+        client body via ``functools.partial`` so they can coordinate phases.
         """
         ...

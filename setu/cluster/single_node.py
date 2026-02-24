@@ -4,12 +4,13 @@ import logging
 import time
 import uuid
 from logging.handlers import QueueHandler, QueueListener
-from typing import Callable, Dict, Optional, TypeVar
+from typing import Callable, Dict, List, Optional, TypeVar
 
 import torch.multiprocessing as mp
 
 from setu._commons.datatypes import Device
 from setu._coordinator import Participant
+from setu.cluster.barrier import Barrier, MultiprocessingBarrier
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo, NodeInfo
 from setu.cluster.protocol import Cluster as ClusterProto
@@ -99,7 +100,6 @@ def _run_node_agent_process(
 # ---------------------------------------------------------------------------
 
 
-_SENTINEL = "__DONE__"
 _ERROR_TAG = "__ERROR__"
 
 
@@ -117,16 +117,15 @@ def _warmup_cuda(device) -> None:
 def _client_process_target(
     endpoint, participant, body, result_queue, stop_event, log_queue
 ):
-    """Process target: create Client, run body, put results, wait for stop.
+    """Process target: create Client, run body, put result, wait for stop.
 
-    Uses :func:`execute_client_body` for generator/error handling so the
-    sentinel is always delivered and exceptions are forwarded to the parent.
+    The body is a plain function that runs to completion and returns a value.
+    The return value (or an error tuple) is placed on *result_queue*.
     """
     _setup_child_logging(log_queue)
     import time
     import traceback
 
-    from setu.cluster.handle import execute_client_body
     from setu.logger import init_logger
 
     logger = init_logger(__name__)
@@ -150,19 +149,12 @@ def _client_process_target(
             "client_process_target: client created in %.3fs, running body",
             time.monotonic() - t0,
         )
-        execute_client_body(
-            body,
-            client,
-            participant,
-            put_result=result_queue.put,
-            put_error=lambda tb: result_queue.put((_ERROR_TAG, tb)),
-            put_done=lambda: result_queue.put(_SENTINEL),
-        )
+        result = body(client, participant)
+        result_queue.put(result)
     except Exception:
         tb = traceback.format_exc()
-        logger.error("client_process_target: failed before body:\n%s", tb)
+        logger.error("client_process_target: failed:\n%s", tb)
         result_queue.put((_ERROR_TAG, tb))
-        result_queue.put(_SENTINEL)
     finally:
         if client is not None:
             t0 = time.monotonic()
@@ -185,33 +177,17 @@ class _ProcessClientHandle(ClientHandle[T]):
         self._process = process
         self._result_queue = result_queue
         self._stop_event = stop_event
-        self._exhausted = False
 
-    def next_result(self, timeout: Optional[float] = None) -> T:
-        if self._exhausted:
-            raise StopIteration
+    def result(self, timeout: Optional[float] = None) -> T:
         if not self._process.is_alive() and self._result_queue.empty():
-            self._exhausted = True
             raise RuntimeError(
                 f"Client process died (exit code {self._process.exitcode}) "
                 "with no result on the queue"
             )
         value = self._result_queue.get(timeout=timeout)
-        if value == _SENTINEL:
-            self._exhausted = True
-            raise StopIteration
         if isinstance(value, tuple) and len(value) == 2 and value[0] == _ERROR_TAG:
-            self._exhausted = True
             raise RuntimeError(f"Remote process error:\n{value[1]}")
         return value
-
-    def result(self, timeout: Optional[float] = None) -> T:
-        last = None
-        while True:
-            try:
-                last = self.next_result(timeout=timeout)
-            except StopIteration:
-                return last
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -383,6 +359,15 @@ class SingleNodeCluster(ClusterProto):
         )
         proc.start()
         return _ProcessClientHandle(proc, result_queue, stop_event)
+
+    def create_barrier(self, num_clients: int) -> List[Barrier]:
+        """Create a shared-memory barrier for *num_clients* SPMD participants.
+
+        All returned handles wrap the same ``mp.Barrier`` object.
+        """
+        mp_barrier = self._ctx.Barrier(num_clients)
+        shared = MultiprocessingBarrier(mp_barrier)
+        return [shared] * num_clients
 
     def stop(self) -> None:
         """Signal stop, terminate, and join all processes."""

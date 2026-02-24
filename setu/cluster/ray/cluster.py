@@ -7,12 +7,14 @@ running arbitrary work on remote nodes.
 """
 
 import random
+import uuid
 from typing import Callable, Dict, List, Optional, TypeVar
 
 import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from setu._coordinator import Participant
+from setu.cluster.barrier import Barrier, RayCollectiveBarrier
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo, NodeInfo
 from setu.cluster.protocol import Cluster as ClusterProto
@@ -70,41 +72,23 @@ def _discover_ray_nodes() -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 
-@ray.remote(num_gpus=1, max_concurrency=2)
+@ray.remote(num_gpus=1)
 class _ClientActor:
-    """Ray actor that creates a Client, runs a body function, and stays alive.
+    """Ray actor that creates a Client, runs a body function, and returns the result.
 
-    Uses :func:`execute_client_body` for generator/error handling so the
-    ``("done", None)`` sentinel is always delivered and exceptions are
-    forwarded to the parent.  ``max_concurrency=2`` allows
-    ``next_result`` calls while ``run`` is still executing.
+    The body is a plain function: ``body(client, participant) -> T``.
     """
 
     def __init__(self, endpoint: str) -> None:
-        import queue
-
         self._endpoint = endpoint
         self._client = None
-        self._queue: queue.Queue = queue.Queue()
 
     def run(self, body: Callable, participant: Participant):
-        """Connect, run body(client, participant), queue results."""
+        """Connect, run body(client, participant), return the result."""
         from setu.client import Client
-        from setu.cluster.handle import execute_client_body
 
         self._client = Client(self._endpoint)
-        execute_client_body(
-            body,
-            self._client,
-            participant,
-            put_result=lambda v: self._queue.put(("value", v)),
-            put_error=lambda tb: self._queue.put(("error", tb)),
-            put_done=lambda: self._queue.put(("done", None)),
-        )
-
-    def next_result(self):
-        """Return the next value, or the sentinel ``("done", None)``."""
-        return self._queue.get()
+        return body(self._client, participant)
 
     def stop(self) -> None:
         if self._client is not None:
@@ -113,31 +97,14 @@ class _ClientActor:
 
 
 class _RayClientHandle(ClientHandle[T]):
-    """Handle wrapping a Ray actor with a result queue."""
+    """Handle wrapping a Ray actor."""
 
-    def __init__(self, actor) -> None:
+    def __init__(self, actor, result_ref) -> None:
         self._actor = actor
-        self._exhausted = False
-
-    def next_result(self, timeout: Optional[float] = None) -> T:
-        if self._exhausted:
-            raise StopIteration
-        tag, value = ray.get(self._actor.next_result.remote(), timeout=timeout)
-        if tag == "done":
-            self._exhausted = True
-            raise StopIteration
-        if tag == "error":
-            self._exhausted = True
-            raise RuntimeError(f"Remote actor error:\n{value}")
-        return value
+        self._result_ref = result_ref
 
     def result(self, timeout: Optional[float] = None) -> T:
-        last = None
-        while True:
-            try:
-                last = self.next_result(timeout=timeout)
-            except StopIteration:
-                return last
+        return ray.get(self._result_ref, timeout=timeout)
 
     def stop(self) -> None:
         try:
@@ -305,10 +272,20 @@ class Cluster(ClusterProto):
             scheduling_strategy=scheduling,
         ).remote(node_info.node_agent_endpoint)
 
-        # Fire-and-forget: run() pushes results into the actor's internal
-        # queue; the handle drains them via next_result().
-        actor.run.remote(body, participant)
-        return _RayClientHandle(actor)
+        result_ref = actor.run.remote(body, participant)
+        return _RayClientHandle(actor, result_ref)
+
+    def create_barrier(self, num_clients: int) -> List[Barrier]:
+        """Create Ray collective barriers for *num_clients* SPMD participants.
+
+        Each returned handle lazily initialises a Gloo collective group
+        on its first ``wait()`` call inside the Ray actor process.
+        """
+        group_name = f"barrier_{uuid.uuid4().hex[:8]}"
+        return [
+            RayCollectiveBarrier(num_clients, rank, group_name)
+            for rank in range(num_clients)
+        ]
 
     def _kill_all_actors(self) -> None:
         """Force-kill all actors and reset state. Used for cleanup on failure."""

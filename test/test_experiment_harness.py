@@ -536,7 +536,8 @@ class TestExperimentRunnerSingleNode:
     """
 
     MIN_GPUS = 4
-    TENSOR_SIZE = 1024
+    # TENSOR_SIZE = 1024
+    TENSOR_SIZE = 64 * 1024 * 1024
 
     @pytest.fixture(autouse=True)
     def _require_gpus(self):
@@ -613,7 +614,11 @@ class TestExperimentRunnerSingleNode:
                 dst=dst,
                 copy_mode=CopyMode.PULL,
                 init_value=7.0,
+                timeout=120.0,
+                n_copy_rounds=10,
+                n_warmup_rounds=1,
             )
+            print(result.pretty_print())
             self._assert_success(result, src, dst)
 
     def test_pull_with_selections(self):
