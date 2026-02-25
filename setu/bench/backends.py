@@ -14,7 +14,7 @@ Two implementations are provided:
 from typing import Callable, List, Protocol, Tuple, TypeVar
 
 from setu._coordinator import Participant
-from setu.cluster.barrier import Barrier
+from setu.bench.barrier import Barrier
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo
 
@@ -95,7 +95,7 @@ class RayBackend:
         return _RayClientHandle(actor, result_ref)
 
     def create_barrier(self, num_clients: int) -> List[Barrier]:
-        from setu.cluster.barrier import RayActorBarrier, create_ray_barrier_actor
+        from setu.bench.barrier import RayActorBarrier, create_ray_barrier_actor
 
         actor = create_ray_barrier_actor(num_clients)
         return [RayActorBarrier(actor, rank) for rank in range(num_clients)]
@@ -146,7 +146,7 @@ class MultiprocessingBackend:
         return _ProcessClientHandle(proc, result_queue, stop_event)
 
     def create_barrier(self, num_clients: int) -> List[Barrier]:
-        from setu.cluster.barrier import MultiprocessingBarrier
+        from setu.bench.barrier import MultiprocessingBarrier
 
         mp_barrier = self._ctx.Barrier(num_clients)
         shared = MultiprocessingBarrier(mp_barrier)

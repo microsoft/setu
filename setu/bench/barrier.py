@@ -7,7 +7,7 @@ without knowing whether they run under a multiprocessing cluster (shared-memory
 
 import time
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 class Barrier(ABC):
@@ -17,9 +17,6 @@ class Barrier(ABC):
     def wait(self) -> None:
         """Block until all participants have called wait()."""
         ...
-
-    def destroy(self) -> None:
-        """Optional cleanup (e.g. tear down collective groups)."""
 
 
 class MultiprocessingBarrier(Barrier):
@@ -115,40 +112,3 @@ def create_ray_barrier_actor(world_size: int):
             return (self._generation, len(self._arrived), self._world_size)
 
     return _BarrierActor.remote(world_size)
-
-
-# Keep the old Gloo-based barrier for backwards compatibility.
-class RayCollectiveBarrier(Barrier):
-    """Lazy-init barrier using ``ray.util.collective`` (Gloo backend).
-
-    .. deprecated:: Use :class:`RayActorBarrier` instead.
-    """
-
-    def __init__(self, world_size: int, rank: int, group_name: str) -> None:
-        self._world_size = world_size
-        self._rank = rank
-        self._group_name = group_name
-        self._initialized = False
-
-    def wait(self) -> None:
-        if not self._initialized:
-            import ray.util.collective as col
-
-            col.init_collective_group(
-                self._world_size,
-                self._rank,
-                backend="gloo",
-                group_name=self._group_name,
-            )
-            self._initialized = True
-
-        import ray.util.collective as col
-
-        col.barrier(self._group_name)
-
-    def destroy(self) -> None:
-        if self._initialized:
-            import ray.util.collective as col
-
-            col.destroy_collective_group(self._group_name)
-            self._initialized = False
