@@ -4,12 +4,8 @@ from setu.experiment.helpers import (
     ShardedTensor,
     shard_tensor,
 )
-from setu.experiment.runner import (
-    CopyMode,
-    DimSelection,
-    ExperimentResult,
-    run_experiment,
-)
+from setu.experiment.result import CopyMode, ExperimentResult
+from setu.experiment.runner import DimSelection, run_experiment
 
 __all__ = [
     "CopyMode",

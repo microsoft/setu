@@ -268,10 +268,10 @@ void InitTensorShardSpecPybind(py::module_& m) {
             if (t.size() != 4) {
               throw std::runtime_error("Invalid state for TensorShardSpec");
             }
-            return TensorShardSpec(
-                t[0].cast<TensorName>(),
-                t[1].cast<std::vector<TensorDimSpec>>(),
-                t[2].cast<torch::Dtype>(), t[3].cast<Device>());
+            return TensorShardSpec(t[0].cast<TensorName>(),
+                                   t[1].cast<std::vector<TensorDimSpec>>(),
+                                   t[2].cast<torch::Dtype>(),
+                                   t[3].cast<Device>());
           }));
 }
 //==============================================================================

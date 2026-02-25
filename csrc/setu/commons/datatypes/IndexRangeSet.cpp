@@ -21,8 +21,7 @@
 namespace setu::commons::datatypes {
 //==============================================================================
 IndexRangeSet IndexRangeSet::MakeSingle(std::size_t dim_size,
-                                         std::int64_t start,
-                                         std::int64_t end) {
+                                        std::int64_t start, std::int64_t end) {
   ASSERT_VALID_ARGUMENTS(start >= 0, "Start {} must be non-negative", start);
   ASSERT_VALID_ARGUMENTS(start <= end, "Start {} must be <= end {}", start,
                          end);
@@ -47,9 +46,9 @@ IndexRangeSet IndexRangeSet::FromIndices(
   ++it;
 
   for (; it != indices.end(); ++it) {
-    ASSERT_VALID_ARGUMENTS(
-        *it >= 0 && static_cast<std::size_t>(*it) < dim_size,
-        "Index {} is out of bounds for dimension of size {}", *it, dim_size);
+    ASSERT_VALID_ARGUMENTS(*it >= 0 && static_cast<std::size_t>(*it) < dim_size,
+                           "Index {} is out of bounds for dimension of size {}",
+                           *it, dim_size);
     if (*it == range_end) {
       // Extend current range
       ++range_end;
@@ -98,7 +97,7 @@ IndexRangeSet IndexRangeSet::Intersect(const IndexRangeSet& other) const {
 }
 //==============================================================================
 IndexRangeSet IndexRangeSet::ShiftAndClamp(std::int64_t offset,
-                                            std::size_t new_size) const {
+                                           std::size_t new_size) const {
   if (ranges.empty()) {
     return MakeEmpty(new_size);
   }
@@ -135,8 +134,7 @@ void IndexRangeSet::Serialize(detail::BinaryBuffer& buffer) const {
 
   // Write ranges as bulk memcpy (IndexRange is trivially copyable)
   if (!ranges.empty()) {
-    const auto* data =
-        reinterpret_cast<const std::uint8_t*>(ranges.data());
+    const auto* data = reinterpret_cast<const std::uint8_t*>(ranges.data());
     const auto bytes = ranges.size() * sizeof(IndexRange);
     buffer.insert(buffer.end(), data, data + bytes);
   }
@@ -173,7 +171,8 @@ std::string IndexRangeSet::ToString() const {
     return std::format("IndexRangeSet(dim_size={}, full)", dim_size);
   }
 
-  std::string result = std::format("IndexRangeSet(dim_size={}, ranges=[", dim_size);
+  std::string result =
+      std::format("IndexRangeSet(dim_size={}, ranges=[", dim_size);
   for (std::size_t i = 0; i < ranges.size(); ++i) {
     if (i > 0) result += ", ";
     result += std::format("[{}, {})", ranges[i].start, ranges[i].end);

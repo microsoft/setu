@@ -2,8 +2,7 @@
 Main orchestration for Setu on Ray.
 
 Provides Cluster which manages the lifecycle of Coordinator and
-NodeAgent actors across a Ray cluster, along with spawn_client for
-running arbitrary work on remote nodes.
+NodeAgent actors across a Ray cluster.
 """
 
 import random
@@ -14,11 +13,16 @@ import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from setu._coordinator import Participant
-from setu.cluster.barrier import Barrier, RayCollectiveBarrier
 from setu.cluster.handle import ClientHandle
-from setu.cluster.info import ClusterInfo, NodeInfo
+from setu.cluster.info import ClusterInfo
+from setu.cluster.ray.info import RayClusterInfo, RayNodeInfo
 from setu.cluster.protocol import Cluster as ClusterProto
-from setu.cluster.ray.actors import CoordinatorActor, NodeAgentActor
+from setu.cluster.ray.actors import (
+    COORDINATOR_ACTOR_NAME,
+    COORDINATOR_ACTOR_NAMESPACE,
+    CoordinatorActor,
+    NodeAgentActor,
+)
 from setu.logger import init_logger
 
 logger = init_logger(__name__)
@@ -72,14 +76,20 @@ def _discover_ray_nodes() -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=0)
 class _ClientActor:
     """Ray actor that creates a Client, runs a body function, and returns the result.
 
     The body is a plain function: ``body(client, participant) -> T``.
+    Uses num_gpus=0 to bypass Ray GPU scheduling.  The caller passes
+    *cuda_visible_devices* which is set in ``os.environ`` before any
+    CUDA code runs, making all node GPUs visible to this process.
     """
 
-    def __init__(self, endpoint: str) -> None:
+    def __init__(self, endpoint: str, cuda_visible_devices: str) -> None:
+        import os
+
+        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
         self._endpoint = endpoint
         self._client = None
 
@@ -104,14 +114,15 @@ class _RayClientHandle(ClientHandle[T]):
         self._result_ref = result_ref
 
     def result(self, timeout: Optional[float] = None) -> T:
-        return ray.get(self._result_ref, timeout=timeout)
+        import queue as _queue
+
+        try:
+            return ray.get(self._result_ref, timeout=timeout)
+        except ray.exceptions.GetTimeoutError:
+            raise _queue.Empty("ray.get timed out") from None
 
     def stop(self) -> None:
-        try:
-            ray.get(self._actor.stop.remote(), timeout=5)
-        except Exception:
-            pass
-        ray.kill(self._actor)
+        ray.kill(self._actor, no_restart=True)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +197,8 @@ class Cluster(ClusterProto):
         if self._env_vars:
             coordinator_options["runtime_env"] = {"env_vars": self._env_vars}
         self._coordinator_actor = CoordinatorActor.options(
+            name=COORDINATOR_ACTOR_NAME,
+            namespace=COORDINATOR_ACTOR_NAMESPACE,
             **coordinator_options,
         ).remote()
 
@@ -227,9 +240,9 @@ class Cluster(ClusterProto):
                 "new one."
             )
 
-        # Build ClusterInfo using shared types
+        # Build RayClusterInfo with Ray-specific scheduling metadata.
         nodes = [
-            NodeInfo(
+            RayNodeInfo(
                 node_id=result["node_id"],
                 node_agent_endpoint=result["node_agent_endpoint"],
                 devices=result["devices"],
@@ -238,9 +251,15 @@ class Cluster(ClusterProto):
             for result in node_agent_results
         ]
 
-        self._cluster_info = ClusterInfo(
+        # Record the Ray address so external processes (e.g. bench_setu)
+        # can connect to the same Ray cluster.
+        ray_ctx = ray.get_runtime_context()
+        ray_address = ray_ctx.gcs_address if hasattr(ray_ctx, "gcs_address") else None
+
+        self._cluster_info = RayClusterInfo(
             coordinator_endpoint=coordinator_endpoint,
             nodes=nodes,
+            ray_address=ray_address,
         )
         self._started = True
 
@@ -251,48 +270,6 @@ class Cluster(ClusterProto):
             coordinator_endpoint,
         )
         return self._cluster_info
-
-    def spawn_client(
-        self,
-        participant: Participant,
-        body: Callable[..., T],
-    ) -> ClientHandle[T]:
-        """Spawn a Client on the Ray node owning *participant*.
-
-        Creates a ``_ClientActor`` pinned to the correct node, which
-        connects a ``Client`` and calls ``body(client, participant)``.
-
-        Use ``functools.partial`` to bind extra arguments into *body*.
-        """
-        assert self._cluster_info is not None, "Cluster has not been started"
-
-        node_info = self._cluster_info.node_info_for_participant(participant)
-        assert node_info.ray_node_id is not None, (
-            f"NodeInfo for device {participant.device} has no ray_node_id"
-        )
-
-        scheduling = NodeAffinitySchedulingStrategy(
-            node_id=node_info.ray_node_id,
-            soft=False,
-        )
-        actor = _ClientActor.options(
-            scheduling_strategy=scheduling,
-        ).remote(node_info.node_agent_endpoint)
-
-        result_ref = actor.run.remote(body, participant)
-        return _RayClientHandle(actor, result_ref)
-
-    def create_barrier(self, num_clients: int) -> List[Barrier]:
-        """Create Ray collective barriers for *num_clients* SPMD participants.
-
-        Each returned handle lazily initialises a Gloo collective group
-        on its first ``wait()`` call inside the Ray actor process.
-        """
-        group_name = f"barrier_{uuid.uuid4().hex[:8]}"
-        return [
-            RayCollectiveBarrier(num_clients, rank, group_name)
-            for rank in range(num_clients)
-        ]
 
     def _kill_all_actors(self) -> None:
         """Force-kill all actors and reset state. Used for cleanup on failure."""
@@ -311,30 +288,41 @@ class Cluster(ClusterProto):
     def stop(self) -> None:
         """Stop the Setu cluster.
 
-        Stops all NodeAgentActors first (closing ZMQ connections to the
-        Coordinator), then stops the CoordinatorActor. Actor handles are
-        dropped so Ray can garbage-collect the processes and run C++
-        destructors, which close ZMQ sockets and contexts.
+        Attempts graceful stop with a timeout, then force-kills all actors.
         """
         if not self._started:
             return
 
-        # Stop NodeAgentActors in parallel
+        _STOP_TIMEOUT_S = 5
+
+        # Try graceful stop of NodeAgentActors
         if self._node_agent_actors:
             stop_futures = [actor.stop.remote() for actor in self._node_agent_actors]
-            ray.get(stop_futures)
-            logger.info("All NodeAgentActors stopped")
+            try:
+                ray.get(stop_futures, timeout=_STOP_TIMEOUT_S)
+                logger.info("All NodeAgentActors stopped gracefully")
+            except Exception:
+                logger.warning(
+                    "NodeAgentActors did not stop within %ds, force-killing",
+                    _STOP_TIMEOUT_S,
+                )
 
-        # Stop CoordinatorActor
+        # Try graceful stop of CoordinatorActor
         if self._coordinator_actor is not None:
-            ray.get(self._coordinator_actor.stop.remote())
-            logger.info("CoordinatorActor stopped")
+            try:
+                ray.get(
+                    self._coordinator_actor.stop.remote(),
+                    timeout=_STOP_TIMEOUT_S,
+                )
+                logger.info("CoordinatorActor stopped gracefully")
+            except Exception:
+                logger.warning(
+                    "CoordinatorActor did not stop within %ds, force-killing",
+                    _STOP_TIMEOUT_S,
+                )
 
-        # Drop actor handles — Ray will GC the processes and run destructors,
-        # which close ZMQ sockets and contexts cleanly.
-        self._node_agent_actors = []
-        self._coordinator_actor = None
-        self._cluster_info = None
+        # Force-kill everything to ensure cleanup
+        self._kill_all_actors()
         self._started = False
 
         logger.info("Setu cluster fully shut down")
@@ -354,3 +342,4 @@ class Cluster(ClusterProto):
         if self._coordinator_actor is None:
             raise RuntimeError("SetuCluster is not started")
         ray.get(self._coordinator_actor.clear_hints.remote())
+

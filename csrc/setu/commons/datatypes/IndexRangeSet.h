@@ -46,22 +46,23 @@ struct IndexRange {
 /**
  * @brief Represents a set of indices as sorted, non-overlapping ranges
  *
- * Replaces boost::dynamic_bitset<> for representing tensor dimension selections.
- * For the common case of a single contiguous range per dimension, this uses
- * 24 bytes instead of 8 MB (for a 64M-element dimension).
+ * Replaces boost::dynamic_bitset<> for representing tensor dimension
+ * selections. For the common case of a single contiguous range per dimension,
+ * this uses 24 bytes instead of 8 MB (for a 64M-element dimension).
  *
  * All operations are O(R) where R is the number of ranges (typically 1),
  * compared to O(dim_size) for the bitset representation.
  */
 struct IndexRangeSet {
-  std::size_t dim_size;              ///< Total dimension size
-  std::vector<IndexRange> ranges;    ///< Sorted, non-overlapping ranges
+  std::size_t dim_size;            ///< Total dimension size
+  std::vector<IndexRange> ranges;  ///< Sorted, non-overlapping ranges
 
   // ---- Constructors ----
 
   IndexRangeSet() : dim_size(0) {}
 
-  IndexRangeSet(std::size_t dim_size_param, std::vector<IndexRange> ranges_param)
+  IndexRangeSet(std::size_t dim_size_param,
+                std::vector<IndexRange> ranges_param)
       : dim_size(dim_size_param), ranges(std::move(ranges_param)) {}
 
   // ---- Factories ----
@@ -71,8 +72,7 @@ struct IndexRangeSet {
     if (dim_size == 0) {
       return IndexRangeSet(0, {});
     }
-    return IndexRangeSet(dim_size,
-                         {{0, static_cast<std::int64_t>(dim_size)}});
+    return IndexRangeSet(dim_size, {{0, static_cast<std::int64_t>(dim_size)}});
   }
 
   /** @brief Create an empty set (no indices selected) */
@@ -82,8 +82,8 @@ struct IndexRangeSet {
 
   /** @brief Create a set with a single range [start, end) */
   [[nodiscard]] static IndexRangeSet MakeSingle(std::size_t dim_size,
-                                                 std::int64_t start,
-                                                 std::int64_t end);
+                                                std::int64_t start,
+                                                std::int64_t end);
 
   /** @brief Create from a set of arbitrary indices, coalescing consecutive
    * ones into ranges */
@@ -122,10 +122,11 @@ struct IndexRangeSet {
    * @brief Shift ranges by -offset and clamp to [0, new_size)
    *
    * This replaces the bitset >> shift + resize pattern used in Localize.
-   * Each range [a, b) becomes [a - offset, b - offset) clamped to [0, new_size).
+   * Each range [a, b) becomes [a - offset, b - offset) clamped to [0,
+   * new_size).
    */
   [[nodiscard]] IndexRangeSet ShiftAndClamp(std::int64_t offset,
-                                             std::size_t new_size) const;
+                                            std::size_t new_size) const;
 
   /** @brief Equality comparison */
   [[nodiscard]] bool operator==(const IndexRangeSet& other) const {

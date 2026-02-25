@@ -17,6 +17,17 @@ from setu.logger import init_logger
 
 logger = init_logger(__name__)
 
+COORDINATOR_ACTOR_NAME = "setu_coordinator"
+COORDINATOR_ACTOR_NAMESPACE = "setu"
+
+
+def get_coordinator_actor():
+    """Get the named CoordinatorActor handle. Returns None if not found."""
+    try:
+        return ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_ACTOR_NAMESPACE)
+    except ValueError:
+        return None
+
 
 def _find_free_port() -> int:
     """Find a free port on the current node using OS assignment."""
@@ -51,7 +62,6 @@ class CoordinatorActor:
             Dict with coordinator_endpoint and ip_address.
         """
         from setu._coordinator import Coordinator, NCCLBackend, PassManager, Planner
-
         from setu.cluster.passes import resolve_passes
 
         self._ip_address = ray.util.get_node_ip_address()

@@ -678,8 +678,7 @@ void NodeAgent::Executor::Loop() {
           "NodeAgent Executor: copy_op_id={}, embellish+send={}us, "
           "worker_execution={}us, total={}us, workers={}",
           copy_op_id, to_us(t_sent - t_dequeued),
-          to_us(t_workers_done - t_sent),
-          to_us(t_workers_done - t_dequeued),
+          to_us(t_workers_done - t_sent), to_us(t_workers_done - t_dequeued),
           sent_device_ranks.size());
 
       Comm::Send<NodeAgentRequest>(async_socket_, response);

@@ -1,19 +1,24 @@
-"""Single-node Setu cluster with spawn_client support."""
+"""Multiprocessing-based Setu cluster.
+
+Spawns coordinator and node agents as child processes using
+``torch.multiprocessing``.  All processes run on the same physical
+machine, making this suitable for testing and single-node benchmarks.
+"""
 
 import logging
 import queue
 import time
 import uuid
 from logging.handlers import QueueHandler, QueueListener
-from typing import Callable, Dict, List, Optional, TypeVar
+from typing import Dict, List, Optional, TypeVar
 
 import torch.multiprocessing as mp
 
 from setu._commons.datatypes import Device
 from setu._coordinator import Participant
-from setu.cluster.barrier import Barrier, MultiprocessingBarrier
 from setu.cluster.handle import ClientHandle
 from setu.cluster.info import ClusterInfo, NodeInfo
+from setu.cluster.multiprocessing.info import MultiprocessingClusterInfo
 from setu.cluster.protocol import Cluster as ClusterProto
 from setu.cluster.spec import ClusterSpec
 
@@ -60,8 +65,9 @@ def _setup_child_logging(log_queue, log_dir: str = "", label: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_queue,
-                             command_queue, log_dir=""):
+def _run_coordinator_process(
+    spec: ClusterSpec, ready_event, stop_event, log_queue, command_queue, log_dir=""
+):
     """Coordinator process target. Builds Planner from spec."""
     _setup_child_logging(log_queue, log_dir=log_dir, label="coordinator")
     from setu._coordinator import (
@@ -70,7 +76,6 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_que
         PassManager,
         Planner,
     )
-
     from setu.cluster.passes import resolve_passes
 
     pass_manager = PassManager()
@@ -108,8 +113,14 @@ def _run_coordinator_process(spec: ClusterSpec, ready_event, stop_event, log_que
 
 
 def _run_node_agent_process(
-    node_id, port, coordinator_endpoint, devices, ready_event, stop_event, log_queue,
-    log_dir=""
+    node_id,
+    port,
+    coordinator_endpoint,
+    devices,
+    ready_event,
+    stop_event,
+    log_queue,
+    log_dir="",
 ):
     """NodeAgent process target. Receives picklable Device objects directly."""
     _setup_child_logging(log_queue, log_dir=log_dir, label=f"node_agent_{port}")
@@ -150,18 +161,13 @@ def _warmup_cuda(device) -> None:
 
 
 def _client_process_target(
-    endpoint, participant, body, result_queue, stop_event, log_queue,
-    log_dir=""
+    endpoint, participant, body, result_queue, stop_event,
 ):
     """Process target: create Client, run body, put result, wait for stop.
 
     The body is a plain function that runs to completion and returns a value.
     The return value (or an error tuple) is placed on *result_queue*.
     """
-    _setup_child_logging(
-        log_queue, log_dir=log_dir,
-        label=f"client_{participant.device}".replace(":", "_"),
-    )
     import time
     import traceback
 
@@ -174,7 +180,9 @@ def _client_process_target(
     _warmup_cuda(participant.device)
     logger.debug(
         "client_process_target: CUDA warmup took %.3fs (pid=%d, device=%s)",
-        time.monotonic() - t0, __import__("os").getpid(), participant.device,
+        time.monotonic() - t0,
+        __import__("os").getpid(),
+        participant.device,
     )
 
     client = None
@@ -236,28 +244,28 @@ class _ProcessClientHandle(ClientHandle[T]):
 
 
 # ---------------------------------------------------------------------------
-# SingleNodeCluster
+# Cluster
 # ---------------------------------------------------------------------------
 
 
-class SingleNodeCluster(ClusterProto):
-    """Manages a single-node Setu cluster for testing.
+class Cluster(ClusterProto):
+    """Multiprocessing-based Setu cluster.
 
-    All node agents run on the same physical machine. Spawns a coordinator
-    process and one node-agent process per entry in the ClusterSpec.
-    Use as a context manager for automatic cleanup.
+    Spawns a coordinator process and one node-agent process per entry in the
+    ClusterSpec using ``torch.multiprocessing``.  All processes run on the
+    same physical machine.  Use as a context manager for automatic cleanup.
 
     Validates that no two node agents own the same device.
 
     Example::
 
-        from functools import partial
+        from setu.cluster.multiprocessing import Cluster
+        from setu.experiment.runner import run_experiment
 
-        with SingleNodeCluster(spec) as cluster:
-            body = partial(my_fn, extra_arg=value)
-            handle = cluster.spawn_client(participant, body)
-            result = handle.result()
-            handle.stop()
+        with Cluster(spec) as cluster:
+            result = run_experiment(
+                cluster.cluster_info, src=src, dst=dst,
+            )
     """
 
     def __init__(
@@ -311,10 +319,6 @@ class SingleNodeCluster(ClusterProto):
         return self._spec.client_endpoint(node_id)
 
     @property
-    def mp_context(self):
-        return self._ctx
-
-    @property
     def cluster_info(self) -> Optional[ClusterInfo]:
         return self._cluster_info
 
@@ -323,14 +327,20 @@ class SingleNodeCluster(ClusterProto):
         coordinator_ready = self._ctx.Event()
         coordinator_proc = self._ctx.Process(
             target=_run_coordinator_process,
-            args=(self._spec, coordinator_ready, self._stop_event, self._log_queue,
-                  self._command_queue, self._log_dir),
+            args=(
+                self._spec,
+                coordinator_ready,
+                self._stop_event,
+                self._log_queue,
+                self._command_queue,
+                self._log_dir,
+            ),
         )
         coordinator_proc.start()
         self._processes.append(coordinator_proc)
-        assert coordinator_ready.wait(timeout=self._startup_timeout), (
-            "Coordinator failed to start"
-        )
+        assert coordinator_ready.wait(
+            timeout=self._startup_timeout
+        ), "Coordinator failed to start"
 
         nodes = []
         for node_id, (port, device_specs) in self._spec.nodes.items():
@@ -351,9 +361,9 @@ class SingleNodeCluster(ClusterProto):
             )
             node_proc.start()
             self._processes.append(node_proc)
-            assert node_ready.wait(timeout=self._startup_timeout), (
-                f"NodeAgent for {node_id} failed to start"
-            )
+            assert node_ready.wait(
+                timeout=self._startup_timeout
+            ), f"NodeAgent for {node_id} failed to start"
 
             nodes.append(
                 NodeInfo(
@@ -365,54 +375,11 @@ class SingleNodeCluster(ClusterProto):
 
         time.sleep(self._settle_time)
 
-        self._cluster_info = ClusterInfo(
+        self._cluster_info = MultiprocessingClusterInfo(
             coordinator_endpoint=self._spec.coordinator_endpoint,
             nodes=nodes,
         )
         return self._cluster_info
-
-    def spawn_client(
-        self,
-        participant: Participant,
-        body: Callable[..., T],
-    ) -> ClientHandle[T]:
-        """Spawn a Client in a subprocess connected to the correct node.
-
-        The subprocess creates a ``Client``, runs
-        ``body(client, participant)``, puts the result in a queue, then
-        blocks until ``handle.stop()`` is called.
-
-        Use ``functools.partial`` to bind extra arguments into *body*.
-        """
-        assert self._cluster_info is not None, "Cluster has not been started"
-
-        node_info = self._cluster_info.node_info_for_participant(participant)
-        result_queue = self._ctx.Queue()
-        stop_event = self._ctx.Event()
-
-        proc = self._ctx.Process(
-            target=_client_process_target,
-            args=(
-                node_info.node_agent_endpoint,
-                participant,
-                body,
-                result_queue,
-                stop_event,
-                self._log_queue,
-                self._log_dir,
-            ),
-        )
-        proc.start()
-        return _ProcessClientHandle(proc, result_queue, stop_event)
-
-    def create_barrier(self, num_clients: int) -> List[Barrier]:
-        """Create a shared-memory barrier for *num_clients* SPMD participants.
-
-        All returned handles wrap the same ``mp.Barrier`` object.
-        """
-        mp_barrier = self._ctx.Barrier(num_clients)
-        shared = MultiprocessingBarrier(mp_barrier)
-        return [shared] * num_clients
 
     def add_hint(self, hint) -> None:
         """Send a routing hint to the coordinator subprocess."""

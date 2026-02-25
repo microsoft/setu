@@ -1,12 +1,13 @@
 """Tests for the experiment harness (Mesh, PartitionSpec, helpers, runner)."""
 
 import uuid
+from test.fixtures.copy_spec_builder import build_copy_spec
 
 import pytest
 import torch
+
 from setu._commons.datatypes import Device, TensorDim
 from setu._coordinator import Link, Participant
-
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.cluster.mesh import Mesh, P, PartitionSpec
 from setu.experiment.helpers import (
@@ -14,7 +15,6 @@ from setu.experiment.helpers import (
     shard_tensor,
 )
 from setu.experiment.runner import CopyMode, run_experiment
-from test.fixtures.copy_spec_builder import build_copy_spec
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data
@@ -505,7 +505,7 @@ def test_run_experiment_simple_1d_copy():
         )
 
         result = run_experiment(
-            cluster=cluster,
+            cluster_info=cluster_info,
             src=src,
             dst=dst,
             copy_mode=CopyMode.PULL,
@@ -522,13 +522,13 @@ def test_run_experiment_simple_1d_copy():
 
 
 # ===========================================================================
-# run_experiment integration tests (SingleNodeCluster)
+# run_experiment integration tests (MultiprocessingCluster)
 # ===========================================================================
 
 
 @pytest.mark.gpu
 class TestExperimentRunnerSingleNode:
-    """Integration tests for run_experiment using SingleNodeCluster.
+    """Integration tests for run_experiment using MultiprocessingCluster.
 
     Source mesh uses GPUs 0-1 (2 shards), destination mesh uses GPUs 0-3
     (4 shards).  The tensor is sharded along the single dimension so that
@@ -603,13 +603,13 @@ class TestExperimentRunnerSingleNode:
 
     def test_pull_no_selections(self):
         """PULL mode, no selections, src sharded over 2 GPUs -> dst over 4."""
-        from setu.cluster.single_node import SingleNodeCluster
+        from setu.cluster.multiprocessing import Cluster as MultiprocessingCluster
 
-        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+        with MultiprocessingCluster(self._make_cluster_spec()) as cluster:
             src, dst = self._build_src_dst(cluster)
 
             result = run_experiment(
-                cluster=cluster,
+                cluster_info=cluster.cluster_info,
                 src=src,
                 dst=dst,
                 copy_mode=CopyMode.PULL,
@@ -617,24 +617,26 @@ class TestExperimentRunnerSingleNode:
                 timeout=120.0,
                 n_copy_rounds=10,
                 n_warmup_rounds=1,
+
             )
             print(result.pretty_print())
             self._assert_success(result, src, dst)
 
     def test_pull_with_selections(self):
         """PULL mode with slice selection covering the full dimension."""
-        from setu.cluster.single_node import SingleNodeCluster
+        from setu.cluster.multiprocessing import Cluster as MultiprocessingCluster
 
-        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+        with MultiprocessingCluster(self._make_cluster_spec()) as cluster:
             src, dst = self._build_src_dst(cluster)
 
             result = run_experiment(
-                cluster=cluster,
+                cluster_info=cluster.cluster_info,
                 src=src,
                 dst=dst,
                 copy_mode=CopyMode.PULL,
                 init_value=3.0,
                 selections={"dim0": slice(0, self.TENSOR_SIZE)},
+
             )
             self._assert_success(result, src, dst)
 
@@ -642,33 +644,35 @@ class TestExperimentRunnerSingleNode:
 
     def test_copy_no_selections(self):
         """COPY (two-sided) mode, no selections, 2 GPUs -> 4 GPUs."""
-        from setu.cluster.single_node import SingleNodeCluster
+        from setu.cluster.multiprocessing import Cluster as MultiprocessingCluster
 
-        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+        with MultiprocessingCluster(self._make_cluster_spec()) as cluster:
             src, dst = self._build_src_dst(cluster)
 
             result = run_experiment(
-                cluster=cluster,
+                cluster_info=cluster.cluster_info,
                 src=src,
                 dst=dst,
                 copy_mode=CopyMode.COPY,
                 init_value=7.0,
+
             )
             self._assert_success(result, src, dst)
 
     def test_copy_with_selections(self):
         """COPY (two-sided) mode with slice selection covering the full dim."""
-        from setu.cluster.single_node import SingleNodeCluster
+        from setu.cluster.multiprocessing import Cluster as MultiprocessingCluster
 
-        with SingleNodeCluster(self._make_cluster_spec()) as cluster:
+        with MultiprocessingCluster(self._make_cluster_spec()) as cluster:
             src, dst = self._build_src_dst(cluster)
 
             result = run_experiment(
-                cluster=cluster,
+                cluster_info=cluster.cluster_info,
                 src=src,
                 dst=dst,
                 copy_mode=CopyMode.COPY,
                 init_value=3.0,
                 selections={"dim0": slice(0, self.TENSOR_SIZE)},
+
             )
             self._assert_success(result, src, dst)

@@ -8,10 +8,11 @@ from typing import List, Optional
 
 from setu._coordinator import Topology
 
-
 _PASS_REGISTRY = {
     "shortest_path_routing": lambda topo: _make_shortest_path_routing(topo),
 }
+
+AVAILABLE_PASSES: list = list(_PASS_REGISTRY.keys())
 
 
 def _make_shortest_path_routing(topology: Optional[Topology]):
@@ -55,8 +56,6 @@ def resolve_passes(
     for name in passes:
         factory = _PASS_REGISTRY.get(name)
         if factory is None:
-            raise ValueError(
-                f"Unknown pass: {name!r}. Known: {list(_PASS_REGISTRY)}"
-            )
+            raise ValueError(f"Unknown pass: {name!r}. Known: {list(_PASS_REGISTRY)}")
         result.append(factory(topology))
     return result

@@ -60,8 +60,8 @@ TensorIndicesBitset MakeFullBitset(std::size_t size) {
 // Helper to create a contiguous range IndexRangeSet [start, end)
 TensorIndicesBitset MakeRangeBitset(std::size_t size, std::size_t start,
                                     std::size_t end) {
-  return TensorIndicesBitset::MakeSingle(
-      size, static_cast<std::int64_t>(start), static_cast<std::int64_t>(end));
+  return TensorIndicesBitset::MakeSingle(size, static_cast<std::int64_t>(start),
+                                         static_cast<std::int64_t>(end));
 }
 
 // Helper to create a 1D shard metadata

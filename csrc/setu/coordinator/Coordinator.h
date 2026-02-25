@@ -197,8 +197,7 @@ class Coordinator {
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<PlannerTask>& planner_queue,
-            OutboxNotifyFn outbox_notify);
+            Queue<PlannerTask>& planner_queue, OutboxNotifyFn outbox_notify);
 
     void Start();
     void Stop();

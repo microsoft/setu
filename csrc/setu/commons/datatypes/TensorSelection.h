@@ -170,7 +170,8 @@ struct TensorSelection {
     TensorIndicesMap new_indices = indices;
 
     const auto& current = indices.at(dim_name);
-    auto from_set = TensorIndicesBitset::FromIndices(current.Size(), *index_set);
+    auto from_set =
+        TensorIndicesBitset::FromIndices(current.Size(), *index_set);
 
     // Intersect with current selection (only keep indices that are both
     // selected and requested)

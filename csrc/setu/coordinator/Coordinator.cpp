@@ -58,9 +58,9 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
 
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
                                        planner_queue_, outbox_notify);
-  executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
-                                         metastore_, *planner_, hint_store_,
-                                         outbox_notify);
+  executor_ =
+      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_,
+                                 *planner_, hint_store_, outbox_notify);
 }
 
 Coordinator::~Coordinator() {
@@ -142,8 +142,10 @@ void Coordinator::Gateway::InitSockets() {
       zmq_context_, zmq::socket_type::router, port_);
 
   // Create inproc PAIR sockets for self-pipe wakeup pattern
-  wakeup_recv_ = std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
-  wakeup_send_ = std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
+  wakeup_recv_ =
+      std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
+  wakeup_send_ =
+      std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::pair);
   wakeup_recv_->bind("inproc://gateway-wakeup");
   wakeup_send_->connect("inproc://gateway-wakeup");
 }
@@ -200,8 +202,8 @@ void Coordinator::Gateway::Loop() {
       } else if (socket == wakeup_recv_) {
         // Drain all wakeup signals (there may be multiple)
         zmq::message_t drain;
-        while (wakeup_recv_->recv(drain, zmq::recv_flags::dontwait)
-                   .has_value()) {
+        while (
+            wakeup_recv_->recv(drain, zmq::recv_flags::dontwait).has_value()) {
         }
       }
     }

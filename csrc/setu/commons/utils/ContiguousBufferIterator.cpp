@@ -36,9 +36,8 @@ static std::vector<ContiguousBufferRange> ToBufferRanges(
   std::vector<ContiguousBufferRange> result;
   result.reserve(index_set.ranges.size());
   for (const auto& r : index_set.ranges) {
-    result.push_back(
-        {static_cast<std::size_t>(r.start),
-         static_cast<std::size_t>(r.end - r.start)});
+    result.push_back({static_cast<std::size_t>(r.start),
+                      static_cast<std::size_t>(r.end - r.start)});
   }
   return result;
 }

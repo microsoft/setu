@@ -11,6 +11,7 @@ Usage::
 import argparse
 import signal
 import threading
+from pathlib import Path
 from typing import Dict, Optional
 
 import ray
@@ -32,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ray-address",
         type=str,
-        default="auto",
-        help='Ray cluster address to connect to (default: "auto").',
+        default=None,
+        help="Ray cluster address to connect to. If not given, starts a local Ray instance.",
     )
     parser.add_argument(
         "--nccl-socket-ifname",
@@ -54,6 +55,20 @@ def parse_args() -> argparse.Namespace:
         default=[],
         metavar="KEY=VALUE",
         help="Additional env vars to set on actors (repeatable).",
+    )
+    parser.add_argument(
+        "--dump-info",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Dump ClusterInfo YAML to this file path.",
+    )
+    parser.add_argument(
+        "--passes",
+        nargs="*",
+        default=None,
+        help="Planner passes to enable. Omit for default, pass none with "
+        "'--passes' for ablation.",
     )
     return parser.parse_args()
 
@@ -105,14 +120,22 @@ def main() -> None:
     """Start a Setu cluster, display topology, and block until interrupted."""
     args = parse_args()
 
-    logger.info("Connecting to Ray at address=%s", args.ray_address)
-    ray.init(address=args.ray_address, ignore_reinit_error=True)
+    if args.ray_address is not None:
+        logger.info("Connecting to Ray at address=%s", args.ray_address)
+        ray.init(address=args.ray_address, ignore_reinit_error=True)
+    else:
+        logger.info("Starting local Ray instance")
+        ray.init(ignore_reinit_error=True)
 
     env_vars = _build_env_vars(args)
-    cluster = Cluster(env_vars=env_vars)
+    cluster = Cluster(env_vars=env_vars, passes=args.passes)
     try:
         info = cluster.start()
         display_cluster_info(info)
+
+        if args.dump_info:
+            Path(args.dump_info).write_text(info.to_yaml())
+            logger.info("ClusterInfo written to %s", args.dump_info)
 
         stop_event = threading.Event()
 
