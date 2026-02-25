@@ -23,18 +23,24 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
+using setu::planner::hints::CompilerHint;
 //==============================================================================
 
 void SubmitCopyRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, shard_id, copy_spec);
+  writer.WriteFields(request_id, shard_id, copy_spec, hints,
+                     hints_fingerprint);
 }
 
 SubmitCopyRequest SubmitCopyRequest::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, shard_id_val, copy_spec_val] =
-      reader.ReadFields<RequestId, ShardId, CopySpec>();
-  return SubmitCopyRequest(request_id_val, shard_id_val, copy_spec_val);
+  auto [request_id_val, shard_id_val, copy_spec_val, hints_val,
+        fingerprint_val] =
+      reader.ReadFields<RequestId, ShardId, CopySpec,
+                        std::vector<CompilerHint>, std::uint64_t>();
+  return SubmitCopyRequest(request_id_val, shard_id_val,
+                           std::move(copy_spec_val), std::move(hints_val),
+                           fingerprint_val);
 }
 
 //==============================================================================

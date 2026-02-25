@@ -106,9 +106,6 @@ class Coordinator {
 
   void PlanExecuted(CopyOperationId copy_op_id);
 
-  void AddHint(setu::planner::hints::CompilerHint hint);
-  void ClearHints();
-
   void Start();
   void Stop();
 
@@ -149,12 +146,13 @@ class Coordinator {
     CoordinatorMessage message;
   };
 
-  /// @brief Task for the planner containing CopyOperationId, CopySpec, and
-  /// shared state
+  /// @brief Task for the planner containing CopyOperationId, CopySpec,
+  /// shared state, and per-operation hints from the first shard submission.
   struct PlannerTask {
     CopyOperationId copy_op_id;
     CopySpec copy_spec;
     CopyOperationStatePtr state;  // Shared with Handler's copy_operations_ map
+    HintStore hints;              // Per-operation hints (first-writer-wins)
   };
 
   //============================================================================
@@ -237,7 +235,9 @@ class Coordinator {
                                const RequestId& request_id,
                                const ShardId& shard_id,
                                const CopySpec& copy_spec,
-                               std::size_t expected_shards);
+                               std::size_t expected_shards,
+                               std::vector<setu::planner::hints::CompilerHint> hints,
+                               std::uint64_t hints_fingerprint);
 
     /// Key for tracking copy operations by (src, dst) tensor pair
     struct CopyKey {
@@ -262,6 +262,13 @@ class Coordinator {
     /// address that
     setu::commons::utils::ShardAggregator<CopyKey, CopySpec> shard_aggregator_;
 
+    /// Per-operation hint storage: first shard's hints become authoritative
+    /// (first-writer-wins). Keyed by CopyKey, cleared when aggregation
+    /// completes.
+    std::map<CopyKey, std::vector<setu::planner::hints::CompilerHint>>
+        operation_hints_;
+    std::map<CopyKey, std::uint64_t> operation_fingerprints_;
+
     /// Maps CopyOperationId to shared CopyOperationState (includes submitters
     /// and completion tracking)
     std::map<CopyOperationId, CopyOperationStatePtr> copy_operations_;
@@ -285,8 +292,7 @@ class Coordinator {
   struct Executor {
     Executor(Queue<PlannerTask>& planner_queue,
              Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-             Planner& planner, HintStore& hint_store,
-             OutboxNotifyFn outbox_notify);
+             Planner& planner, OutboxNotifyFn outbox_notify);
 
     void Start();
     void Stop();
@@ -300,7 +306,6 @@ class Coordinator {
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Planner& planner_;
-    HintStore& hint_store_;
     OutboxNotifyFn outbox_notify_;
 
     std::thread thread_;
@@ -313,7 +318,6 @@ class Coordinator {
 
   MetaStore metastore_;
   PlannerPtr planner_;
-  HintStore hint_store_;
 
   // Internal message queues
   Queue<InboxMessage> inbox_queue_;

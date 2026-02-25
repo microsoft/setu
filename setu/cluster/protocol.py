@@ -21,11 +21,3 @@ class Cluster(Protocol):
 
     @property
     def cluster_info(self) -> Optional[ClusterInfo]: ...
-
-    def add_hint(self, hint) -> None:
-        """Send a routing hint to the coordinator."""
-        ...
-
-    def clear_hints(self) -> None:
-        """Clear all routing hints from the coordinator."""
-        ...

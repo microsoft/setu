@@ -27,6 +27,9 @@ class HintStore {
  public:
   HintStore() = default;
 
+  explicit HintStore(std::vector<CompilerHint> hints)
+      : hints_(std::move(hints)) {}
+
   HintStore(HintStore&& other) noexcept : hints_(std::move(other.hints_)) {}
 
   HintStore& operator=(HintStore&& other) noexcept {

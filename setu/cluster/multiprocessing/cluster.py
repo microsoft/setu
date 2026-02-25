@@ -6,7 +6,6 @@ machine, making this suitable for testing and single-node benchmarks.
 """
 
 import logging
-import queue
 import time
 import uuid
 from logging.handlers import QueueHandler, QueueListener
@@ -66,7 +65,7 @@ def _setup_child_logging(log_queue, log_dir: str = "", label: str = "") -> None:
 
 
 def _run_coordinator_process(
-    spec: ClusterSpec, ready_event, stop_event, log_queue, command_queue, log_dir=""
+    spec: ClusterSpec, ready_event, stop_event, log_queue, log_dir=""
 ):
     """Coordinator process target. Builds Planner from spec."""
     _setup_child_logging(log_queue, log_dir=log_dir, label="coordinator")
@@ -97,16 +96,6 @@ def _run_coordinator_process(
     ready_event.set()
 
     while not stop_event.is_set():
-        # Drain command queue for runtime hints
-        while True:
-            try:
-                cmd = command_queue.get_nowait()
-                if cmd[0] == "add_hint":
-                    coordinator.add_hint(cmd[1])
-                elif cmd[0] == "clear_hints":
-                    coordinator.clear_hints()
-            except queue.Empty:
-                break
         time.sleep(0.05)
 
     coordinator.stop()
@@ -282,7 +271,6 @@ class Cluster(ClusterProto):
         self._log_dir = log_dir
         self._ctx = mp.get_context("spawn")
         self._stop_event = self._ctx.Event()
-        self._command_queue = self._ctx.Queue()
         self._processes: list = []
         self._cluster_info: Optional[ClusterInfo] = None
 
@@ -332,7 +320,6 @@ class Cluster(ClusterProto):
                 coordinator_ready,
                 self._stop_event,
                 self._log_queue,
-                self._command_queue,
                 self._log_dir,
             ),
         )
@@ -381,13 +368,6 @@ class Cluster(ClusterProto):
         )
         return self._cluster_info
 
-    def add_hint(self, hint) -> None:
-        """Send a routing hint to the coordinator subprocess."""
-        self._command_queue.put(("add_hint", hint))
-
-    def clear_hints(self) -> None:
-        """Clear all routing hints from the coordinator subprocess."""
-        self._command_queue.put(("clear_hints",))
 
     def stop(self) -> None:
         """Signal stop, terminate, and join all processes."""

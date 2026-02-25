@@ -23,6 +23,7 @@
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/enums/Enums.h"
+#include "planner/hints/Hint.h"
 //==============================================================================
 namespace setu::client {
 //==============================================================================
@@ -30,6 +31,8 @@ using setu::commons::CopyOperationId;
 using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::TensorShardSpec;
 using setu::commons::enums::ErrorCode;
+using setu::planner::hints::CompilerHint;
+using setu::planner::hints::RoutingHint;
 //==============================================================================
 void InitClientPybindClass(py::module_& m) {
   py::class_<Client, std::shared_ptr<Client>>(m, "Client")
@@ -45,10 +48,26 @@ void InitClientPybindClass(py::module_& m) {
       .def("register_tensor_shard", &Client::RegisterTensorShard,
            py::arg("shard_spec"),
            "Register a tensor shard and return a reference to it")
-      .def("submit_copy", &Client::SubmitCopy, py::arg("copy_spec"),
-           "Submit a copy operation and return an operation ID")
-      .def("submit_pull", &Client::SubmitPull, py::arg("copy_spec"),
-           "Submit a pull operation and return an operation ID")
+      .def(
+          "submit_copy",
+          [](Client& self, const CopySpec& copy_spec,
+             const std::vector<RoutingHint>& hints) {
+            std::vector<CompilerHint> compiler_hints(hints.begin(),
+                                                     hints.end());
+            return self.SubmitCopy(copy_spec, compiler_hints);
+          },
+          py::arg("copy_spec"), py::arg("hints") = std::vector<RoutingHint>{},
+          "Submit a copy operation and return an operation ID")
+      .def(
+          "submit_pull",
+          [](Client& self, const CopySpec& copy_spec,
+             const std::vector<RoutingHint>& hints) {
+            std::vector<CompilerHint> compiler_hints(hints.begin(),
+                                                     hints.end());
+            return self.SubmitPull(copy_spec, compiler_hints);
+          },
+          py::arg("copy_spec"), py::arg("hints") = std::vector<RoutingHint>{},
+          "Submit a pull operation and return an operation ID")
       .def("wait_for_copy", &Client::WaitForCopy, py::arg("copy_op_id"),
            "Wait for a copy operation to complete")
       .def("wait_for_shard_allocation", &Client::WaitForShardAllocation,

@@ -60,9 +60,8 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
 
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
                                        planner_queue_, outbox_notify);
-  executor_ =
-      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_,
-                                 *planner_, hint_store_, outbox_notify);
+  executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
+                                         metastore_, *planner_, outbox_notify);
 }
 
 Coordinator::~Coordinator() {
@@ -107,12 +106,6 @@ std::optional<CopyOperationId> Coordinator::SubmitCopy(
   // TODO: Implement copy submission and plan generation
   return std::nullopt;
 }
-
-void Coordinator::AddHint(setu::planner::hints::CompilerHint hint) {
-  hint_store_.AddHint(std::move(hint));
-}
-
-void Coordinator::ClearHints() { hint_store_.Clear(); }
 
 void Coordinator::PlanExecuted(CopyOperationId copy_op_id) {
   LOG_DEBUG("Plan executed for copy operation ID: {}", copy_op_id);
@@ -387,7 +380,8 @@ void Coordinator::Handler::HandleSubmitCopyRequest(
       metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
   HandleShardSubmission(node_agent_identity, request.request_id,
-                        request.shard_id, request.copy_spec, expected_shards);
+                        request.shard_id, request.copy_spec, expected_shards,
+                        std::vector(request.hints), request.hints_fingerprint);
 }
 
 void Coordinator::Handler::HandleSubmitPullRequest(
@@ -413,16 +407,38 @@ void Coordinator::Handler::HandleSubmitPullRequest(
       metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
 
   HandleShardSubmission(node_agent_identity, request.request_id,
-                        request.shard_id, request.copy_spec, expected_shards);
+                        request.shard_id, request.copy_spec, expected_shards,
+                        std::vector(request.hints), request.hints_fingerprint);
 }
 
 void Coordinator::Handler::HandleShardSubmission(
     const Identity& node_agent_identity, const RequestId& request_id,
     const ShardId& shard_id, const CopySpec& copy_spec,
-    std::size_t expected_shards) {
+    std::size_t expected_shards,
+    std::vector<setu::planner::hints::CompilerHint> hints,
+    std::uint64_t hints_fingerprint) {
   using setu::commons::utils::AggregationParticipant;
 
   CopyKey copy_key{copy_spec.src_name, copy_spec.dst_name};
+
+  // First-writer-wins hint storage: the first shard submission's hints
+  // become authoritative for this operation.
+  if (operation_hints_.find(copy_key) == operation_hints_.end()) {
+    // First shard for this operation — store its hints
+    operation_hints_[copy_key] = std::move(hints);
+    operation_fingerprints_[copy_key] = hints_fingerprint;
+  } else {
+    // Subsequent shard — verify fingerprint in debug mode
+    if (setu::commons::Logger::log_level <=
+        setu::commons::LogLevel::kDebug) {
+      ASSERT_VALID_RUNTIME(
+          hints_fingerprint == operation_fingerprints_[copy_key],
+          "SPMD hint mismatch for {} -> {}: shard {} sent fingerprint {} but "
+          "first submission had {}",
+          copy_spec.src_name, copy_spec.dst_name, shard_id, hints_fingerprint,
+          operation_fingerprints_[copy_key]);
+    }
+  }
 
   auto result = shard_aggregator_.Submit(
       copy_key, shard_id, copy_spec,
@@ -465,8 +481,14 @@ void Coordinator::Handler::HandleShardSubmission(
   // Store the shared state (will be accessed by HandleExecuteResponse)
   copy_operations_.emplace(copy_op_id, state);
 
-  // Add to planner queue with copy_op_id and shared state
-  planner_queue_.push(PlannerTask{copy_op_id, result->payload, state});
+  // Extract per-operation hints and clean up tracking maps
+  auto op_hints = std::move(operation_hints_[copy_key]);
+  operation_hints_.erase(copy_key);
+  operation_fingerprints_.erase(copy_key);
+
+  // Add to planner queue with copy_op_id, shared state, and per-op hints
+  planner_queue_.push(PlannerTask{copy_op_id, result->payload, state,
+                                  HintStore(std::move(op_hints))});
 
   // Send responses to all waiting participants with copy_op_id
   for (const auto& participant : result->participants) {
@@ -583,6 +605,16 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
                tensor_names.contains(key.dst_name);
       });
 
+  // Clean up per-operation hint tracking for cancelled operations
+  std::erase_if(operation_hints_, [&tensor_names](const auto& entry) {
+    return tensor_names.contains(entry.first.src_name) ||
+           tensor_names.contains(entry.first.dst_name);
+  });
+  std::erase_if(operation_fingerprints_, [&tensor_names](const auto& entry) {
+    return tensor_names.contains(entry.first.src_name) ||
+           tensor_names.contains(entry.first.dst_name);
+  });
+
   // Send error responses to cancelled participants
   for (const auto& participant : cancelled_participants) {
     LOG_INFO(
@@ -637,13 +669,11 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
                                 MetaStore& metastore, Planner& planner,
-                                HintStore& hint_store,
                                 OutboxNotifyFn outbox_notify)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_(planner),
-      hint_store_(hint_store),
       outbox_notify_(std::move(outbox_notify)) {}
 
 void Coordinator::Executor::PushOutbox(OutboxMessage msg) {
@@ -676,9 +706,8 @@ void Coordinator::Executor::Loop() {
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-      auto hints = hint_store_.Snapshot();
       auto t_compile_start = std::chrono::steady_clock::now();
-      Plan plan = planner_.Compile(task.copy_spec, metastore_, hints);
+      Plan plan = planner_.Compile(task.copy_spec, metastore_, task.hints);
       auto t_compile_end = std::chrono::steady_clock::now();
 
       LOG_DEBUG("Compiled plan:\n{}", plan);

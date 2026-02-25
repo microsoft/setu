@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import contextmanager
-from typing import Dict, Iterator, Optional
+from typing import Dict, Iterator, List, Optional
 
 import torch
 from torch.multiprocessing.reductions import rebuild_cuda_tensor
@@ -19,9 +19,12 @@ from setu._commons.datatypes import (
     TensorShardRef,
     TensorShardSpec,
 )
+from setu._coordinator import RoutingHint
 from setu.client.tensor_handles import TensorReadHandle, TensorWriteHandle
 from setu.client.tensor_selection import TensorSelection
 from setu.core.types import CopyOperationId, TensorName
+
+CompilerHint = RoutingHint  # Currently the only hint type
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +167,10 @@ class Client:
         return TensorSelection(native_selection)
 
     def copy(
-        self, src: TensorSelection, dst: TensorSelection
+        self,
+        src: TensorSelection,
+        dst: TensorSelection,
+        hints: Optional[List[CompilerHint]] = None,
     ) -> Optional[CopyOperationId]:
         """
         Copy data from source selection to destination selection.
@@ -172,12 +178,12 @@ class Client:
         Args:
             src: Source tensor selection
             dst: Destination tensor selection
-            blocking: If True, wait for copy to complete before returning.
-                      If False, return immediately with a CopyOperationId
-                      that can be used with wait().
+            hints: Optional list of compiler hints (e.g. RoutingHint) for
+                this operation. In SPMD programs all ranks should pass
+                identical hints.
 
         Returns:
-            None if blocking=True, CopyOperationId if blocking=False
+            CopyOperationId that can be passed to ``wait()``.
 
         Raises:
             ValueError: If selections are incompatible (different dimensions/sizes)
@@ -186,16 +192,12 @@ class Client:
         Example:
             >>> src = client.select("kv_cache_src").where("page", [1, 2, 3])
             >>> dst = client.select("kv_cache_dst").where("page", [4, 5, 6])
-            >>> client.copy(src, dst)  # Blocking copy
-            >>>
-            >>> # Or non-blocking:
-            >>> op_id = client.copy(src, dst, blocking=False)
-            >>> # ... do other work ...
+            >>> op_id = client.copy(src, dst)
             >>> client.wait(op_id)
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
 
-        copy_op_id = self._client.submit_copy(copy_spec)
+        copy_op_id = self._client.submit_copy(copy_spec, hints=hints or [])
 
         if copy_op_id is None:
             raise RuntimeError("Copy operation submission failed")
@@ -206,7 +208,10 @@ class Client:
         return copy_op_id
 
     def pull(
-        self, src: TensorSelection, dst: TensorSelection
+        self,
+        src: TensorSelection,
+        dst: TensorSelection,
+        hints: Optional[List[CompilerHint]] = None,
     ) -> Optional[CopyOperationId]:
         """
         One-sided pull: copy data from a remote source into a local destination.
@@ -218,6 +223,9 @@ class Client:
         Args:
             src: Source tensor selection (may reside on a remote node).
             dst: Destination tensor selection (must be owned by this client).
+            hints: Optional list of compiler hints (e.g. RoutingHint) for
+                this operation. In SPMD programs all ranks should pass
+                identical hints.
 
         Returns:
             CopyOperationId that can be passed to ``wait()`` to block until
@@ -234,7 +242,7 @@ class Client:
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
 
-        copy_op_id = self._client.submit_pull(copy_spec)
+        copy_op_id = self._client.submit_pull(copy_spec, hints=hints or [])
 
         if copy_op_id is None:
             raise RuntimeError("Copy operation submission failed")
