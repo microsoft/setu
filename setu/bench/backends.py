@@ -2,7 +2,7 @@
 
 An ``ExperimentBackend`` encapsulates *how* client processes are created
 and how barriers are set up — so that
-:func:`setu.experiment.runner.run_experiment` stays backend-agnostic.
+:func:`setu.bench.runner.run_experiment` stays backend-agnostic.
 
 Two implementations are provided:
 

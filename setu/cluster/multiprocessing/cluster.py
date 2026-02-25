@@ -260,7 +260,7 @@ class Cluster(ClusterProto):
     Example::
 
         from setu.cluster.multiprocessing import Cluster
-        from setu.experiment.runner import run_experiment
+        from setu.bench.runner import run_experiment
 
         with Cluster(spec) as cluster:
             result = run_experiment(

@@ -10,11 +10,11 @@ from setu._commons.datatypes import Device, TensorDim
 from setu._coordinator import Link, Participant
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.cluster.mesh import Mesh, P, PartitionSpec
-from setu.experiment.helpers import (
+from setu.bench.helpers import (
     ShardedTensor,
     shard_tensor,
 )
-from setu.experiment.runner import CopyMode, run_experiment
+from setu.bench.runner import CopyMode, run_experiment
 
 # ---------------------------------------------------------------------------
 # Helpers for building test data

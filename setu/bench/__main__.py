@@ -39,9 +39,9 @@ from setu._coordinator import Participant
 
 from setu.cluster.info import ClusterInfo
 from setu.cluster.mesh import Mesh, P
-from setu.experiment.helpers import ShardedTensor
-from setu.experiment.result import CopyMode
-from setu.experiment.runner import run_experiment
+from setu.bench.helpers import ShardedTensor
+from setu.bench.result import CopyMode
+from setu.bench.runner import run_experiment
 
 # ---------------------------------------------------------------------------
 # Setup logging so Python logs are visible on stdout

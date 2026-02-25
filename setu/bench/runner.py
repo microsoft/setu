@@ -1,4 +1,4 @@
-"""Experiment runner: orchestration for copy experiments on a Setu cluster.
+"""Benchmark runner: orchestration for copy experiments on a Setu cluster.
 
 Uses an SPMD barrier-based approach inspired by nccl-test: all processes
 run the same code path autonomously, coordinating via barriers.  The
@@ -6,7 +6,7 @@ parent just spawns them and collects final results.
 
 Backend-agnostic — takes a ``ClusterInfo`` and an ``ExperimentBackend``
 for client spawning and barrier synchronization.  Defaults to
-:class:`~setu.experiment.backends.RayBackend` when no backend is given.
+:class:`~setu.bench.backends.RayBackend` when no backend is given.
 """
 
 import functools
@@ -16,8 +16,8 @@ from typing import Dict, List, Optional, Set, Union
 import torch
 
 from setu.cluster.info import ClusterInfo
-from setu.experiment.helpers import ShardedTensor
-from setu.experiment.result import CopyMode, ExperimentResult
+from setu.bench.helpers import ShardedTensor
+from setu.bench.result import CopyMode, ExperimentResult
 from setu.logger import init_logger
 
 logger = init_logger(__name__)
@@ -317,7 +317,7 @@ def run_experiment(
     Returns:
         ExperimentResult with timing and per-shard results.
     """
-    from setu.experiment.backends import backend_for
+    from setu.bench.backends import backend_for
 
     backend = backend_for(cluster_info)
 
