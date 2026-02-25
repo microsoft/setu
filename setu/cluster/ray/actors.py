@@ -40,19 +40,27 @@ class CoordinatorActor:
         self._port: int = 0
         self._ip_address: str = ""
 
-    def start(self) -> dict:
+    def start(self, passes=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
+
+        Args:
+            passes: Optional list of pass name strings. ``None`` means
+                default, ``[]`` means no passes.
 
         Returns:
             Dict with coordinator_endpoint and ip_address.
         """
         from setu._coordinator import Coordinator, NCCLBackend, PassManager, Planner
 
+        from setu.cluster.passes import resolve_passes
+
         self._ip_address = ray.util.get_node_ip_address()
 
         self._port = _find_free_port()
 
         pass_manager = PassManager()
+        for p in resolve_passes(passes):
+            pass_manager.add_pass(p)
         backend = NCCLBackend()
         planner = Planner(backend, pass_manager)
         self._coordinator = Coordinator(self._port, planner)

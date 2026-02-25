@@ -53,3 +53,11 @@ class Cluster(Protocol):
         client body via ``functools.partial`` so they can coordinate phases.
         """
         ...
+
+    def add_hint(self, hint) -> None:
+        """Send a routing hint to the coordinator."""
+        ...
+
+    def clear_hints(self) -> None:
+        """Clear all routing hints from the coordinator."""
+        ...

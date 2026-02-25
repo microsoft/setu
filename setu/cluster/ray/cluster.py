@@ -133,12 +133,17 @@ class Cluster(ClusterProto):
         cluster.stop()
     """
 
-    def __init__(self, env_vars: Optional[Dict[str, str]] = None) -> None:
+    def __init__(
+        self,
+        env_vars: Optional[Dict[str, str]] = None,
+        passes: Optional[List[str]] = None,
+    ) -> None:
         self._coordinator_actor: Optional[ray.actor.ActorHandle] = None
         self._node_agent_actors: List[ray.actor.ActorHandle] = []
         self._cluster_info: Optional[ClusterInfo] = None
         self._started: bool = False
         self._env_vars = env_vars
+        self._passes = passes
 
     @property
     def cluster_info(self) -> Optional[ClusterInfo]:
@@ -184,7 +189,9 @@ class Cluster(ClusterProto):
             **coordinator_options,
         ).remote()
 
-        coordinator_result = ray.get(self._coordinator_actor.start.remote())
+        coordinator_result = ray.get(
+            self._coordinator_actor.start.remote(passes=self._passes)
+        )
         coordinator_endpoint = coordinator_result["coordinator_endpoint"]
         logger.info("Coordinator started at %s", coordinator_endpoint)
 

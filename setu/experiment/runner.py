@@ -469,6 +469,7 @@ def run_experiment(
     timeout: float = 60.0,
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
+    hints: Optional[List] = None,
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -489,10 +490,20 @@ def run_experiment(
             rounds.  Warmup rounds run the same copy logic but their timings
             are excluded from the reported results.  Use this to absorb
             one-time costs like NCCL communicator initialisation.
+        hints: Optional list of routing hints to apply for this experiment.
+            Hints are sent to the coordinator at the start and cleared
+            afterwards, so each experiment gets an independent hint set.
 
     Returns:
         ExperimentResult with timing and per-shard results.
     """
+    # Apply per-experiment hints
+    cluster.clear_hints()
+    if hints:
+        for hint in hints:
+            cluster.add_hint(hint)
+        time.sleep(0.05)  # allow coordinator to process hints
+
     cluster_info = cluster.cluster_info
     assert cluster_info is not None, "Cluster has not been started"
 
