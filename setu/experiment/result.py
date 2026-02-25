@@ -67,8 +67,8 @@ class ExperimentResult:
               1e-5 tolerance.
         errors: Human-readable error strings collected during the experiment.
         copy_mode: The copy mode used for the experiment.
-        shard_bytes: Per-shard data size in bytes (one per source + dest, in
-            spawn order).  Populated by :func:`run_experiment`.
+        shard_bytes: Per-shard data size in bytes (source shards only).
+            Populated by :func:`run_experiment`.
     """
 
     success: bool
@@ -188,7 +188,14 @@ class ExperimentResult:
                 shard_name = r.get("shard_name", "?")
                 round_times = r.get("round_elapsed_s", [])
 
-                nbytes = self.shard_bytes[idx] if idx < len(self.shard_bytes) else 0
+                # shard_bytes covers source shards only; dest shards mirror them.
+                n_src = len(self.source_results)
+                shard_idx = idx if idx < n_src else idx - n_src
+                nbytes = (
+                    self.shard_bytes[shard_idx]
+                    if shard_idx < len(self.shard_bytes)
+                    else 0
+                )
                 size_str = _format_size(nbytes) if nbytes else "--"
 
                 # In PULL mode sources don't initiate copies — skip lat/BW.

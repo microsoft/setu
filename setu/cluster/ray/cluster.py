@@ -122,6 +122,10 @@ class _RayClientHandle(ClientHandle[T]):
             raise _queue.Empty("ray.get timed out") from None
 
     def stop(self) -> None:
+        try:
+            ray.get(self._actor.stop.remote(), timeout=10)
+        except Exception:
+            pass
         ray.kill(self._actor, no_restart=True)
 
 

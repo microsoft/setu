@@ -330,7 +330,7 @@ def run_experiment(
     handles = []
 
     n_total = len(src_shards) + len(dst_shards)
-    shard_bytes = src.shard_bytes + dst.shard_bytes
+    shard_bytes = src.shard_bytes
 
     logger.debug(
         "run_experiment: mode=%s init_value=%s selections=%s timeout=%s "
