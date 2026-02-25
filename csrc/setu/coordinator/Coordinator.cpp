@@ -49,19 +49,36 @@ constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
 // Coordinator Implementation
 //==============================================================================
-Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
+Coordinator::Coordinator(std::size_t port, PlannerPtr planner,
+                         std::string metrics_endpoint)
     : port_(port),
+      metrics_endpoint_(std::move(metrics_endpoint)),
       zmq_context_(std::make_shared<zmq::context_t>()),
       planner_(planner) {
+  // Create MetricsSink instances if metrics_endpoint is configured.
+  // Each thread gets its own sink (ZMQ sockets are not thread-safe).
+  setu::telemetry::MetricsSinkPtr handler_sink;
+  setu::telemetry::MetricsSinkPtr executor_sink;
+  if (!metrics_endpoint_.empty()) {
+    handler_sink =
+        std::make_shared<setu::telemetry::MetricsSink>(zmq_context_,
+                                                       metrics_endpoint_);
+    executor_sink =
+        std::make_shared<setu::telemetry::MetricsSink>(zmq_context_,
+                                                       metrics_endpoint_);
+  }
+
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
 
   auto outbox_notify = [this]() { gateway_->NotifyOutbox(); };
 
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_, outbox_notify);
+                                       planner_queue_, outbox_notify,
+                                       handler_sink);
   executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
-                                         metastore_, *planner_, outbox_notify);
+                                         metastore_, *planner_, outbox_notify,
+                                         executor_sink);
 }
 
 Coordinator::~Coordinator() {
@@ -224,12 +241,14 @@ Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
                               Queue<OutboxMessage>& outbox_queue,
                               MetaStore& metastore,
                               Queue<PlannerTask>& planner_queue,
-                              OutboxNotifyFn outbox_notify)
+                              OutboxNotifyFn outbox_notify,
+                              setu::telemetry::MetricsSinkPtr metrics_sink)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_queue_(planner_queue),
-      outbox_notify_(std::move(outbox_notify)) {}
+      outbox_notify_(std::move(outbox_notify)),
+      metrics_sink_(std::move(metrics_sink)) {}
 
 void Coordinator::Handler::PushOutbox(OutboxMessage msg) {
   outbox_queue_.push(std::move(msg));
@@ -308,7 +327,7 @@ void Coordinator::Handler::HandleRegisterTensorShardRequest(
         request.tensor_shard_spec.name);
     RegisterTensorShardCoordinatorResponse response(
         request.request_id, ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -370,7 +389,7 @@ void Coordinator::Handler::HandleSubmitCopyRequest(
         request.copy_spec.src_name, request.copy_spec.dst_name);
     SubmitCopyResponse response(request.request_id, CopyOperationId{},
                                 ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -398,7 +417,7 @@ void Coordinator::Handler::HandleSubmitPullRequest(
         request.copy_spec.src_name, request.copy_spec.dst_name);
     SubmitCopyResponse response(request.request_id, CopyOperationId{},
                                 ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -477,6 +496,7 @@ void Coordinator::Handler::HandleShardSubmission(
   // Create shared state with submitter identities
   auto state = std::make_shared<CopyOperationState>(result->payload,
                                                     std::move(submitters));
+  state->start_time = std::chrono::high_resolution_clock::now();
 
   // Store the shared state (will be accessed by HandleExecuteResponse)
   copy_operations_.emplace(copy_op_id, state);
@@ -524,6 +544,18 @@ void Coordinator::Handler::HandleExecuteResponse(
         "submitters",
         expected, response.copy_op_id, state->submitters.size());
 
+    // Submit E2E timing metrics
+    if (metrics_sink_ && metrics_sink_->IsEnabled()) {
+      double e2e_ms =
+          std::chrono::duration<double, std::milli>(
+              std::chrono::high_resolution_clock::now() - state->start_time)
+              .count();
+      setu::telemetry::E2EMetrics e2e;
+      e2e.copy_op_id = response.copy_op_id;
+      e2e.e2e_time_ms = e2e_ms;
+      metrics_sink_->Submit(setu::telemetry::MetricsMessage{e2e});
+    }
+
     // Send CopyOperationFinishedRequest to all SUBMITTERS
     for (const auto& submitter_identity : state->submitters) {
       CopyOperationFinishedRequest finish_req(response.copy_op_id);
@@ -544,7 +576,7 @@ void Coordinator::Handler::HandleExecuteResponse(
 
       DeregisterShardsResponse dereg_response(dereg.request_id,
                                               ErrorCode::kSuccess);
-      outbox_queue_.push(
+      PushOutbox(
           OutboxMessage{dereg.node_agent_identity, dereg_response});
     }
   }
@@ -561,7 +593,7 @@ void Coordinator::Handler::HandleGetTensorSpecRequest(
         request.tensor_name);
     GetTensorSpecResponse response(request.request_id,
                                    ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -623,7 +655,7 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
         participant.identity);
     SubmitCopyResponse error_response(participant.request_id, CopyOperationId{},
                                       ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{participant.identity, error_response});
+    PushOutbox(OutboxMessage{participant.identity, error_response});
   }
 
   // Find all in-flight copy operations that involve any of the tensors
@@ -643,7 +675,7 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
     // No in-flight copies — deregister immediately
     metastore_.DeregisterShards(dereg_data.shards_by_tensor);
     DeregisterShardsResponse response(request.request_id, ErrorCode::kSuccess);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -654,7 +686,7 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
     // All blocking copies already resolved — deregister immediately
     metastore_.DeregisterShards(immediate->shards_by_tensor);
     DeregisterShardsResponse response(request.request_id, ErrorCode::kSuccess);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
   } else {
     LOG_INFO(
         "Deferring deregistration for {} tensors from {} — blocked by "
@@ -669,12 +701,14 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
 Coordinator::Executor::Executor(Queue<PlannerTask>& planner_queue,
                                 Queue<OutboxMessage>& outbox_queue,
                                 MetaStore& metastore, Planner& planner,
-                                OutboxNotifyFn outbox_notify)
+                                OutboxNotifyFn outbox_notify,
+                                setu::telemetry::MetricsSinkPtr metrics_sink)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_(planner),
-      outbox_notify_(std::move(outbox_notify)) {}
+      outbox_notify_(std::move(outbox_notify)),
+      metrics_sink_(std::move(metrics_sink)) {}
 
 void Coordinator::Executor::PushOutbox(OutboxMessage msg) {
   outbox_queue_.push(std::move(msg));
@@ -706,9 +740,15 @@ void Coordinator::Executor::Loop() {
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-      auto t_compile_start = std::chrono::steady_clock::now();
-      Plan plan = planner_.Compile(task.copy_spec, metastore_, task.hints);
-      auto t_compile_end = std::chrono::steady_clock::now();
+      auto result = planner_.Compile(task.copy_spec, metastore_, task.hints,
+                                      task.copy_op_id);
+      Plan plan = std::move(result.plan);
+
+      // Submit compilation metrics
+      if (metrics_sink_ && metrics_sink_->IsEnabled()) {
+        metrics_sink_->Submit(
+            setu::telemetry::MetricsMessage{std::move(result.metrics)});
+      }
 
       LOG_DEBUG("Compiled plan:\n{}", plan);
 
@@ -734,11 +774,8 @@ void Coordinator::Executor::Loop() {
       auto to_us = [](auto d) {
         return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
       };
-      LOG_INFO(
-          "Executor: copy_op_id={}, compile={}us, fragment+dispatch={}us, "
-          "total={}us",
-          task.copy_op_id, to_us(t_compile_end - t_compile_start),
-          to_us(t_end - t_compile_end), to_us(t_end - t_after_dequeue));
+      LOG_INFO("Executor: copy_op_id={}, total={}us", task.copy_op_id,
+               to_us(t_end - t_after_dequeue));
 
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;

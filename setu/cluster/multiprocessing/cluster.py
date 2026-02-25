@@ -65,7 +65,8 @@ def _setup_child_logging(log_queue, log_dir: str = "", label: str = "") -> None:
 
 
 def _run_coordinator_process(
-    spec: ClusterSpec, ready_event, stop_event, log_queue, log_dir=""
+    spec: ClusterSpec, ready_event, stop_event, log_queue, log_dir="",
+    metrics_endpoint=""
 ):
     """Coordinator process target. Builds Planner from spec."""
     _setup_child_logging(log_queue, log_dir=log_dir, label="coordinator")
@@ -91,7 +92,7 @@ def _run_coordinator_process(
     backend = NCCLBackend(register_sets)
 
     planner = Planner(backend, pass_manager)
-    coordinator = Coordinator(spec.coordinator_port, planner)
+    coordinator = Coordinator(spec.coordinator_port, planner, metrics_endpoint)
     coordinator.start()
     ready_event.set()
 
@@ -110,6 +111,7 @@ def _run_node_agent_process(
     stop_event,
     log_queue,
     log_dir="",
+    metrics_endpoint="",
 ):
     """NodeAgent process target. Receives picklable Device objects directly."""
     _setup_child_logging(log_queue, log_dir=log_dir, label=f"node_agent_{port}")
@@ -120,6 +122,7 @@ def _run_node_agent_process(
         port=port,
         coordinator_endpoint=coordinator_endpoint,
         devices=devices,
+        metrics_endpoint=metrics_endpoint,
     )
     agent.start()
     ready_event.set()
@@ -263,12 +266,14 @@ class Cluster(ClusterProto):
         startup_timeout: float = 10.0,
         settle_time: float = 0.5,
         log_dir: str = "",
+        metrics_endpoint: str = "",
     ):
         self._validate_unique_devices(spec)
         self._spec = spec
         self._startup_timeout = startup_timeout
         self._settle_time = settle_time
         self._log_dir = log_dir
+        self._metrics_endpoint = metrics_endpoint
         self._ctx = mp.get_context("spawn")
         self._stop_event = self._ctx.Event()
         self._processes: list = []
@@ -321,6 +326,7 @@ class Cluster(ClusterProto):
                 self._stop_event,
                 self._log_queue,
                 self._log_dir,
+                self._metrics_endpoint,
             ),
         )
         coordinator_proc.start()
@@ -344,6 +350,7 @@ class Cluster(ClusterProto):
                     self._stop_event,
                     self._log_queue,
                     self._log_dir,
+                    self._metrics_endpoint,
                 ),
             )
             node_proc.start()

@@ -20,6 +20,7 @@
 #include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "node_manager/worker/NCCLWorker.h"
+#include "telemetry/MetricsSink.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -79,13 +80,15 @@ constexpr std::int32_t kPollTimeoutMs = 100;
 NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
                      std::string coordinator_endpoint,
                      const std::vector<Device>& devices,
-                     std::string lock_base_dir)
+                     std::string lock_base_dir,
+                     std::string metrics_endpoint)
     : node_id_(node_id),
       port_(port),
       coordinator_endpoint_(std::move(coordinator_endpoint)),
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()),
-      lock_base_dir_(std::move(lock_base_dir)) {
+      lock_base_dir_(std::move(lock_base_dir)),
+      metrics_endpoint_(std::move(metrics_endpoint)) {
   // Create workers and connect them via inproc sockets on the shared context
   for (const auto& device : devices_) {
     auto device_rank = device.LocalDeviceIndex();
@@ -93,6 +96,14 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
         std::format("inproc://node_{}_worker_{}", node_id_, device_rank);
     auto worker = std::make_unique<worker::NCCLWorker>(node_id_, device);
     worker->Connect(zmq_context_, endpoint);
+
+    // Set up telemetry sink for each worker (each gets its own ZMQ socket)
+    if (!metrics_endpoint_.empty()) {
+      auto sink = std::make_shared<setu::telemetry::MetricsSink>(
+          zmq_context_, metrics_endpoint_);
+      worker->SetMetricsSink(std::move(sink));
+    }
+
     workers_.emplace(device_rank, std::move(worker));
   }
 
@@ -711,7 +722,7 @@ void NodeAgent::Executor::Loop() {
         // Send ExecuteProgramRequest to worker
         LOG_DEBUG("Sending program with {} instructions to worker {}",
                   program.size(), device_rank);
-        ExecuteProgramRequest request(program);
+        ExecuteProgramRequest request(copy_op_id, program);
         Comm::Send(it->second, request);
         sent_device_ranks.push_back(device_rank);
       }

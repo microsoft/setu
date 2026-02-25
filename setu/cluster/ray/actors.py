@@ -46,10 +46,11 @@ class CoordinatorActor:
     to connect to.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, metrics_endpoint: str = "") -> None:
         self._coordinator = None
         self._port: int = 0
         self._ip_address: str = ""
+        self._metrics_endpoint = metrics_endpoint
 
     def start(self, passes=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
@@ -73,7 +74,9 @@ class CoordinatorActor:
             pass_manager.add_pass(p)
         backend = NCCLBackend()
         planner = Planner(backend, pass_manager)
-        self._coordinator = Coordinator(self._port, planner)
+        self._coordinator = Coordinator(
+            self._port, planner, self._metrics_endpoint
+        )
         self._coordinator.start()
 
         endpoint = f"tcp://{self._ip_address}:{self._port}"
@@ -107,8 +110,11 @@ class NodeAgentActor:
     all CUDA GPUs on the node and creates Device objects for each.
     """
 
-    def __init__(self, coordinator_endpoint: str) -> None:
+    def __init__(
+        self, coordinator_endpoint: str, metrics_endpoint: str = ""
+    ) -> None:
         self._coordinator_endpoint = coordinator_endpoint
+        self._metrics_endpoint = metrics_endpoint
         self._node_agent = None
         self._port: int = 0
         self._ip_address: str = ""
@@ -140,6 +146,7 @@ class NodeAgentActor:
             port=self._port,
             coordinator_endpoint=self._coordinator_endpoint,
             devices=devices,
+            metrics_endpoint=self._metrics_endpoint,
         )
         self._node_agent.start()
 

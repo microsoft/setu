@@ -28,9 +28,10 @@ using setu::planner::PlannerPtr;
 //==============================================================================
 void InitCoordinatorPybindClass(py::module_& m) {
   py::class_<Coordinator, std::shared_ptr<Coordinator>>(m, "Coordinator")
-      .def(py::init<std::size_t, PlannerPtr>(), py::arg("port"),
-           py::arg("planner"),
-           "Create a Coordinator with specified port and planner")
+      .def(py::init<std::size_t, PlannerPtr, std::string>(), py::arg("port"),
+           py::arg("planner"), py::arg("metrics_endpoint") = "",
+           "Create a Coordinator with specified port, planner, and optional "
+           "metrics endpoint")
       .def("start", &Coordinator::Start, "Start the Coordinator loops")
       .def("stop", &Coordinator::Stop, "Stop the Coordinator loops");
 }

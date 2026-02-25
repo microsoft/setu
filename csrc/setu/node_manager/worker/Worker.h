@@ -18,14 +18,17 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
+//==============================================================================
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/ZmqHelper.h"
 #include "planner/ir/llc/Instruction.h"
 #include "planner/ir/ref/RegisterRef.h"
+#include "telemetry/MetricsSink.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
+using setu::commons::CopyOperationId;
 using setu::commons::DevicePtr;
 using setu::commons::NodeId;
 using setu::commons::datatypes::Device;
@@ -34,6 +37,7 @@ using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::planner::ir::llc::Program;
 using setu::planner::ir::ref::RegisterRef;
+using setu::telemetry::MetricsSinkPtr;
 //==============================================================================
 class Worker {
  public:
@@ -56,6 +60,9 @@ class Worker {
   [[nodiscard]] virtual DevicePtr ResolveRegister(
       const RegisterRef& ref) const = 0;
 
+  /// Set the metrics sink for telemetry submission.
+  void SetMetricsSink(MetricsSinkPtr sink);
+
  protected:
   void InitZmqSockets();
   void CloseZmqSockets();
@@ -72,6 +79,9 @@ class Worker {
   std::atomic<bool> worker_running_;
 
   std::thread worker_thread_;
+
+  CopyOperationId current_copy_op_id_;
+  MetricsSinkPtr metrics_sink_;
 };
 //==============================================================================
 }  // namespace setu::node_manager::worker

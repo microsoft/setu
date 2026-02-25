@@ -27,28 +27,50 @@ Planner::Planner(targets::BackendPtr backend,
   ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
 //==============================================================================
-Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore,
-                      const HintStore& hints) {
-  auto t0 = std::chrono::steady_clock::now();
+CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
+                               const HintStore& hints,
+                               CopyOperationId copy_op_id) {
+  setu::telemetry::CompilationMetrics cm;
+  cm.copy_op_id = copy_op_id;
 
+  auto t_total = std::chrono::high_resolution_clock::now();
+
+  // Stage 1: CopySpec -> CIR
+  auto t0 = std::chrono::high_resolution_clock::now();
   auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
-  auto t1 = std::chrono::steady_clock::now();
+  double stage1_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::high_resolution_clock::now() - t0)
+          .count();
+  cm.pass_timings.push_back({"CopySpecToCIR", stage1_ms});
 
-  cir = pass_manager_->Run(std::move(cir), hints);
-  auto t2 = std::chrono::steady_clock::now();
+  // Stage 2: Optimization passes (timed individually)
+  auto [optimized_cir, pass_timings] =
+      pass_manager_->RunTimed(std::move(cir), hints);
+  cm.pass_timings.insert(cm.pass_timings.end(), pass_timings.begin(),
+                         pass_timings.end());
 
-  auto plan = backend_->Run(cir);
-  auto t3 = std::chrono::steady_clock::now();
+  // Stage 3: Backend lowering
+  t0 = std::chrono::high_resolution_clock::now();
+  Plan plan = backend_->Run(optimized_cir);
+  double stage3_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::high_resolution_clock::now() - t0)
+          .count();
+  cm.pass_timings.push_back({"Backend", stage3_ms});
 
-  auto to_us = [](auto d) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
-  };
-  LOG_INFO(
-      "Planner::Compile: CopySpecToCIR={}us, PassManager={}us, Backend={}us, "
-      "total={}us",
-      to_us(t1 - t0), to_us(t2 - t1), to_us(t3 - t2), to_us(t3 - t0));
+  cm.total_compile_time_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::high_resolution_clock::now() - t_total)
+          .count();
+  cm.num_participants =
+      static_cast<std::uint32_t>(plan.participants.size());
+  for (const auto& [p, prog] : plan.program) {
+    cm.participant_instruction_counts.emplace_back(
+        p.ToString(), static_cast<std::uint32_t>(prog.size()));
+  }
 
-  return plan;
+  return {std::move(plan), std::move(cm)};
 }
 //==============================================================================
 }  // namespace setu::planner

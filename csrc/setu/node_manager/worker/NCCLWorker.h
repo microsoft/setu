@@ -28,6 +28,7 @@
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
 #include "planner/ir/llc/Instruction.h"
+#include "telemetry/NCCLWorkerMetrics.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -63,8 +64,6 @@ class NCCLWorker : public Worker {
       const RegisterRef& ref) const override;
 
  private:
-  void ExecuteInstruction(const Instruction& instruction, bool& group_started);
-
   void ExecuteInitComm(const InitComm& inst);
   void ExecuteUseComm(const UseComm& inst);
   void ExecuteCopy(const Copy& inst);
@@ -77,6 +76,13 @@ class NCCLWorker : public Worker {
 
   struct CommCacheEntry {
     ncclComm_t nccl_comm;
+  };
+
+  /// @brief Holds CUDA events for measuring group timing.
+  struct GroupTimingState {
+    cudaEvent_t start_event;
+    cudaEvent_t end_event;
+    std::size_t ops_in_group;
   };
 
   std::unordered_map<std::string, CommCacheEntry> comm_cache_;

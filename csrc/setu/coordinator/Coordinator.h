@@ -21,6 +21,7 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
+#include "telemetry/MetricsSink.h"
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardSpec.h"
@@ -79,6 +80,9 @@ struct CopyOperationState {
 
   std::size_t completed_responses{0};  // Only Handler reads/writes
 
+  /// @brief Timestamp when the copy operation was first submitted.
+  std::chrono::high_resolution_clock::time_point start_time;
+
   explicit CopyOperationState(CopySpec spec_param,
                               std::vector<Identity> submitters_param)
       : spec(std::move(spec_param)), submitters(std::move(submitters_param)) {}
@@ -95,7 +99,8 @@ struct PendingDeregistration {
 //==============================================================================
 class Coordinator {
  public:
-  Coordinator(std::size_t port, PlannerPtr planner);
+  Coordinator(std::size_t port, PlannerPtr planner,
+              std::string metrics_endpoint = "");
 
   ~Coordinator();
 
@@ -203,7 +208,8 @@ class Coordinator {
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<PlannerTask>& planner_queue, OutboxNotifyFn outbox_notify);
+            Queue<PlannerTask>& planner_queue, OutboxNotifyFn outbox_notify,
+            setu::telemetry::MetricsSinkPtr metrics_sink);
 
     void Start();
     void Stop();
@@ -255,6 +261,7 @@ class Coordinator {
     MetaStore& metastore_;
     Queue<PlannerTask>& planner_queue_;
     OutboxNotifyFn outbox_notify_;
+    setu::telemetry::MetricsSinkPtr metrics_sink_;
 
     /// Aggregates shard submissions per (src, dst) pair until all expected
     /// shards arrive
@@ -292,7 +299,8 @@ class Coordinator {
   struct Executor {
     Executor(Queue<PlannerTask>& planner_queue,
              Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-             Planner& planner, OutboxNotifyFn outbox_notify);
+             Planner& planner, OutboxNotifyFn outbox_notify,
+             setu::telemetry::MetricsSinkPtr metrics_sink);
 
     void Start();
     void Stop();
@@ -307,12 +315,14 @@ class Coordinator {
     MetaStore& metastore_;
     Planner& planner_;
     OutboxNotifyFn outbox_notify_;
+    setu::telemetry::MetricsSinkPtr metrics_sink_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
   };
 
   std::size_t port_;
+  std::string metrics_endpoint_;
 
   std::shared_ptr<zmq::context_t> zmq_context_;
 

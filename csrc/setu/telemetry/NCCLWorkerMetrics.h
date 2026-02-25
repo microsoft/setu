@@ -20,61 +20,61 @@
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/utils/Serialization.h"
-#include "messaging/BaseRequest.h"
-#include "planner/ir/llc/Instruction.h"
 //==============================================================================
-namespace setu::commons::messages {
+namespace setu::telemetry {
 //==============================================================================
+using setu::commons::BinaryBuffer;
+using setu::commons::BinaryRange;
 using setu::commons::CopyOperationId;
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
+using setu::commons::DeviceRank;
+using setu::commons::NodeId;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
-using setu::planner::ir::llc::Program;
 //==============================================================================
 
-struct ExecuteProgramRequest : public BaseRequest {
-  /// @brief Constructs a request with auto-generated request ID.
-  ExecuteProgramRequest(CopyOperationId copy_op_id_param,
-                        Program program_param)
-      : BaseRequest(),
-        copy_op_id(copy_op_id_param),
-        program(std::move(program_param)) {}
-
-  /// @brief Constructs a request with explicit request ID (for
-  /// deserialization).
-  ExecuteProgramRequest(RequestId request_id_param,
-                        CopyOperationId copy_op_id_param,
-                        Program program_param)
-      : BaseRequest(request_id_param),
-        copy_op_id(copy_op_id_param),
-        program(std::move(program_param)) {}
-
-  [[nodiscard]] std::string ToString() const {
-    return std::format(
-        "ExecuteProgramRequest(request_id={}, copy_op_id={}, "
-        "program_size={})",
-        request_id, copy_op_id, program.size());
-  }
+/// @brief Timing for a single NCCL group (between barriers).
+struct NCCLGroupTiming {
+  std::uint32_t group_index;
+  double elapsed_ms;       // GPU-measured via CUDA events
+  std::size_t num_ops;     // number of Copy/Send/Receive in this group
 
   void Serialize(BinaryBuffer& buffer) const {
     BinaryWriter writer(buffer);
-    writer.WriteFields(request_id, copy_op_id, program);
+    writer.WriteFields(group_index, elapsed_ms,
+                       static_cast<std::uint64_t>(num_ops));
   }
 
-  static ExecuteProgramRequest Deserialize(const BinaryRange& range) {
+  static NCCLGroupTiming Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    auto [request_id_val, copy_op_id_val, program_val] =
-        reader.ReadFields<RequestId, CopyOperationId, Program>();
-    return ExecuteProgramRequest(request_id_val, copy_op_id_val,
-                                std::move(program_val));
+    auto [idx, ms, ops] =
+        reader.ReadFields<std::uint32_t, double, std::uint64_t>();
+    return NCCLGroupTiming{idx, ms, static_cast<std::size_t>(ops)};
+  }
+};
+
+/// @brief NCCL-specific worker metrics: per-group GPU timing.
+struct NCCLWorkerMetrics {
+  CopyOperationId copy_op_id;
+  NodeId node_id;
+  DeviceRank device_rank;
+  std::vector<NCCLGroupTiming> group_timings;
+  double total_execute_ms;  // wall-clock for entire Execute()
+
+  void Serialize(BinaryBuffer& buffer) const {
+    BinaryWriter writer(buffer);
+    writer.WriteFields(copy_op_id, node_id, device_rank, group_timings,
+                       total_execute_ms);
   }
 
-  const CopyOperationId copy_op_id;
-  const Program program;
+  static NCCLWorkerMetrics Deserialize(const BinaryRange& range) {
+    BinaryReader reader(range);
+    auto [id, nid, rank, timings, total] =
+        reader.ReadFields<CopyOperationId, NodeId, DeviceRank,
+                          std::vector<NCCLGroupTiming>, double>();
+    return NCCLWorkerMetrics{id, nid, rank, std::move(timings), total};
+  }
 };
-using ExecuteProgramRequestPtr = std::shared_ptr<ExecuteProgramRequest>;
 
 //==============================================================================
-}  // namespace setu::commons::messages
+}  // namespace setu::telemetry
 //==============================================================================
