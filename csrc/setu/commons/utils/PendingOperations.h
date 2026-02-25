@@ -19,107 +19,262 @@
 #include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "commons/Types.h"
+#include "commons/Logging.h"
 //==============================================================================
 namespace setu::commons::utils {
 //==============================================================================
 
-enum class AddWaiterResult : std::uint8_t {
-  kWaiterAdded,
-  kAlreadyComplete,
-  kNotRegistered
-};
-
-/// @brief Tracks pending async operations with registration, waiting, and
-/// completion.
+/// @brief Bipartite waiter-blocker graph for tracking pending operations.
 ///
-/// Operations are registered via RegisterOperation (refcounted — multiple
-/// registrations for the same key are allowed). Clients wait via AddWaiter.
-/// When the operation completes, MarkComplete + DrainWaiters serves existing
-/// waiters. Late waiters (arriving after completion) get kAlreadyComplete from
-/// AddWaiter, which drains one completion. The key is fully cleaned up once all
-/// registrations have been drained.
+/// Models a many-to-many relationship between waiters and blockers:
+///   - **N:1** (many waiters on one blocker): RegisterBlocker, AddWaiter
+///     (multiple), Resolve → returns all unblocked waiters.
+///   - **1:N** (one waiter blocked by many keys): AddWaiter with multiple
+///     blockers, Resolve each → waiter returned when last blocker resolves.
 ///
-/// @tparam KeyType The key type (e.g., CopyOperationId, ShardId).
-/// @tparam Hash The hash function for KeyType (defaults to boost::hash).
-template <typename KeyType, typename Hash = boost::hash<KeyType>>
+/// Late-arrival support: RegisterBlocker + Resolve before AddWaiter causes
+/// AddWaiter to return immediately (consuming one registration refcount).
+///
+/// @tparam WaiterId      Key type identifying each waiter.
+/// @tparam BlockerId     Key type identifying each blocker.
+/// @tparam WaiterPayload Optional payload type stored with each waiter.
+///                        When void, the WaiterId itself serves as the result.
+/// @tparam WaiterHash    Hash function for WaiterId.
+/// @tparam BlockerHash   Hash function for BlockerId.
+template <typename WaiterId, typename BlockerId, typename WaiterPayload = void,
+          typename WaiterHash = boost::hash<WaiterId>,
+          typename BlockerHash = boost::hash<BlockerId>>
 class PendingOperations {
+  static constexpr bool kHasPayload = !std::is_void_v<WaiterPayload>;
+  using StoredPayload =
+      std::conditional_t<kHasPayload, WaiterPayload, std::monostate>;
+  using ResultType = std::conditional_t<kHasPayload, WaiterPayload, WaiterId>;
+
+  struct WaiterEntry {
+    std::set<BlockerId> blockers;
+    [[no_unique_address]] StoredPayload payload{};
+  };
+
  public:
-  /// @brief Register an operation. Can be called multiple times for the same
-  /// key; each call increments the expected number of waiters.
-  /// @param key [in] The operation key to register.
-  void RegisterOperation(const KeyType& key /*[in]*/) {
-    registration_count_[key]++;
+  // --- Blocker lifecycle ---
+
+  /// @brief Register a blocker key for late-arrival support.
+  ///
+  /// Enables late-arrival handling: if Resolve() is called before AddWaiter(),
+  /// subsequent AddWaiter() calls whose blockers are all already-resolved
+  /// return the result immediately. Refcounted: multiple calls for the same
+  /// key are allowed.
+  ///
+  /// @param key [in] The blocker key to register.
+  void RegisterBlocker(const BlockerId& key /*[in]*/) { registered_[key]++; }
+
+  /// @brief Check whether a blocker key is registered (refcount > 0).
+  ///
+  /// @param key [in] The blocker key to check.
+  /// @return True if the key has been registered and refcount > 0.
+  [[nodiscard]] bool IsBlockerRegistered(const BlockerId& key /*[in]*/) const {
+    return registered_.contains(key);
   }
 
-  /// @brief Mark the operation as complete. Future AddWaiter calls for this
-  /// key will return kAlreadyComplete.
-  /// @param key [in] The operation key to mark complete.
-  void MarkComplete(const KeyType& key /*[in]*/) { completed_.insert(key); }
-
-  /// @brief Add a waiter for the given key.
+  /// @brief Remove a blocker: erases registration, resolved tombstone, and
+  /// reverse-index entry.
   ///
-  /// If the operation is already complete, drains one completion (decrements
-  /// the registration count) and returns kAlreadyComplete. If the key was
-  /// never registered, returns kNotRegistered. Otherwise, queues the waiter.
+  /// Does NOT release waiters — use Resolve for that.
   ///
-  /// @param key [in] The operation key to wait on.
-  /// @param identity [in] The client identity to register.
-  /// @return The result indicating what action was taken.
-  [[nodiscard]] AddWaiterResult AddWaiter(const KeyType& key /*[in]*/,
-                                          const Identity& identity /*[in]*/) {
-    if (completed_.contains(key)) {
-      DecrementRegistrations(key, 1);
-      return AddWaiterResult::kAlreadyComplete;
-    }
-    if (!registration_count_.contains(key)) {
-      return AddWaiterResult::kNotRegistered;
-    }
-    waiters_[key].push_back(identity);
-    return AddWaiterResult::kWaiterAdded;
+  /// @param key [in] The blocker key to remove.
+  void RemoveBlocker(const BlockerId& key /*[in]*/) {
+    registered_.erase(key);
+    resolved_.erase(key);
+    blocker_to_waiters_.erase(key);
   }
 
-  /// @brief Retrieve and remove all waiters for the given key. Each drained
-  /// waiter decrements the registration count.
-  /// @param key [in] The operation key whose waiters to drain.
-  /// @return Vector of waiting client identities. Empty if no waiters.
-  [[nodiscard]] std::vector<Identity> DrainWaiters(
-      const KeyType& key /*[in]*/) {
-    auto it = waiters_.find(key);
+  // --- Waiter lifecycle ---
+
+  /// @brief Add a waiter blocked by a set of blocker keys (void payload).
+  ///
+  /// If all blockers are already resolved (tombstoned), returns the WaiterId
+  /// immediately (late arrival) and decrements registration refcounts.
+  /// Otherwise, stores the waiter internally.
+  ///
+  /// @param waiter_id [in] Unique identifier for this waiter.
+  /// @param blockers  [in] The set of blocker keys this waiter depends on.
+  /// @return The WaiterId if all blockers are already resolved; std::nullopt
+  ///         if the waiter was stored.
+  [[nodiscard]] std::optional<ResultType> AddWaiter(
+      WaiterId waiter_id /*[in]*/, std::set<BlockerId> blockers /*[in]*/)
+    requires(!kHasPayload)
+  {
+    return AddWaiterImpl(std::move(waiter_id), std::move(blockers),
+                         std::monostate{});
+  }
+
+  /// @brief Add a waiter blocked by a set of blocker keys (with payload).
+  ///
+  /// If all blockers are already resolved (tombstoned), returns the payload
+  /// immediately (late arrival) and decrements registration refcounts.
+  /// Otherwise, stores the waiter internally.
+  ///
+  /// @param waiter_id [in] Unique identifier for this waiter.
+  /// @param blockers  [in] The set of blocker keys this waiter depends on.
+  /// @param payload   [in] The data to associate with this waiter.
+  /// @return The payload if all blockers are already resolved; std::nullopt
+  ///         if the waiter was stored.
+  template <typename P = StoredPayload>
+    requires(kHasPayload)
+  [[nodiscard]] std::optional<ResultType> AddWaiter(
+      WaiterId waiter_id /*[in]*/, std::set<BlockerId> blockers /*[in]*/,
+      P payload /*[in]*/) {
+    return AddWaiterImpl(std::move(waiter_id), std::move(blockers),
+                         StoredPayload{std::move(payload)});
+  }
+
+  /// @brief Remove a waiter and clean up its blocker references.
+  ///
+  /// @param waiter_id [in] The waiter to remove.
+  void RemoveWaiter(const WaiterId& waiter_id /*[in]*/) {
+    auto it = waiters_.find(waiter_id);
     if (it == waiters_.end()) {
-      return {};
+      return;
     }
-    std::vector<Identity> result = std::move(it->second);
+
+    for (const auto& key : it->second.blockers) {
+      auto rev_it = blocker_to_waiters_.find(key);
+      if (rev_it != blocker_to_waiters_.end()) {
+        rev_it->second.erase(waiter_id);
+        if (rev_it->second.empty()) {
+          blocker_to_waiters_.erase(rev_it);
+        }
+      }
+    }
+
     waiters_.erase(it);
-    DecrementRegistrations(key, result.size());
-    return result;
   }
 
-  /// @brief Check whether any waiters exist for the given key.
-  /// @param key [in] The operation key to check.
-  /// @return True if at least one waiter is registered.
-  [[nodiscard]] bool HasWaiters(const KeyType& key /*[in]*/) const {
-    return waiters_.contains(key);
+  // --- Resolution ---
+
+  /// @brief A blocker has been resolved.
+  ///
+  /// Removes it from all waiters' blocker sets. Returns results of waiters
+  /// now fully unblocked. Also records as tombstone if the blocker was
+  /// registered (for late-arrival support).
+  ///
+  /// @param key [in] The blocker key that has been resolved.
+  /// @return Vector of WaiterIds (void payload) or WaiterPayloads (non-void)
+  ///         for waiters now fully unblocked.
+  [[nodiscard]] std::vector<ResultType> Resolve(const BlockerId& key /*[in]*/) {
+    // Record tombstone only if this blocker was registered (for late-arrival)
+    if (registered_.contains(key)) {
+      resolved_.insert(key);
+    }
+
+    std::vector<ResultType> unblocked;
+
+    auto idx_it = blocker_to_waiters_.find(key);
+    if (idx_it == blocker_to_waiters_.end()) {
+      return unblocked;
+    }
+
+    // Move out the set of affected waiter IDs and erase the index entry
+    auto waiter_ids = std::move(idx_it->second);
+    blocker_to_waiters_.erase(idx_it);
+
+    for (const auto& waiter_id : waiter_ids) {
+      auto w_it = waiters_.find(waiter_id);
+      if (w_it == waiters_.end()) {
+        continue;
+      }
+
+      w_it->second.blockers.erase(key);
+
+      if (w_it->second.blockers.empty()) {
+        if constexpr (kHasPayload) {
+          unblocked.push_back(std::move(w_it->second.payload));
+        } else {
+          unblocked.push_back(waiter_id);
+        }
+        waiters_.erase(w_it);
+      }
+    }
+
+    return unblocked;
   }
 
  private:
-  void DecrementRegistrations(const KeyType& key /*[in]*/,
-                              std::size_t count /*[in]*/) {
-    auto it = registration_count_.find(key);
-    if (it == registration_count_.end()) {
+  [[nodiscard]] std::optional<ResultType> AddWaiterImpl(
+      WaiterId waiter_id /*[in]*/, std::set<BlockerId> blockers /*[in]*/,
+      StoredPayload payload /*[in]*/) {
+    ASSERT_VALID_ARGUMENTS(!blockers.empty(),
+                           "PendingOperations::AddWaiter requires at least one "
+                           "blocker key");
+
+    // Check if all blockers are already resolved (tombstoned)
+    bool all_resolved = true;
+    for (const auto& key : blockers) {
+      if (!resolved_.contains(key)) {
+        all_resolved = false;
+        break;
+      }
+    }
+
+    if (all_resolved) {
+      // Late arrival: all blockers already resolved — return immediately
+      for (const auto& key : blockers) {
+        DecrementRegistration(key);
+      }
+      if constexpr (kHasPayload) {
+        return std::move(payload);
+      } else {
+        return std::move(waiter_id);
+      }
+    }
+
+    // Build reverse index for unresolved blockers
+    for (const auto& key : blockers) {
+      if (!resolved_.contains(key)) {
+        blocker_to_waiters_[key].insert(waiter_id);
+      }
+    }
+
+    // Remove already-resolved blockers from the waiter's set
+    std::erase_if(blockers, [this](const BlockerId& key) {
+      return resolved_.contains(key);
+    });
+
+    waiters_.emplace(std::move(waiter_id),
+                     WaiterEntry{std::move(blockers), std::move(payload)});
+    return std::nullopt;
+  }
+
+  /// @brief Decrement registration refcount for a blocker key.
+  ///
+  /// Called during late-arrival AddWaiter. When refcount hits 0, erases
+  /// both the registration and the resolved tombstone.
+  void DecrementRegistration(const BlockerId& key /*[in]*/) {
+    auto it = registered_.find(key);
+    if (it == registered_.end()) {
       return;
     }
-    if (it->second <= count) {
-      registration_count_.erase(it);
-      completed_.erase(key);
+    if (it->second <= 1) {
+      registered_.erase(it);
+      resolved_.erase(key);
     } else {
-      it->second -= count;
+      it->second--;
     }
   }
 
-  std::unordered_map<KeyType, std::size_t, Hash> registration_count_;
-  std::unordered_set<KeyType, Hash> completed_;
-  std::unordered_map<KeyType, std::vector<Identity>, Hash> waiters_;
+  /// Forward map: waiter ID → waiter state (blocker set + optional payload)
+  std::unordered_map<WaiterId, WaiterEntry, WaiterHash> waiters_;
+
+  /// Reverse index: blocker key → set of waiter IDs blocked by that key
+  std::unordered_map<BlockerId, std::set<WaiterId>, BlockerHash>
+      blocker_to_waiters_;
+
+  /// Tombstones: blocker keys that have been resolved (for late-arrival).
+  /// Only populated for registered blockers.
+  std::unordered_set<BlockerId, BlockerHash> resolved_;
+
+  /// Registration refcounts (controls late-arrival tombstone lifetime)
+  std::unordered_map<BlockerId, std::size_t, BlockerHash> registered_;
 };
 
 //==============================================================================

@@ -29,7 +29,8 @@ enum class ErrorCode : std::uint32_t {
   kTimeout = 2,
   kInternalError = 3,
   kTensorNotFound = 4,
-  kTensorNotAllocated = 5
+  kTensorNotAllocated = 5,
+  kTensorDeregistered = 6
 };
 //==============================================================================
 }  // namespace setu::commons::enums
@@ -82,6 +83,9 @@ struct std::formatter<setu::commons::enums::ErrorCode>
         break;
       case setu::commons::enums::ErrorCode::kTensorNotAllocated:
         name = "TENSOR_NOT_ALLOCATED";
+        break;
+      case setu::commons::enums::ErrorCode::kTensorDeregistered:
+        name = "TENSOR_DEREGISTERED";
         break;
     }
     return std::formatter<std::string_view>::format(name, ctx);

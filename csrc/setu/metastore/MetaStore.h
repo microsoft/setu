@@ -108,12 +108,51 @@ class MetaStore {
   [[nodiscard]] const TensorSpec* GetTensorSpec(
       const TensorName& tensor_name /*[in]*/) const;
 
+  /**
+   * @brief Checks if any shards of a tensor have been deregistered
+   *
+   * Returns true if DeregisterShards has been called for this tensor,
+   * indicating the tensor is partially freed.
+   *
+   * @param tensor_name The name of the tensor to check
+   * @return true if any shards have been deregistered, false otherwise
+   */
+  [[nodiscard]] bool IsTensorDeregistered(
+      const TensorName& tensor_name /*[in]*/) const;
+
+  /**
+   * @brief Marks a tensor as deregistered without removing its shards
+   *
+   * Sets the has_deregistered_shards flag so that IsTensorDeregistered returns
+   * true and new registrations/operations are rejected. The actual shard
+   * removal happens later via DeregisterShards. This is used by the
+   * Coordinator to immediately block new operations when a deregistration
+   * request arrives, even if the actual removal is deferred.
+   *
+   * @param tensor_name The name of the tensor to mark as deregistered
+   */
+  void MarkTensorDeregistered(const TensorName& tensor_name /*[in]*/);
+
+  /**
+   * @brief Deregisters tensor shards from the metadata store
+   *
+   * Removes the specified shards from each tensor's registration data,
+   * updates registered sizes, and invalidates caches. If all shards for
+   * a tensor are removed, the entire tensor entry is cleaned up.
+   *
+   * @param shards_by_tensor Map of tensor name to shard IDs to deregister
+   */
+  void DeregisterShards(
+      const std::unordered_map<TensorName, std::vector<ShardId>>&
+          shards_by_tensor /*[in]*/);
+
  private:
   /// Registered shard data: expected size, registered size, and shard metadata
   struct RegisteredShardsData {
     std::size_t expected_size{0};
     std::size_t registered_size{0};
     TensorShardMetadataMap shards;
+    bool has_deregistered_shards{false};
   };
 
   /**

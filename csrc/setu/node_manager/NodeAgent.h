@@ -58,6 +58,8 @@ using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
+using setu::commons::messages::DeregisterShardsRequest;
+using setu::commons::messages::DeregisterShardsResponse;
 using setu::commons::messages::ExecuteRequest;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
@@ -154,9 +156,13 @@ class NodeAgent {
     void HandleGetTensorSelectionRequest(
         const Identity& client_identity,
         const GetTensorSelectionRequest& request);
+    void HandleDeregisterShardsRequest(const Identity& client_identity,
+                                       const DeregisterShardsRequest& request);
 
     // Async coordinator message handlers (received on DEALER socket)
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
+    void HandleDeregisterShardsResponse(
+        const DeregisterShardsResponse& response);
     void HandleCopyOperationFinishedRequest(
         const CopyOperationFinishedRequest& request);
     void HandleExecuteRequest(const ExecuteRequest& request);
@@ -181,16 +187,27 @@ class NodeAgent {
     // request
     setu::commons::utils::RequestRouter request_router_;
 
-    // Tracks pending copy operations: registration, waiting, and completion
-    setu::commons::utils::PendingOperations<CopyOperationId> pending_copies_;
+    // Tracks pending copy operations: N clients (waiters) on 1 copy op
+    // (blocker). WaiterId=Identity, BlockerId=CopyOperationId, Payload=void.
+    setu::commons::utils::PendingOperations<Identity, CopyOperationId>
+        pending_copies_;
 
-    // Tracks pending shard allocation: registration, waiting, and completion
-    setu::commons::utils::PendingOperations<ShardId> pending_shard_allocs_;
+    // Tracks pending shard allocations: N clients (waiters) on 1 shard
+    // (blocker). WaiterId=Identity, BlockerId=ShardId, Payload=void.
+    setu::commons::utils::PendingOperations<Identity, ShardId>
+        pending_shard_allocs_;
 
     TensorShardMetadataMap tensor_shard_metadata_map_;
     TensorSpecMap tensor_spec_cache_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
     std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
+
+    /// Tracks deregistration requests: 1 request (waiter) blocked by 1
+    /// coordinator response key (blocker). WaiterId=RequestId,
+    /// BlockerId=RequestId, Payload=DeregisterShardsRequest.
+    setu::commons::utils::PendingOperations<RequestId, RequestId,
+                                            DeregisterShardsRequest>
+        pending_deregistrations_;
   };
 
   //============================================================================

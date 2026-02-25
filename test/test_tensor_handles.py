@@ -501,9 +501,7 @@ def test_multiple_concurrent_readers(infrastructure):
     with client.write(shard_ref) as tensor:
         tensor.fill_(expected_value)
 
-    client.disconnect()
-
-    # Spawn multiple reader processes
+    # Spawn multiple reader processes (keep client alive so shard stays registered)
     num_readers = 4
     ctx = mp.get_context("spawn")
     result_queue = ctx.Queue()
@@ -542,6 +540,8 @@ def test_multiple_concurrent_readers(infrastructure):
         assert (
             matches
         ), f"Reader got unexpected value: {value}, expected {expected_value}"
+
+    client.disconnect()
 
 
 def _writer_process(
@@ -601,8 +601,7 @@ def test_writer_blocks_readers(infrastructure):
     with client.write(shard_ref) as tensor:
         tensor.fill_(1.0)
 
-    client.disconnect()
-
+    # Keep client alive so shard stays registered for child processes
     ctx = mp.get_context("spawn")
     writer_queue = ctx.Queue()
     reader_queue = ctx.Queue()
@@ -655,6 +654,8 @@ def test_writer_blocks_readers(infrastructure):
     assert reader_result[
         1
     ], f"Reader should see written value 99.0, got {reader_result[2]}"
+
+    client.disconnect()
 
 
 @pytest.mark.gpu

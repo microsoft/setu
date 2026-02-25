@@ -25,6 +25,8 @@ namespace setu::client {
 //==============================================================================
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::messages::ClientRequest;
+using setu::commons::messages::DeregisterShardsRequest;
+using setu::commons::messages::DeregisterShardsResponse;
 using setu::commons::messages::GetTensorHandleRequest;
 using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::messages::GetTensorSelectionRequest;
@@ -70,6 +72,12 @@ void Client::Connect(const std::string& endpoint) {
 void Client::Disconnect() {
   ASSERT_VALID_RUNTIME(is_connected_, "Client is not connected");
 
+  // Deregister all owned shards before disconnecting
+  if (!tensor_shards_.empty()) {
+    DeregisterShards();
+    tensor_shards_.clear();
+  }
+
   if (request_socket_) {
     request_socket_->close();
     request_socket_.reset();
@@ -79,6 +87,35 @@ void Client::Disconnect() {
   is_connected_ = false;
 
   LOG_DEBUG("Client disconnected successfully");
+}
+
+void Client::DeregisterShards() {
+  // Build map of tensor name -> shard IDs from local tracking
+  std::unordered_map<TensorName, std::vector<ShardId>> shards_by_tensor;
+  for (const auto& [name, refs] : tensor_shards_) {
+    std::vector<ShardId> shard_ids;
+    shard_ids.reserve(refs.size());
+    for (const auto& ref : refs) {
+      shard_ids.push_back(ref->shard_id);
+    }
+    shards_by_tensor.emplace(name, std::move(shard_ids));
+  }
+
+  ClientRequest request = DeregisterShardsRequest(std::move(shards_by_tensor));
+  Comm::Send(request_socket_, request);
+
+  auto ready = Comm::PollForRead({request_socket_}, kDeregisterTimeoutMs);
+  if (ready.empty()) {
+    LOG_WARNING(
+        "Deregister shards timed out after {}ms, proceeding with disconnect",
+        kDeregisterTimeoutMs);
+    return;
+  }
+
+  auto response = Comm::Recv<DeregisterShardsResponse>(request_socket_);
+
+  LOG_DEBUG("Deregister shards completed with error code: {}",
+            response.error_code);
 }
 
 bool Client::IsConnected() const { return is_connected_; }

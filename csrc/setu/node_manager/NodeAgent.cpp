@@ -42,6 +42,8 @@ using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
 using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
+using setu::commons::messages::DeregisterShardsRequest;
+using setu::commons::messages::DeregisterShardsResponse;
 using setu::commons::messages::ExecuteProgramRequest;
 using setu::commons::messages::ExecuteProgramResponse;
 using setu::commons::messages::ExecuteRequest;
@@ -63,7 +65,6 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
-using setu::commons::utils::AddWaiterResult;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
@@ -249,6 +250,8 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
           HandleWaitForShardAllocationRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, GetTensorSelectionRequest>) {
           HandleGetTensorSelectionRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, DeregisterShardsRequest>) {
+          HandleDeregisterShardsRequest(client_identity, msg);
         }
       },
       request);
@@ -267,6 +270,8 @@ void NodeAgent::Handler::HandleAsyncCoordinatorMessage(
           HandleExecuteRequest(msg);
         } else if constexpr (std::is_same_v<T, SubmitCopyResponse>) {
           HandleSubmitCopyResponse(msg);
+        } else if constexpr (std::is_same_v<T, DeregisterShardsResponse>) {
+          HandleDeregisterShardsResponse(msg);
         }
       },
       message);
@@ -292,7 +297,7 @@ void NodeAgent::Handler::HandleRegisterTensorShardRequest(
     tensor_shard_metadata_map_.emplace(metadata.id, metadata_ptr);
 
     // Register the shard so clients can wait for its allocation
-    pending_shard_allocs_.RegisterOperation(metadata.id);
+    pending_shard_allocs_.RegisterBlocker(metadata.id);
     LOG_DEBUG("Registered pending shard allocation for shard: {}", metadata.id);
 
     // Build TensorDimMap from the spec's dims
@@ -329,27 +334,23 @@ void NodeAgent::Handler::HandleSubmitPullRequest(
 
 void NodeAgent::Handler::HandleWaitForCopyRequest(
     const Identity& client_identity, const WaitForCopyRequest& request) {
-  auto result =
-      pending_copies_.AddWaiter(request.copy_operation_id, client_identity);
-
-  switch (result) {
-    case AddWaiterResult::kAlreadyComplete: {
-      WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
-      Comm::Send<WaitForCopyResponse>(client_socket_, client_identity,
-                                      response);
-      return;
-    }
-    case AddWaiterResult::kNotRegistered: {
-      LOG_ERROR("WaitForCopy for unknown copy_operation_id: {}",
-                request.copy_operation_id);
-      WaitForCopyResponse response(RequestId{}, ErrorCode::kInvalidArguments);
-      Comm::Send<WaitForCopyResponse>(client_socket_, client_identity,
-                                      response);
-      return;
-    }
-    case AddWaiterResult::kWaiterAdded:
-      return;
+  if (!pending_copies_.IsBlockerRegistered(request.copy_operation_id)) {
+    LOG_ERROR("WaitForCopy for unknown copy_operation_id: {}",
+              request.copy_operation_id);
+    WaitForCopyResponse response(RequestId{}, ErrorCode::kInvalidArguments);
+    Comm::Send<WaitForCopyResponse>(client_socket_, client_identity, response);
+    return;
   }
+
+  auto immediate = pending_copies_.AddWaiter(Identity{client_identity},
+                                             {request.copy_operation_id});
+
+  if (immediate.has_value()) {
+    // Already complete (late arrival)
+    WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
+    Comm::Send<WaitForCopyResponse>(client_socket_, *immediate, response);
+  }
+  // Otherwise: stored as pending, will be released on Resolve
 }
 
 void NodeAgent::Handler::HandleGetTensorHandleRequest(
@@ -404,34 +405,30 @@ void NodeAgent::Handler::HandleWaitForShardAllocationRequest(
   LOG_DEBUG("WaitForShardAllocation request: shard={}, client={}",
             request.shard_id, client_identity);
 
-  auto result =
-      pending_shard_allocs_.AddWaiter(request.shard_id, client_identity);
+  if (!pending_shard_allocs_.IsBlockerRegistered(request.shard_id)) {
+    LOG_ERROR("WaitForShardAllocation for unknown shard_id: {}, client={}",
+              request.shard_id, client_identity);
+    WaitForShardAllocationResponse response(RequestId{},
+                                            ErrorCode::kInvalidArguments);
+    Comm::Send<WaitForShardAllocationResponse>(client_socket_, client_identity,
+                                               response);
+    return;
+  }
 
-  switch (result) {
-    case AddWaiterResult::kAlreadyComplete: {
-      LOG_DEBUG(
-          "WaitForShardAllocation: shard {} already complete, responding "
-          "immediately to client {}",
-          request.shard_id, client_identity);
-      WaitForShardAllocationResponse response(RequestId{}, ErrorCode::kSuccess);
-      Comm::Send<WaitForShardAllocationResponse>(client_socket_,
-                                                 client_identity, response);
-      return;
-    }
-    case AddWaiterResult::kNotRegistered: {
-      LOG_ERROR("WaitForShardAllocation for unknown shard_id: {}, client={}",
-                request.shard_id, client_identity);
-      WaitForShardAllocationResponse response(RequestId{},
-                                              ErrorCode::kInvalidArguments);
-      Comm::Send<WaitForShardAllocationResponse>(client_socket_,
-                                                 client_identity, response);
-      return;
-    }
-    case AddWaiterResult::kWaiterAdded:
-      LOG_DEBUG(
-          "WaitForShardAllocation: client {} added as waiter for shard {}",
-          client_identity, request.shard_id);
-      return;
+  auto immediate = pending_shard_allocs_.AddWaiter(Identity{client_identity},
+                                                   {request.shard_id});
+
+  if (immediate.has_value()) {
+    LOG_DEBUG(
+        "WaitForShardAllocation: shard {} already complete, responding "
+        "immediately to client {}",
+        request.shard_id, client_identity);
+    WaitForShardAllocationResponse response(RequestId{}, ErrorCode::kSuccess);
+    Comm::Send<WaitForShardAllocationResponse>(client_socket_, *immediate,
+                                               response);
+  } else {
+    LOG_DEBUG("WaitForShardAllocation: client {} added as waiter for shard {}",
+              client_identity, request.shard_id);
   }
 }
 
@@ -456,9 +453,16 @@ void NodeAgent::Handler::HandleGetTensorSelectionRequest(
   const auto& spec_response =
       std::get<GetTensorSpecResponse>(coordinator_response);
 
-  ASSERT_VALID_RUNTIME(spec_response.error_code == ErrorCode::kSuccess,
-                       "Failed to get TensorSpec for tensor {}",
-                       request.tensor_name);
+  if (spec_response.error_code != ErrorCode::kSuccess) {
+    LOG_WARNING("GetTensorSpec failed for tensor '{}': {}", request.tensor_name,
+                spec_response.error_code);
+    GetTensorSelectionResponse error_response(request.request_id,
+                                              spec_response.error_code);
+    Comm::Send<GetTensorSelectionResponse>(client_socket_, client_identity,
+                                           error_response);
+    return;
+  }
+
   ASSERT_VALID_RUNTIME(spec_response.tensor_spec.has_value(),
                        "TensorSpec missing in response for tensor {}",
                        request.tensor_name);
@@ -485,11 +489,9 @@ void NodeAgent::Handler::HandleAllocateTensorRequest(
 
     AllocateTensor(*it->second);
 
-    LOG_DEBUG("Marking shard allocation complete: {}", shard_id);
-    pending_shard_allocs_.MarkComplete(shard_id);
-
-    auto waiters = pending_shard_allocs_.DrainWaiters(shard_id);
-    LOG_DEBUG("Draining {} waiters for shard {}", waiters.size(), shard_id);
+    LOG_DEBUG("Resolving shard allocation: {}", shard_id);
+    auto waiters = pending_shard_allocs_.Resolve(shard_id);
+    LOG_DEBUG("Released {} waiters for shard {}", waiters.size(), shard_id);
     for (const auto& client_id : waiters) {
       LOG_DEBUG("Responding to waiter {} for shard {}", client_id, shard_id);
       WaitForShardAllocationResponse response(RequestId{}, ErrorCode::kSuccess);
@@ -501,9 +503,7 @@ void NodeAgent::Handler::HandleAllocateTensorRequest(
 
 void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
     const CopyOperationFinishedRequest& request) {
-  pending_copies_.MarkComplete(request.copy_operation_id);
-
-  auto waiters = pending_copies_.DrainWaiters(request.copy_operation_id);
+  auto waiters = pending_copies_.Resolve(request.copy_operation_id);
   for (const auto& client_id : waiters) {
     WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
     Comm::Send<WaitForCopyResponse>(client_socket_, client_id, response);
@@ -524,7 +524,9 @@ void NodeAgent::Handler::HandleSubmitCopyResponse(
     return;
   }
 
-  pending_copies_.RegisterOperation(response.copy_operation_id);
+  if (response.error_code == ErrorCode::kSuccess) {
+    pending_copies_.RegisterBlocker(response.copy_operation_id);
+  }
 
   Comm::Send<SubmitCopyResponse>(client_socket_, *client_identity, response);
 }
@@ -549,6 +551,63 @@ void NodeAgent::Handler::AllocateTensor(
 
   LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
             shard_metadata.id, shape, spec.device.torch_device.str());
+}
+
+void NodeAgent::Handler::HandleDeregisterShardsRequest(
+    const Identity& client_identity, const DeregisterShardsRequest& request) {
+  LOG_INFO("NodeAgent received DeregisterShardsRequest from client {}",
+           client_identity);
+
+  // Track client identity so we can route the async response back
+  request_router_.TrackRequest(request.request_id, client_identity);
+
+  // Store the request payload, blocked by the coordinator's response key.
+  // The request_id serves as both waiter ID and single blocker key — resolved
+  // when the coordinator sends DeregisterShardsResponse with the same
+  // request_id.
+  (void)pending_deregistrations_.AddWaiter(request.request_id,
+                                           {request.request_id},
+                                           DeregisterShardsRequest{request});
+
+  Comm::Send<NodeAgentRequest>(async_socket_, request);
+}
+
+void NodeAgent::Handler::HandleDeregisterShardsResponse(
+    const DeregisterShardsResponse& response) {
+  // Resolve the blocker key (request_id) to get the original request payload
+  auto original_requests =
+      pending_deregistrations_.Resolve(response.request_id);
+
+  // Clean up local state now that the Coordinator has confirmed all pending
+  // copies are complete and the shards are deregistered
+  for (const auto& original_request : original_requests) {
+    for (const auto& [tensor_name, shard_ids] :
+         original_request.shards_by_tensor) {
+      for (const auto& shard_id : shard_ids) {
+        shard_id_to_tensor_.erase(shard_id);
+        tensor_shard_metadata_map_.erase(shard_id);
+        pending_shard_allocs_.RemoveBlocker(shard_id);
+
+        LOG_DEBUG("Cleaned up shard {} from tensor '{}'", shard_id,
+                  tensor_name);
+      }
+      tensor_spec_cache_.erase(tensor_name);
+    }
+  }
+
+  // Route response back to the client that initiated the deregistration
+  auto client_identity = request_router_.ClaimIdentity(response.request_id);
+  if (client_identity.has_value()) {
+    DeregisterShardsResponse client_response(response.request_id,
+                                             response.error_code);
+    Comm::Send<DeregisterShardsResponse>(client_socket_, *client_identity,
+                                         client_response);
+  } else {
+    LOG_WARNING(
+        "Received DeregisterShardsResponse for unknown request_id: {}, "
+        "ignoring",
+        response.request_id);
+  }
 }
 
 //==============================================================================

@@ -73,12 +73,13 @@ class Client:
         """
         Disconnect from the NodeAgent.
 
-        This frees all registered shards and closes the connection.
-        Call this explicitly before the client goes out of scope to ensure
-        clean shutdown.
+        This deregisters all owned shards (notifying both the NodeAgent and
+        Coordinator) and closes the connection. Call this explicitly before
+        the client goes out of scope to ensure clean shutdown.
         """
         if self._client.is_connected():
             self._client.disconnect()
+            self._tensor_shard_cache.clear()
             logger.debug("Client disconnected from %s", self._endpoint)
 
     def register_tensor_shard(self, spec: TensorShardSpec) -> Optional[TensorShardRef]:

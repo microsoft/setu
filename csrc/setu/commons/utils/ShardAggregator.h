@@ -100,6 +100,33 @@ class ShardAggregator {
     return std::nullopt;
   }
 
+  /// @brief Cancel and remove all groups whose key matches the predicate.
+  ///
+  /// This is used to clean up partially-aggregated groups when the shards
+  /// involved are being deregistered (e.g., client disconnect).
+  ///
+  /// @param predicate [in] Callable(const KeyType&) returning true for groups
+  ///   to cancel.
+  /// @return All participants from cancelled groups, so callers can send error
+  ///   responses.
+  template <typename PredicateFn>
+  [[nodiscard]] std::vector<AggregationParticipant> CancelIf(
+      PredicateFn predicate /*[in]*/) {
+    std::vector<AggregationParticipant> cancelled_participants;
+    auto it = groups_.begin();
+    while (it != groups_.end()) {
+      if (predicate(it->first)) {
+        for (auto& p : it->second.participants) {
+          cancelled_participants.push_back(std::move(p));
+        }
+        it = groups_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    return cancelled_participants;
+  }
+
  private:
   struct PendingGroup {
     std::set<ShardId> shards_received;

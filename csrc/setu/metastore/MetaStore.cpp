@@ -202,5 +202,68 @@ const TensorSpec* MetaStore::GetTensorSpec(
   return nullptr;
 }
 //==============================================================================
+bool MetaStore::IsTensorDeregistered(const TensorName& tensor_name) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it == registered_shards_data_.end()) {
+    return false;
+  }
+  return it->second.has_deregistered_shards;
+}
+void MetaStore::MarkTensorDeregistered(const TensorName& tensor_name) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it == registered_shards_data_.end()) {
+    LOG_WARNING("MarkTensorDeregistered: tensor '{}' not found", tensor_name);
+    return;
+  }
+  it->second.has_deregistered_shards = true;
+}
+//==============================================================================
+void MetaStore::DeregisterShards(
+    const std::unordered_map<TensorName, std::vector<ShardId>>&
+        shards_by_tensor) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  for (const auto& [tensor_name, shard_ids] : shards_by_tensor) {
+    auto it = registered_shards_data_.find(tensor_name);
+    if (it == registered_shards_data_.end()) {
+      LOG_WARNING("DeregisterShards: tensor '{}' not found", tensor_name);
+      continue;
+    }
+    auto& data = it->second;
+    data.has_deregistered_shards = true;
+
+    for (const auto& shard_id : shard_ids) {
+      auto shard_it = data.shards.find(shard_id);
+      if (shard_it == data.shards.end()) {
+        LOG_WARNING("DeregisterShards: shard {} not found in tensor '{}'",
+                    shard_id, tensor_name);
+        continue;
+      }
+
+      std::size_t shard_num_elements = shard_it->second->spec.GetNumElements();
+      data.registered_size -= shard_num_elements;
+      data.shards.erase(shard_it);
+
+      LOG_DEBUG("Deregistered shard {} from tensor '{}', registered={}/{}",
+                shard_id, tensor_name, data.registered_size,
+                data.expected_size);
+    }
+
+    // Invalidate cached TensorMetadata for this tensor
+    tensor_metadata_cache_.erase(tensor_name);
+
+    // If no shards remain, clean up the tensor entirely
+    if (data.shards.empty()) {
+      LOG_DEBUG("All shards removed for tensor '{}', cleaning up", tensor_name);
+      registered_shards_data_.erase(it);
+      tensor_spec_cache_.erase(tensor_name);
+    }
+  }
+}
+//==============================================================================
 }  // namespace setu::metastore
 //==============================================================================
