@@ -95,7 +95,7 @@ TEST_F(CIRShortestPathRoutingTest, Scratch) {
 
   ShortestPathRouting pass(topo);
   HintStore hints;
-  auto program_t = pass.Run(program, hints);
+  auto program_t = pass.Run(std::move(program), hints);
 
   std::cout << "AFTER" << std::endl;
   std::cout << program_t.Dump() << std::endl;
@@ -104,7 +104,6 @@ TEST_F(CIRShortestPathRoutingTest, Scratch) {
 }
 
 TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
-  Program program;
   auto dev0 = MakeDevice(n0, 0);
   auto dev1 = MakeDevice(n0, 1);
   auto dev2 = MakeDevice(n1, 0);
@@ -114,10 +113,14 @@ TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
   topo->AddBidirectionalLink(dev0, dev2, Link(10, 100));
   topo->AddBidirectionalLink(dev1, dev2, Link(10, 50));
 
-  // Direct path dev0->dev2 exists, but provide a hint to route via dev1
-  auto v0 = program.EmitView(dev0, MakeEmptyShardRef(), Slice{0, 256}, dt);
-  auto v2 = program.EmitView(dev2, MakeEmptyShardRef(), Slice{0, 256}, dt);
-  (void)program.EmitCopy(v0, v2);
+  // Helper — builds the same one-copy program each time (Program is move-only)
+  auto make_program = [&]() {
+    Program p;
+    auto v0 = p.EmitView(dev0, MakeEmptyShardRef(), Slice{0, 256}, dt);
+    auto v2 = p.EmitView(dev2, MakeEmptyShardRef(), Slice{0, 256}, dt);
+    (void)p.EmitCopy(v0, v2);
+    return p;
+  };
 
   // Create a routing hint: dev0 -> dev1 -> dev2
   Path forced_path({Participant(n0, dev0.device), Participant(n0, dev1.device),
@@ -132,12 +135,12 @@ TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
 
   // Without hints — should produce direct copy (2 hops, no intermediates)
   HintStore empty_hints;
-  auto program_no_hint = pass.Run(program, empty_hints);
+  auto program_no_hint = pass.Run(make_program(), empty_hints);
   std::cout << "WITHOUT HINT" << std::endl;
   std::cout << program_no_hint.Dump() << std::endl;
 
   // With hints — should produce multi-hop copy (3 hops, 1 intermediate)
-  auto program_with_hint = pass.Run(program, hints);
+  auto program_with_hint = pass.Run(make_program(), hints);
   std::cout << "WITH HINT" << std::endl;
   std::cout << program_with_hint.Dump() << std::endl;
 

@@ -10,7 +10,7 @@ using setu::planner::hints::RoutingHint;
 using setu::planner::topo::Link;
 using setu::planner::topo::Path;
 
-cir::Program ShortestPathRouting::Run(const cir::Program& program,
+cir::Program ShortestPathRouting::Run(cir::Program program,
                                       const HintStore& hints) {
   // Calculate override map from routing hints
   std::map<std::pair<Participant, Participant>,
