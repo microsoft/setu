@@ -57,6 +57,8 @@ using setu::commons::messages::GetTensorSelectionResponse;
 using setu::commons::messages::GetTensorSpecRequest;
 using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::NodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
@@ -113,9 +115,19 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
     workers_.emplace(device_rank, std::move(worker));
   }
 
-  handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
-                                       coordinator_endpoint_, executor_queue_,
-                                       shard_id_to_tensor_, lock_base_dir_);
+  // Build per-Participant register sets for coordinator onboarding
+  std::unordered_map<setu::planner::Participant, RegisterSet>
+      participant_register_sets;
+  for (const auto& device : devices_) {
+    setu::planner::Participant participant(node_id_, device);
+    participant_register_sets.emplace(participant,
+                                     RegisterSet::Uniform(1, register_size_));
+  }
+
+  handler_ = std::make_unique<Handler>(
+      node_id_, zmq_context_, port_, coordinator_endpoint_, executor_queue_,
+      shard_id_to_tensor_, lock_base_dir_,
+      std::move(participant_register_sets));
   // Build register resolver from workers — captures workers_ by reference,
   // safe because NodeAgent outlives the Executor.
   RegisterResolver register_resolver =
@@ -168,14 +180,17 @@ NodeAgent::Handler::Handler(
     NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
     std::size_t port, const std::string& coordinator_endpoint,
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-    TensorShardsConcurrentMap& shard_id_to_tensor, std::string lock_base_dir)
+    TensorShardsConcurrentMap& shard_id_to_tensor, std::string lock_base_dir,
+    std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
+        register_sets)
     : node_id_(node_id),
       zmq_context_(zmq_context),
       port_(port),
       coordinator_endpoint_(coordinator_endpoint),
       executor_queue_(executor_queue),
       shard_id_to_tensor_(shard_id_to_tensor),
-      lock_base_dir_(std::move(lock_base_dir)) {
+      lock_base_dir_(std::move(lock_base_dir)),
+      register_sets_(std::move(register_sets)) {
   InitSockets();
 }
 
@@ -229,8 +244,30 @@ void NodeAgent::Handler::Stop() {
   }
 }
 
+void NodeAgent::Handler::OnboardWithCoordinator() {
+  LOG_INFO("NodeAgent {} onboarding with coordinator ({} devices)",
+           node_id_, register_sets_.size());
+
+  OnboardNodeAgentRequest request(std::move(register_sets_));
+  Comm::Send<NodeAgentRequest>(sync_socket_, request);
+  auto coordinator_response = Comm::Recv<CoordinatorMessage>(sync_socket_);
+
+  const auto& resp =
+      std::get<OnboardNodeAgentResponse>(coordinator_response);
+  ASSERT_VALID_RUNTIME(
+      resp.error_code == setu::commons::enums::ErrorCode::kSuccess,
+      "OnboardNodeAgent failed with error_code: {}", resp.error_code);
+
+  LOG_INFO("NodeAgent {} onboarding complete", node_id_);
+}
+
 void NodeAgent::Handler::Loop() {
   running_ = true;
+
+  // Onboard with coordinator before entering event loop — sends register
+  // sets so the coordinator knows about this node's devices.
+  OnboardWithCoordinator();
+
   while (running_) {
     auto ready =
         Comm::PollForRead({client_socket_, async_socket_}, kPollTimeoutMs);

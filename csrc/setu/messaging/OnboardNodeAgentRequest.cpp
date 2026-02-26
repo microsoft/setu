@@ -14,33 +14,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
+#include "messaging/OnboardNodeAgentRequest.h"
 //==============================================================================
-#include "planner/Plan.h"
-#include "planner/RegisterSet.h"
-#include "planner/ir/cir/Program.h"
+namespace setu::commons::messages {
 //==============================================================================
-namespace setu::planner::targets {
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
+void OnboardNodeAgentRequest::Serialize(BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.WriteFields(request_id, register_sets);
+}
 
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
-
-  /// Merge additional per-device register sets into the backend.
-  /// Called during NodeAgent onboarding so the backend learns about all
-  /// devices in the cluster before any compilation occurs.
-  virtual void AddRegisterSets(
-      const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
-          register_sets /*[in]*/) = 0;
-};
-
-using BackendPtr = std::shared_ptr<Backend>;
+OnboardNodeAgentRequest OnboardNodeAgentRequest::Deserialize(
+    const BinaryRange& range) {
+  BinaryReader reader(range);
+  auto [request_id_val, register_sets_val] =
+      reader.ReadFields<RequestId,
+                         std::unordered_map<Participant, RegisterSet>>();
+  return OnboardNodeAgentRequest(request_id_val,
+                                 std::move(register_sets_val));
+}
 
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::commons::messages
 //==============================================================================

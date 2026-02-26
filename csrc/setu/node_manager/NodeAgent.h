@@ -77,6 +77,8 @@ using setu::commons::messages::WaitForCopyRequest;
 using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
+using setu::commons::messages::OnboardNodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::node_manager::worker::Worker;
@@ -120,7 +122,10 @@ class NodeAgent {
             std::size_t port, const std::string& coordinator_endpoint,
             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
             TensorShardsConcurrentMap& shard_id_to_tensor,
-            std::string lock_base_dir);
+            std::string lock_base_dir,
+            std::unordered_map<setu::planner::Participant,
+                               setu::planner::RegisterSet>
+                register_sets);
     ~Handler();
 
     void Start();
@@ -200,10 +205,16 @@ class NodeAgent {
     setu::commons::utils::PendingOperations<Identity, ShardId>
         pending_shard_allocs_;
 
+    void OnboardWithCoordinator();
+
     TensorShardMetadataMap tensor_shard_metadata_map_;
     TensorSpecMap tensor_spec_cache_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
     std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
+
+    /// Per-device register sets to send to coordinator during onboarding.
+    std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
+        register_sets_;
 
     /// Tracks deregistration requests: 1 request (waiter) blocked by 1
     /// coordinator response key (blocker). WaiterId=RequestId,

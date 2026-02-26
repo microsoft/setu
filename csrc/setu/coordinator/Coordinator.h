@@ -208,7 +208,8 @@ class Coordinator {
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<PlannerTask>& planner_queue, OutboxNotifyFn outbox_notify,
+            Queue<PlannerTask>& planner_queue, Planner& planner,
+            OutboxNotifyFn outbox_notify,
             setu::telemetry::MetricsSinkPtr metrics_sink);
 
     void Start();
@@ -235,6 +236,9 @@ class Coordinator {
     void HandleDeregisterShardsRequest(
         const Identity& node_agent_identity,
         const setu::commons::messages::DeregisterShardsRequest& request);
+    void HandleOnboardNodeAgentRequest(
+        const Identity& node_agent_identity,
+        const setu::commons::messages::OnboardNodeAgentRequest& request);
 
     /// @brief Unified shard submission logic for both Copy and Pull.
     void HandleShardSubmission(const Identity& node_agent_identity,
@@ -260,6 +264,7 @@ class Coordinator {
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Queue<PlannerTask>& planner_queue_;
+    Planner& planner_;
     OutboxNotifyFn outbox_notify_;
     setu::telemetry::MetricsSinkPtr metrics_sink_;
 

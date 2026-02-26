@@ -38,6 +38,8 @@ using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::GetTensorSpecRequest;
 using setu::commons::messages::GetTensorSpecResponse;
 using setu::commons::messages::NodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::SubmitPullRequest;
@@ -74,7 +76,7 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner,
   auto outbox_notify = [this]() { gateway_->NotifyOutbox(); };
 
   handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_, outbox_notify,
+                                       planner_queue_, *planner_, outbox_notify,
                                        handler_sink);
   executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
                                          metastore_, *planner_, outbox_notify,
@@ -241,12 +243,14 @@ Coordinator::Handler::Handler(Queue<InboxMessage>& inbox_queue,
                               Queue<OutboxMessage>& outbox_queue,
                               MetaStore& metastore,
                               Queue<PlannerTask>& planner_queue,
+                              Planner& planner,
                               OutboxNotifyFn outbox_notify,
                               setu::telemetry::MetricsSinkPtr metrics_sink)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_queue_(planner_queue),
+      planner_(planner),
       outbox_notify_(std::move(outbox_notify)),
       metrics_sink_(std::move(metrics_sink)) {}
 
@@ -292,6 +296,8 @@ void Coordinator::Handler::Loop() {
               HandleGetTensorSpecRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, DeregisterShardsRequest>) {
               HandleDeregisterShardsRequest(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, OnboardNodeAgentRequest>) {
+              HandleOnboardNodeAgentRequest(inbox_msg.node_agent_identity, msg);
             } else {
               LOG_WARNING("Handler: Unknown message type (index={})",
                           inbox_msg.request.index());
@@ -693,6 +699,20 @@ void Coordinator::Handler::HandleDeregisterShardsRequest(
         "in-flight copy operations",
         tensor_names.size(), node_agent_identity);
   }
+}
+
+void Coordinator::Handler::HandleOnboardNodeAgentRequest(
+    const Identity& node_agent_identity,
+    const OnboardNodeAgentRequest& request) {
+  LOG_INFO(
+      "Coordinator received OnboardNodeAgentRequest from {} ({} devices)",
+      node_agent_identity, request.register_sets.size());
+
+  planner_.AddBackendRegisterSets(request.register_sets);
+
+  OnboardNodeAgentResponse response(request.request_id,
+                                    ErrorCode::kSuccess);
+  PushOutbox(OutboxMessage{node_agent_identity, response});
 }
 
 //==============================================================================

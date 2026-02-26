@@ -46,12 +46,11 @@ class CoordinatorActor:
     to connect to.
     """
 
-    def __init__(self, metrics_endpoint: str = "", register_size: int = 0) -> None:
+    def __init__(self, metrics_endpoint: str = "") -> None:
         self._coordinator = None
         self._port: int = 0
         self._ip_address: str = ""
         self._metrics_endpoint = metrics_endpoint
-        self._register_size = register_size
 
     def start(self, passes=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
@@ -74,19 +73,9 @@ class CoordinatorActor:
         for p in resolve_passes(passes):
             pass_manager.add_pass(p)
 
-        if self._register_size > 0:
-            from setu._coordinator import RegisterSet
-            from setu._commons.datatypes import Device
-
-            # Discover local devices and build per-device register sets
-            register_sets = {}
-            num_gpus = torch.cuda.device_count()
-            for i in range(num_gpus):
-                dev = Device(torch_device=torch.device(f"cuda:{i}"))
-                register_sets[dev] = RegisterSet.uniform(1, self._register_size)
-            backend = NCCLBackend(register_sets)
-        else:
-            backend = NCCLBackend()
+        # Register sets are provided by NodeAgents during onboarding,
+        # so the backend starts empty.
+        backend = NCCLBackend()
 
         planner = Planner(backend, pass_manager)
         self._coordinator = Coordinator(

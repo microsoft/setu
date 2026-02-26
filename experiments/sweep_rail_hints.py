@@ -181,7 +181,7 @@ def main():
     env_vars = env_vars or None
 
     if not ray.is_initialized():
-        ray.init(address=args.ray_address)
+        ray.init(address=args.ray_address, log_to_driver=False)
 
     print(f"=== sweep_rail_hints ===")
     print(f"Output:          {args.output_dir}")

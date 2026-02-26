@@ -73,5 +73,10 @@ CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
   return {std::move(plan), std::move(cm)};
 }
 //==============================================================================
+void Planner::AddBackendRegisterSets(
+    const std::unordered_map<ir::cir::Device, RegisterSet>& register_sets) {
+  backend_->AddRegisterSets(register_sets);
+}
+//==============================================================================
 }  // namespace setu::planner
 //==============================================================================

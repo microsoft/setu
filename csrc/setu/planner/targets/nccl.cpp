@@ -62,6 +62,14 @@ NCCL::NCCL(
     std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets)
     : register_sets_(std::move(register_sets)) {}
 
+void NCCL::AddRegisterSets(
+    const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
+        register_sets) {
+  for (const auto& [device, reg_set] : register_sets) {
+    register_sets_.insert_or_assign(device, reg_set);
+  }
+}
+
 //==============================================================================
 
 Plan NCCL::Run(const cir::Program& program) {

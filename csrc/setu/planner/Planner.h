@@ -51,6 +51,12 @@ class Planner {
                                       const HintStore& hints,
                                       CopyOperationId copy_op_id);
 
+  /// Forward per-device register sets to the backend.
+  void AddBackendRegisterSets(
+      const std::unordered_map<ir::cir::Device, RegisterSet>&
+          register_sets /*[in]*/);
+
+
  private:
   targets::BackendPtr backend_;
   passes::PassManagerPtr pass_manager_;

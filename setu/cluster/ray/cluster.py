@@ -244,7 +244,6 @@ class Cluster(ClusterProto):
             **coordinator_options,
         ).remote(
             metrics_endpoint=metrics_connect_endpoint,
-            register_size=self._register_size,
         )
 
         coordinator_result = ray.get(
