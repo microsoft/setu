@@ -6,8 +6,10 @@ machine, making this suitable for testing and single-node benchmarks.
 """
 
 import logging
+import socket
 import time
 import uuid
+from contextlib import closing
 from logging.handlers import QueueHandler, QueueListener
 from typing import Dict, List, Optional, TypeVar
 
@@ -20,8 +22,17 @@ from setu.cluster.info import ClusterInfo, NodeInfo
 from setu.cluster.multiprocessing.info import MultiprocessingClusterInfo
 from setu.cluster.protocol import Cluster as ClusterProto
 from setu.cluster.spec import ClusterSpec
+from setu.telemetry.server import MetricsServer
 
 T = TypeVar("T")
+
+
+def _find_free_port() -> int:
+    """Find a free port on the current machine using OS assignment."""
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("", 0))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.getsockname()[1]
 
 
 def _redirect_native_stderr(log_dir: str, label: str) -> None:
@@ -278,6 +289,7 @@ class Cluster(ClusterProto):
         self._stop_event = self._ctx.Event()
         self._processes: list = []
         self._cluster_info: Optional[ClusterInfo] = None
+        self._metrics_server: Optional[MetricsServer] = None
 
         # Forward child-process log records to the parent's handlers.
         self._log_queue = self._ctx.Queue()
@@ -315,8 +327,29 @@ class Cluster(ClusterProto):
     def cluster_info(self) -> Optional[ClusterInfo]:
         return self._cluster_info
 
+    @property
+    def metrics_server(self) -> Optional[MetricsServer]:
+        return self._metrics_server
+
     def start(self) -> ClusterInfo:
         """Start coordinator and all node agents, build ClusterInfo."""
+        # Start metrics server before child processes so the ZMQ endpoint is ready.
+        # The server binds to the endpoint (may use "*"); child processes need a
+        # connect-friendly endpoint with a real address.
+        metrics_http_url = ""
+        metrics_connect_endpoint = ""
+        if self._metrics_endpoint:
+            http_port = _find_free_port()
+            self._metrics_server = MetricsServer(
+                endpoint=self._metrics_endpoint,
+                http_port=http_port,
+            )
+            self._metrics_server.start()
+            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
+            metrics_connect_endpoint = self._metrics_endpoint.replace(
+                "*", "localhost"
+            )
+
         coordinator_ready = self._ctx.Event()
         coordinator_proc = self._ctx.Process(
             target=_run_coordinator_process,
@@ -326,7 +359,7 @@ class Cluster(ClusterProto):
                 self._stop_event,
                 self._log_queue,
                 self._log_dir,
-                self._metrics_endpoint,
+                metrics_connect_endpoint,
             ),
         )
         coordinator_proc.start()
@@ -350,7 +383,7 @@ class Cluster(ClusterProto):
                     self._stop_event,
                     self._log_queue,
                     self._log_dir,
-                    self._metrics_endpoint,
+                    metrics_connect_endpoint,
                 ),
             )
             node_proc.start()
@@ -372,6 +405,8 @@ class Cluster(ClusterProto):
         self._cluster_info = MultiprocessingClusterInfo(
             coordinator_endpoint=self._spec.coordinator_endpoint,
             nodes=nodes,
+            metrics_endpoint=metrics_connect_endpoint,
+            metrics_http_url=metrics_http_url,
         )
         return self._cluster_info
 
@@ -390,6 +425,10 @@ class Cluster(ClusterProto):
         self._processes.clear()
         self._cluster_info = None
         self._log_listener.stop()
+
+        if self._metrics_server is not None:
+            self._metrics_server.stop()
+            self._metrics_server = None
 
     def __enter__(self):
         self.start()

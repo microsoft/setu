@@ -293,6 +293,7 @@ def run_experiment(
     timeout: float = 60.0,
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
+    metrics_http_url: str = "",
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -474,6 +475,22 @@ def run_experiment(
             except Exception:
                 pass
 
+    # Collect telemetry metrics if HTTP endpoint is available.
+    metrics_reports = None
+    if metrics_http_url:
+        time.sleep(0.2)  # Let trailing metrics arrive at the server.
+        try:
+            from setu.telemetry.server import MetricsClient
+
+            client = MetricsClient(metrics_http_url)
+            metrics_reports = client.get_all_reports()
+            logger.info(
+                "run_experiment: collected %d metrics reports",
+                len(metrics_reports) if metrics_reports else 0,
+            )
+        except Exception:
+            logger.warning("run_experiment: failed to collect metrics", exc_info=True)
+
     elapsed = time.monotonic() - t0
     logger.debug(
         "run_experiment: finished in %.3fs, success=%s, errors=%s",
@@ -492,4 +509,5 @@ def run_experiment(
         shard_bytes=shard_bytes,
         n_warmup_rounds=n_warmup_rounds,
         warmup_round_elapsed_s=warmup_round_elapsed_s,
+        metrics_reports=metrics_reports,
     )

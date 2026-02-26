@@ -8,7 +8,7 @@ from setu._commons.datatypes import Device
 from setu._coordinator import Participant
 
 _BASE_NODE_FIELDS = ("node_id", "node_agent_endpoint", "devices")
-_BASE_CLUSTER_FIELDS = ("coordinator_endpoint", "nodes")
+_BASE_CLUSTER_FIELDS = ("coordinator_endpoint", "nodes", "metrics_endpoint", "metrics_http_url")
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,8 @@ class ClusterInfo:
 
     coordinator_endpoint: str
     nodes: List[NodeInfo]
+    metrics_endpoint: str = ""
+    metrics_http_url: str = ""
 
     # Subclasses should set this to their NodeInfo subclass.
     _node_info_cls = NodeInfo
@@ -81,6 +83,8 @@ class ClusterInfo:
         data = {
             "_type": f"{type(self).__module__}.{type(self).__qualname__}",
             "coordinator_endpoint": self.coordinator_endpoint,
+            "metrics_endpoint": self.metrics_endpoint,
+            "metrics_http_url": self.metrics_http_url,
             "nodes": [_node_to_dict(n) for n in sorted(self.nodes, key=_sort_key)],
         }
         for f in dataclasses.fields(self):
@@ -138,4 +142,10 @@ class ClusterInfo:
             for f in dataclasses.fields(cls)
             if f.name not in _BASE_CLUSTER_FIELDS and f.name in data
         }
-        return cls(coordinator_endpoint=data["coordinator_endpoint"], nodes=nodes, **extras)
+        return cls(
+            coordinator_endpoint=data["coordinator_endpoint"],
+            nodes=nodes,
+            metrics_endpoint=data.get("metrics_endpoint", ""),
+            metrics_http_url=data.get("metrics_http_url", ""),
+            **extras,
+        )

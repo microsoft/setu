@@ -163,6 +163,18 @@ def parse_args():
         default=600.0,
         help="Timeout in seconds for the experiment (default: 600).",
     )
+    parser.add_argument(
+        "--enable-metrics",
+        action="store_true",
+        default=False,
+        help="Enable telemetry metrics collection (starts MetricsServer).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to write CSV result files (rounds, clients, telemetry).",
+    )
     return parser.parse_args()
 
 
@@ -289,7 +301,11 @@ def _connect_prespawned(yaml_path: str) -> ClusterInfo:
     return cluster_info
 
 
-def _spawn_local(gpus: Optional[int], passes: Optional[List[str]]):
+def _spawn_local(
+    gpus: Optional[int],
+    passes: Optional[List[str]],
+    metrics_endpoint: str = "",
+):
     """Spawn a local Ray + Setu cluster.
 
     Returns ``(cluster_info, cluster)`` where *cluster* must be stopped
@@ -310,7 +326,7 @@ def _spawn_local(gpus: Optional[int], passes: Optional[List[str]]):
     if not ray.is_initialized():
         ray.init()
 
-    cluster = Cluster(passes=passes)
+    cluster = Cluster(passes=passes, metrics_endpoint=metrics_endpoint)
     cluster_info = cluster.start()
     return cluster_info, cluster
 
@@ -328,11 +344,20 @@ def main():
     tensor_bytes = _parse_size(args.size)
     copy_mode = CopyMode(args.mode)
 
+    # Generate metrics endpoint if metrics are enabled.
+    metrics_endpoint = ""
+    if args.enable_metrics:
+        from setu.cluster.ray.actors import _find_free_port
+
+        metrics_endpoint = f"tcp://*:{_find_free_port()}"
+
     cluster = None
     if args.cluster_info:
         cluster_info = _connect_prespawned(args.cluster_info)
     else:
-        cluster_info, cluster = _spawn_local(args.gpus, args.passes)
+        cluster_info, cluster = _spawn_local(
+            args.gpus, args.passes, metrics_endpoint=metrics_endpoint
+        )
 
     print("=== Setu copy benchmark ===")
     print(
@@ -360,8 +385,15 @@ def main():
             timeout=args.timeout,
             n_copy_rounds=args.rounds,
             n_warmup_rounds=args.warmup_rounds,
+            metrics_http_url=cluster_info.metrics_http_url,
         )
         print(result.pretty_print())
+
+        if args.output_dir:
+            paths = result.dump_csv(args.output_dir)
+            print(f"Results written to {args.output_dir}/")
+            for p in paths:
+                print(f"  {p}")
 
         assert result.success, f"Experiment failed: {result.errors}"
         for dr in result.dest_results:

@@ -1,5 +1,8 @@
 """Experiment result types and formatting utilities."""
 
+import csv
+import io
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -81,6 +84,7 @@ class ExperimentResult:
     shard_bytes: List[int] = field(default_factory=list)
     n_warmup_rounds: int = 0
     warmup_round_elapsed_s: List[float] = field(default_factory=list)
+    metrics_reports: Optional[Dict] = None
 
     def pretty_print(self) -> str:
         """Render a formatted summary of the experiment results.
@@ -236,3 +240,191 @@ class ExperimentResult:
                 console.print(f"  - {err}")
 
         return console.file.getvalue()
+
+    def dump_csv(self, output_dir: str) -> List[str]:
+        """Write experiment results and telemetry to CSV files.
+
+        Creates the following files in *output_dir*:
+
+        - ``rounds.csv`` — per-round latency and bandwidth.
+        - ``clients.csv`` — per-client per-round breakdown.
+        - ``telemetry_summary.csv`` — one row per copy-op with compile/E2E times.
+        - ``telemetry_workers.csv`` — one row per NCCL worker with exec times.
+        - ``telemetry_groups.csv`` — one row per (worker, group) with GPU timing.
+        - ``telemetry_stalls.csv`` — one row per group with min/max/spread.
+        - ``telemetry_passes.csv`` — one row per compiler pass with timing.
+
+        Telemetry files are only written when ``metrics_reports`` is non-empty.
+
+        Returns:
+            List of file paths written.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        written: List[str] = []
+
+        total_bytes = sum(self.shard_bytes) if self.shard_bytes else 0
+
+        # -- rounds.csv --
+        path = os.path.join(output_dir, "rounds.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["round", "phase", "elapsed_s", "bandwidth_gbps"])
+            for i, elapsed in enumerate(self.warmup_round_elapsed_s):
+                bw = total_bytes / elapsed / 1e9 if elapsed > 0 and total_bytes else 0
+                w.writerow([i, "warmup", f"{elapsed:.9f}", f"{bw:.6f}"])
+            for i, elapsed in enumerate(self.round_elapsed_s):
+                bw = total_bytes / elapsed / 1e9 if elapsed > 0 and total_bytes else 0
+                w.writerow([i, "measured", f"{elapsed:.9f}", f"{bw:.6f}"])
+        written.append(path)
+
+        # -- clients.csv --
+        path = os.path.join(output_dir, "clients.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow([
+                "role", "device", "shard_name", "shard_bytes",
+                "round", "elapsed_s",
+            ])
+            all_results = self.source_results + self.dest_results
+            n_src = len(self.source_results)
+            for idx, r in enumerate(all_results):
+                shard_idx = idx if idx < n_src else idx - n_src
+                nbytes = (
+                    self.shard_bytes[shard_idx]
+                    if shard_idx < len(self.shard_bytes)
+                    else 0
+                )
+                for round_i, elapsed in enumerate(r.get("round_elapsed_s", [])):
+                    w.writerow([
+                        r.get("role", ""),
+                        r.get("device", ""),
+                        r.get("shard_name", ""),
+                        nbytes,
+                        round_i,
+                        f"{elapsed:.9f}",
+                    ])
+        written.append(path)
+
+        # -- Telemetry CSVs --
+        if not self.metrics_reports:
+            return written
+
+        # telemetry_summary.csv — backend-agnostic: compile + E2E timing.
+        path = os.path.join(output_dir, "telemetry_summary.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow([
+                "copy_op_id", "compile_time_ms", "e2e_time_ms",
+                "num_participants", "num_workers",
+            ])
+            for op_id, report in self.metrics_reports.items():
+                w.writerow([
+                    op_id,
+                    report.get("compile_time_ms", ""),
+                    report.get("e2e_time_ms", ""),
+                    report.get("num_participants", ""),
+                    len(report.get("worker_metrics", [])),
+                ])
+        written.append(path)
+
+        # telemetry_passes.csv — backend-agnostic: compiler pass timings.
+        path = os.path.join(output_dir, "telemetry_passes.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["copy_op_id", "pass_name", "elapsed_ms"])
+            for op_id, report in self.metrics_reports.items():
+                for pt in report.get("pass_timings") or []:
+                    w.writerow([op_id, pt["pass_name"], pt["elapsed_ms"]])
+        written.append(path)
+
+        # Backend-specific worker metrics.  The structure of worker_metrics
+        # depends on the backend (currently only NCCL).  We write whatever
+        # the server provides using a flat key-value approach so new backends
+        # produce usable CSVs without code changes here.
+        written.extend(self._dump_worker_csvs(output_dir))
+
+        return written
+
+    def _dump_worker_csvs(self, output_dir: str) -> List[str]:
+        """Write backend-specific worker metric CSVs.
+
+        Inspects the shape of ``worker_metrics`` dicts and writes
+        appropriate files.  Currently handles the NCCL backend which
+        provides ``group_timings`` and ``total_execute_ms``.
+        """
+        written: List[str] = []
+
+        # Collect all worker dicts across copy ops.
+        all_workers = []
+        for op_id, report in self.metrics_reports.items():
+            for wm in report.get("worker_metrics", []):
+                all_workers.append((op_id, wm))
+
+        if not all_workers:
+            return written
+
+        # Detect NCCL-style metrics by checking for group_timings.
+        has_groups = any(
+            "group_timings" in wm for _, wm in all_workers
+        )
+
+        # nccl_workers.csv
+        path = os.path.join(output_dir, "nccl_workers.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow([
+                "copy_op_id", "node_id", "device_rank",
+                "total_execute_ms", "num_groups",
+            ])
+            for op_id, wm in all_workers:
+                w.writerow([
+                    op_id,
+                    wm.get("node_id", ""),
+                    wm.get("device_rank", ""),
+                    wm.get("total_execute_ms", ""),
+                    len(wm.get("group_timings", [])),
+                ])
+        written.append(path)
+
+        if has_groups:
+            # nccl_groups.csv
+            path = os.path.join(output_dir, "nccl_groups.csv")
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow([
+                    "copy_op_id", "device_rank", "group_index",
+                    "elapsed_ms", "num_ops",
+                ])
+                for op_id, wm in all_workers:
+                    for gt in wm.get("group_timings", []):
+                        w.writerow([
+                            op_id,
+                            wm.get("device_rank", ""),
+                            gt["group_index"],
+                            gt["elapsed_ms"],
+                            gt["num_ops"],
+                        ])
+            written.append(path)
+
+            # nccl_stalls.csv
+            path = os.path.join(output_dir, "nccl_stalls.csv")
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow([
+                    "copy_op_id", "group_index",
+                    "min_elapsed_ms", "max_elapsed_ms", "spread_ms",
+                ])
+                for op_id, report in self.metrics_reports.items():
+                    for group_idx, info in (
+                        report.get("stall_analysis") or {}
+                    ).items():
+                        w.writerow([
+                            op_id,
+                            group_idx,
+                            info["min_elapsed_ms"],
+                            info["max_elapsed_ms"],
+                            info["spread_ms"],
+                        ])
+            written.append(path)
+
+        return written

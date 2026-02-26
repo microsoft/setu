@@ -6,7 +6,9 @@ NodeAgent actors across a Ray cluster.
 """
 
 import random
+import socket
 import uuid
+from contextlib import closing
 from typing import Callable, Dict, List, Optional, TypeVar
 
 import ray
@@ -24,6 +26,7 @@ from setu.cluster.ray.actors import (
     NodeAgentActor,
 )
 from setu.logger import init_logger
+from setu.telemetry.server import MetricsServer
 
 logger = init_logger(__name__)
 
@@ -31,6 +34,14 @@ T = TypeVar("T")
 
 # Timeout in seconds for actor creation and start calls.
 _ACTOR_TIMEOUT_S = 60
+
+
+def _find_free_port() -> int:
+    """Find a free port on the current machine using OS assignment."""
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind(("", 0))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.getsockname()[1]
 
 
 def _discover_ray_nodes() -> List[Dict]:
@@ -152,6 +163,7 @@ class Cluster(ClusterProto):
         self,
         env_vars: Optional[Dict[str, str]] = None,
         passes: Optional[List[str]] = None,
+        metrics_endpoint: str = "",
     ) -> None:
         self._coordinator_actor: Optional[ray.actor.ActorHandle] = None
         self._node_agent_actors: List[ray.actor.ActorHandle] = []
@@ -159,11 +171,17 @@ class Cluster(ClusterProto):
         self._started: bool = False
         self._env_vars = env_vars
         self._passes = passes
+        self._metrics_endpoint = metrics_endpoint
+        self._metrics_server: Optional[MetricsServer] = None
 
     @property
     def cluster_info(self) -> Optional[ClusterInfo]:
         """Returns the ClusterInfo if the cluster has been started."""
         return self._cluster_info
+
+    @property
+    def metrics_server(self) -> Optional[MetricsServer]:
+        return self._metrics_server
 
     def start(self) -> ClusterInfo:
         """Start the Setu cluster on Ray.
@@ -177,6 +195,24 @@ class Cluster(ClusterProto):
         """
         if self._started:
             raise RuntimeError("SetuCluster is already started")
+
+        # Start metrics server before actors so the ZMQ endpoint is ready.
+        # The server binds to the endpoint (may use "*"); actors need a
+        # connect-friendly endpoint with a real IP.
+        metrics_http_url = ""
+        metrics_connect_endpoint = ""
+        if self._metrics_endpoint:
+            http_port = _find_free_port()
+            self._metrics_server = MetricsServer(
+                endpoint=self._metrics_endpoint,
+                http_port=http_port,
+            )
+            self._metrics_server.start()
+            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
+
+            # Replace "*" with the node's actual IP so remote actors can connect.
+            head_ip = ray.util.get_node_ip_address()
+            metrics_connect_endpoint = self._metrics_endpoint.replace("*", head_ip)
 
         ray_nodes = _discover_ray_nodes()
         if not ray_nodes:
@@ -204,7 +240,7 @@ class Cluster(ClusterProto):
             name=COORDINATOR_ACTOR_NAME,
             namespace=COORDINATOR_ACTOR_NAMESPACE,
             **coordinator_options,
-        ).remote()
+        ).remote(metrics_endpoint=metrics_connect_endpoint)
 
         coordinator_result = ray.get(
             self._coordinator_actor.start.remote(passes=self._passes)
@@ -226,7 +262,7 @@ class Cluster(ClusterProto):
                 node_options["runtime_env"] = {"env_vars": self._env_vars}
             actor = NodeAgentActor.options(
                 **node_options,
-            ).remote(coordinator_endpoint)
+            ).remote(coordinator_endpoint, metrics_endpoint=metrics_connect_endpoint)
             self._node_agent_actors.append(actor)
 
         # Start all NodeAgentActors in parallel
@@ -263,6 +299,8 @@ class Cluster(ClusterProto):
         self._cluster_info = RayClusterInfo(
             coordinator_endpoint=coordinator_endpoint,
             nodes=nodes,
+            metrics_endpoint=metrics_connect_endpoint,
+            metrics_http_url=metrics_http_url,
             ray_address=ray_address,
         )
         self._started = True
@@ -328,6 +366,10 @@ class Cluster(ClusterProto):
         # Force-kill everything to ensure cleanup
         self._kill_all_actors()
         self._started = False
+
+        if self._metrics_server is not None:
+            self._metrics_server.stop()
+            self._metrics_server = None
 
         logger.info("Setu cluster fully shut down")
 

@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         help="Planner passes to enable. Omit for default, pass none with "
         "'--passes' for ablation.",
     )
+    parser.add_argument(
+        "--enable-metrics",
+        action="store_true",
+        default=False,
+        help="Enable telemetry metrics collection (starts MetricsServer).",
+    )
     return parser.parse_args()
 
 
@@ -80,6 +86,10 @@ def display_cluster_info(info: ClusterInfo) -> None:
     console.rule("Setu Cluster Info")
     console.print(f"  Coordinator: {info.coordinator_endpoint}")
     console.print(f"  Nodes: {info.num_nodes}  |  Total GPUs: {info.total_gpus}")
+    if info.metrics_endpoint:
+        console.print(f"  Metrics ZMQ: {info.metrics_endpoint}")
+    if info.metrics_http_url:
+        console.print(f"  Metrics HTTP: {info.metrics_http_url}")
     console.print()
 
     table = Table(title="Node Agents")
@@ -127,8 +137,18 @@ def main() -> None:
         logger.info("Starting local Ray instance")
         ray.init(ignore_reinit_error=True)
 
+    metrics_endpoint = ""
+    if args.enable_metrics:
+        from setu.cluster.ray.actors import _find_free_port
+
+        metrics_endpoint = f"tcp://*:{_find_free_port()}"
+
     env_vars = _build_env_vars(args)
-    cluster = Cluster(env_vars=env_vars, passes=args.passes)
+    cluster = Cluster(
+        env_vars=env_vars,
+        passes=args.passes,
+        metrics_endpoint=metrics_endpoint,
+    )
     try:
         info = cluster.start()
         display_cluster_info(info)
