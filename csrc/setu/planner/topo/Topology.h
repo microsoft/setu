@@ -1,6 +1,7 @@
 #pragma once
 
 #include "commons/StdCommon.h"
+#include "commons/utils/Serialization.h"
 #include "planner/Participant.h"
 
 namespace setu::planner::topo {
@@ -22,12 +23,26 @@ struct Link {
                        latency_us, bandwidth_gbps, tag);
   }
 
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    writer.WriteFields(latency_us, bandwidth_gbps, tag);
+  }
+
+  static Link Deserialize(const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    auto [lat, bw, t] =
+        reader.ReadFields<float, float, std::optional<std::string>>();
+    return Link(lat, bw, std::move(t));
+  }
+
   float latency_us;
   float bandwidth_gbps;
   std::optional<std::string> tag;
 };
 
 struct Path {
+  Path() = default;
+
   explicit Path(std::vector<Participant> hops_param,
                 std::vector<Link> links_param)
       : hops(std::move(hops_param)),
@@ -49,10 +64,34 @@ struct Path {
         hops, links, total_latency_us, bottleneck_bandwidth_gbps);
   }
 
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    // Write hops manually since Participant is TriviallySerializable
+    // but not default-constructible (c10::Device has no default ctor),
+    // and the generic vector reader uses resize() which requires it.
+    writer.Write<std::uint32_t>(static_cast<std::uint32_t>(hops.size()));
+    for (const auto& hop : hops) writer.Write(hop);
+    writer.Write(links);
+  }
+
+  static Path Deserialize(const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    // Read hops manually to avoid vector::resize() on non-default-
+    // constructible Participant.
+    const auto num_hops = reader.Read<std::uint32_t>();
+    std::vector<Participant> h;
+    h.reserve(num_hops);
+    for (std::uint32_t i = 0; i < num_hops; ++i) {
+      h.push_back(reader.Read<Participant>());
+    }
+    auto l = reader.Read<std::vector<Link>>();
+    return Path(std::move(h), std::move(l));
+  }
+
   std::vector<Participant> hops;
   std::vector<Link> links;
-  float total_latency_us;
-  float bottleneck_bandwidth_gbps;
+  float total_latency_us{0.0f};
+  float bottleneck_bandwidth_gbps{0.0f};
 
  private:
   static float ComputeTotalLatency(const std::vector<Link>& links) {

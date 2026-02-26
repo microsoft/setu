@@ -154,7 +154,8 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   return response.shard_ref;
 }
 
-std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
+std::optional<CopyOperationId> Client::SubmitCopy(
+    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints) {
   // Find all shards owned by this client that are involved in the copy
   // (either as source or destination)
   std::vector<ShardId> involved_shards;
@@ -175,10 +176,14 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
                        "Client has no shards for src {} or dst {}",
                        copy_spec.src_name, copy_spec.dst_name);
 
+  // Compute fingerprint once for all shard submissions
+  const auto fingerprint = setu::planner::hints::Fingerprint(hints);
+
   // Submit a request for each involved shard
   std::optional<CopyOperationId> copy_op_id;
   for (const auto& shard_id : involved_shards) {
-    ClientRequest request = SubmitCopyRequest(shard_id, copy_spec);
+    ClientRequest request =
+        SubmitCopyRequest(shard_id, copy_spec, hints, fingerprint);
     Comm::Send(request_socket_, request);
 
     auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
@@ -196,18 +201,23 @@ std::optional<CopyOperationId> Client::SubmitCopy(const CopySpec& copy_spec) {
   return copy_op_id;
 }
 
-std::optional<CopyOperationId> Client::SubmitPull(const CopySpec& copy_spec) {
+std::optional<CopyOperationId> Client::SubmitPull(
+    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints) {
   // For Pull: only destination shards submit (one-sided operation)
   auto it = tensor_shards_.find(copy_spec.dst_name);
   ASSERT_VALID_RUNTIME(it != tensor_shards_.end(),
                        "Client has no shards for dst {}", copy_spec.dst_name);
+
+  // Compute fingerprint once for all shard submissions
+  const auto fingerprint = setu::planner::hints::Fingerprint(hints);
 
   // Submit a request for each destination shard
   std::optional<CopyOperationId> copy_op_id;
   for (const auto& shard_ref : it->second) {
     const auto shard_id = shard_ref->shard_id;
 
-    ClientRequest request = SubmitPullRequest(shard_id, copy_spec);
+    ClientRequest request =
+        SubmitPullRequest(shard_id, copy_spec, hints, fingerprint);
     Comm::Send(request_socket_, request);
 
     auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);

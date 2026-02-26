@@ -98,7 +98,8 @@ struct Device {
     return static_cast<std::int16_t>(torch_device.index());
   }
 
-  torch::Device torch_device;  ///< PyTorch device (type + local index)
+  torch::Device torch_device{
+      torch::kCUDA};  ///< PyTorch device (type + local index)
 };
 //==============================================================================
 }  // namespace setu::commons::datatypes

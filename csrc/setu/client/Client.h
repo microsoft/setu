@@ -26,6 +26,7 @@
 #include "commons/utils/TorchTensorIPC.h"
 #include "commons/utils/ZmqHelper.h"
 #include "messaging/GetTensorHandleResponse.h"
+#include "planner/hints/Hint.h"
 
 namespace setu::client {
 using setu::commons::CopyOperationId;
@@ -41,6 +42,7 @@ using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::utils::TensorIPCSpec;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::planner::hints::CompilerHint;
 
 class Client {
  public:
@@ -58,9 +60,11 @@ class Client {
   std::optional<TensorShardRef> RegisterTensorShard(
       const TensorShardSpec& shard_spec);
 
-  std::optional<CopyOperationId> SubmitCopy(const CopySpec& copy_spec);
+  std::optional<CopyOperationId> SubmitCopy(
+      const CopySpec& copy_spec, const std::vector<CompilerHint>& hints = {});
 
-  std::optional<CopyOperationId> SubmitPull(const CopySpec& copy_spec);
+  std::optional<CopyOperationId> SubmitPull(
+      const CopySpec& copy_spec, const std::vector<CompilerHint>& hints = {});
 
   void WaitForCopy(CopyOperationId copy_op_id);
 
