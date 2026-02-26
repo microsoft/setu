@@ -24,6 +24,8 @@
 #include "messaging/BaseResponse.h"
 #include "messaging/CopyOperationFinishedRequest.h"
 #include "messaging/CopyOperationFinishedResponse.h"
+#include "messaging/DeregisterShardsRequest.h"
+#include "messaging/DeregisterShardsResponse.h"
 #include "messaging/ExecuteProgramRequest.h"
 #include "messaging/ExecuteProgramResponse.h"
 #include "messaging/ExecuteRequest.h"
@@ -51,19 +53,21 @@ namespace setu::commons::messages {
 using ClientRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                  SubmitPullRequest, WaitForCopyRequest, GetTensorHandleRequest,
-                 WaitForShardAllocationRequest, GetTensorSelectionRequest>;
+                 WaitForShardAllocationRequest, GetTensorSelectionRequest,
+                 DeregisterShardsRequest>;
 
 /// @brief Requests from NodeAgent to Coordinator.
 using NodeAgentRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
-                 SubmitPullRequest, ExecuteResponse, GetTensorSpecRequest>;
+                 SubmitPullRequest, ExecuteResponse, GetTensorSpecRequest,
+                 DeregisterShardsRequest>;
 
 /// @brief All messages from Coordinator to NodeAgent
 using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
                  ExecuteRequest, RegisterTensorShardCoordinatorResponse,
-                 SubmitCopyResponse, WaitForCopyResponse,
-                 GetTensorSpecResponse>;
+                 SubmitCopyResponse, WaitForCopyResponse, GetTensorSpecResponse,
+                 DeregisterShardsResponse>;
 
 using Request =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,

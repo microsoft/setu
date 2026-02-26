@@ -29,6 +29,7 @@ namespace setu::test::native {
 //==============================================================================
 using setu::commons::GenerateUUID;
 using setu::commons::NodeId;
+using setu::commons::ShardId;
 using setu::commons::TensorDimName;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
@@ -762,6 +763,259 @@ TEST(MetaStoreTest, GetTensorMetadata_DimensionNamesCorrect) {
 
   // Verify total size
   EXPECT_EQ(tensor_metadata->size, 8 * 512 * 768);
+}
+//==============================================================================
+// DeregisterShards tests
+//==============================================================================
+TEST(MetaStoreTest, DeregisterShards_SingleShard_RemovesShard) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register two shards
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50), node_0);
+  auto shard2 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100), node_1);
+  ASSERT_NE(shard1, nullptr);
+  ASSERT_NE(shard2, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 2);
+
+  // Deregister only the first shard
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {shard1->id};
+  store.DeregisterShards(to_deregister);
+
+  // Only one shard should remain
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+
+  // Tensor is no longer fully registered
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, DeregisterShards_AllShards_CleansUpTensorEntirely) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register two shards covering the full tensor
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50), node_0);
+  auto shard2 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100), node_1);
+  ASSERT_NE(shard1, nullptr);
+  ASSERT_NE(shard2, nullptr);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+
+  // Verify TensorSpec exists before deregistration
+  EXPECT_NE(store.GetTensorSpec(tensor_name), nullptr);
+
+  // Deregister all shards
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {shard1->id, shard2->id};
+  store.DeregisterShards(to_deregister);
+
+  // Tensor should be completely gone
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 0);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+  EXPECT_EQ(store.GetTensorMetadata(tensor_name), nullptr);
+  EXPECT_EQ(store.GetTensorSpec(tensor_name), nullptr);
+}
+
+TEST(MetaStoreTest, DeregisterShards_MultipleTensors_IndependentCleanup) {
+  MetaStore store;
+  const NodeId owner_node = GenerateUUID();
+
+  // Register shards for two different tensors
+  auto shard_a = store.RegisterTensorShard(
+      Make1DShardSpec("tensor_a", 100, 0, 100), owner_node);
+  auto shard_b = store.RegisterTensorShard(
+      Make1DShardSpec("tensor_b", 200, 0, 200), owner_node);
+  ASSERT_NE(shard_a, nullptr);
+  ASSERT_NE(shard_b, nullptr);
+
+  // Deregister tensor_a only
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister["tensor_a"] = {shard_a->id};
+  store.DeregisterShards(to_deregister);
+
+  // tensor_a should be gone
+  EXPECT_EQ(store.GetNumShardsForTensor("tensor_a"), 0);
+  EXPECT_EQ(store.GetTensorSpec("tensor_a"), nullptr);
+
+  // tensor_b should be unaffected
+  EXPECT_EQ(store.GetNumShardsForTensor("tensor_b"), 1);
+  EXPECT_TRUE(store.AllShardsRegistered("tensor_b"));
+  EXPECT_NE(store.GetTensorSpec("tensor_b"), nullptr);
+}
+
+TEST(MetaStoreTest, DeregisterShards_UnknownTensor_DoesNotCrash) {
+  MetaStore store;
+  const NodeId owner_node = GenerateUUID();
+
+  // Register a real tensor
+  auto shard = store.RegisterTensorShard(
+      Make1DShardSpec("real_tensor", 100, 0, 100), owner_node);
+  ASSERT_NE(shard, nullptr);
+
+  // Deregister from a nonexistent tensor - should warn but not crash
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister["nonexistent_tensor"] = {GenerateUUID()};
+  store.DeregisterShards(to_deregister);
+
+  // Real tensor should be unaffected
+  EXPECT_EQ(store.GetNumShardsForTensor("real_tensor"), 1);
+  EXPECT_TRUE(store.AllShardsRegistered("real_tensor"));
+}
+
+TEST(MetaStoreTest, DeregisterShards_UnknownShardId_DoesNotCrash) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId owner_node = GenerateUUID();
+
+  // Register a shard
+  auto shard = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100), owner_node);
+  ASSERT_NE(shard, nullptr);
+
+  // Attempt to deregister a nonexistent shard ID for a real tensor
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {GenerateUUID()};
+  store.DeregisterShards(to_deregister);
+
+  // Real shard should be unaffected
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, DeregisterShards_InvalidatesTensorMetadataCache) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register all shards and build the metadata cache
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50), node_0);
+  auto shard2 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100), node_1);
+  ASSERT_NE(shard1, nullptr);
+  ASSERT_NE(shard2, nullptr);
+
+  // Access metadata to populate cache
+  auto metadata_before = store.GetTensorMetadata(tensor_name);
+  ASSERT_NE(metadata_before, nullptr);
+  EXPECT_EQ(metadata_before->shards.size(), 2);
+
+  // Deregister one shard
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {shard1->id};
+  store.DeregisterShards(to_deregister);
+
+  // Metadata cache should be invalidated - tensor no longer fully registered
+  auto metadata_after = store.GetTensorMetadata(tensor_name);
+  EXPECT_EQ(metadata_after, nullptr) << "Metadata should be nullptr since "
+                                        "tensor is no longer fully registered";
+}
+
+TEST(MetaStoreTest, DeregisterShards_PartialRemoval_AllowsReregistration) {
+  MetaStore store;
+  const TensorName tensor_name = "test_tensor";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register two shards
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50), node_0);
+  auto shard2 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100), node_1);
+  ASSERT_NE(shard1, nullptr);
+  ASSERT_NE(shard2, nullptr);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+
+  // Deregister the first shard
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {shard1->id};
+  store.DeregisterShards(to_deregister);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+
+  // Re-register the same range with a new shard
+  const NodeId node_2 = GenerateUUID();
+  auto shard3 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50), node_2);
+  ASSERT_NE(shard3, nullptr)
+      << "Should be able to re-register after deregistration";
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 2);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, DeregisterShards_2DTensor_CorrectCleanup) {
+  MetaStore store;
+  const TensorName tensor_name = "matrix";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register 2 shards for a 10x20 matrix
+  auto shard1 = store.RegisterTensorShard(
+      Make2DShardSpec(tensor_name, 10, 20, 0, 5, 0, 20), node_0);
+  auto shard2 = store.RegisterTensorShard(
+      Make2DShardSpec(tensor_name, 10, 20, 5, 10, 0, 20), node_1);
+  ASSERT_NE(shard1, nullptr);
+  ASSERT_NE(shard2, nullptr);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+
+  // Deregister first shard
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {shard1->id};
+  store.DeregisterShards(to_deregister);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+
+  // Deregister second shard
+  to_deregister[tensor_name] = {shard2->id};
+  store.DeregisterShards(to_deregister);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 0);
+  EXPECT_EQ(store.GetTensorSpec(tensor_name), nullptr);
+}
+
+TEST(MetaStoreTest, DeregisterShards_MultipleTensorsInSingleCall_CleansUpAll) {
+  MetaStore store;
+  const NodeId owner_node = GenerateUUID();
+
+  // Register shards for three tensors
+  auto shard_a = store.RegisterTensorShard(
+      Make1DShardSpec("tensor_a", 100, 0, 100), owner_node);
+  auto shard_b = store.RegisterTensorShard(
+      Make1DShardSpec("tensor_b", 200, 0, 200), owner_node);
+  auto shard_c = store.RegisterTensorShard(
+      Make1DShardSpec("tensor_c", 50, 0, 50), owner_node);
+  ASSERT_NE(shard_a, nullptr);
+  ASSERT_NE(shard_b, nullptr);
+  ASSERT_NE(shard_c, nullptr);
+
+  // Deregister tensor_a and tensor_c in a single call
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister["tensor_a"] = {shard_a->id};
+  to_deregister["tensor_c"] = {shard_c->id};
+  store.DeregisterShards(to_deregister);
+
+  // tensor_a and tensor_c should be gone
+  EXPECT_EQ(store.GetNumShardsForTensor("tensor_a"), 0);
+  EXPECT_EQ(store.GetTensorSpec("tensor_a"), nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor("tensor_c"), 0);
+  EXPECT_EQ(store.GetTensorSpec("tensor_c"), nullptr);
+
+  // tensor_b should be unaffected
+  EXPECT_EQ(store.GetNumShardsForTensor("tensor_b"), 1);
+  EXPECT_TRUE(store.AllShardsRegistered("tensor_b"));
+  EXPECT_NE(store.GetTensorSpec("tensor_b"), nullptr);
 }
 //==============================================================================
 }  // namespace setu::test::native

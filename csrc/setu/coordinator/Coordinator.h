@@ -24,6 +24,7 @@
 #include "commons/datatypes/TensorShard.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardSpec.h"
+#include "commons/utils/PendingOperations.h"
 #include "commons/utils/ShardAggregator.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
@@ -84,6 +85,13 @@ struct CopyOperationState {
 };
 using CopyOperationStatePtr = std::shared_ptr<CopyOperationState>;
 
+/// @brief Payload for a deregistration request deferred until all blocking
+/// copy operations complete.
+struct PendingDeregistration {
+  Identity node_agent_identity;
+  RequestId request_id;
+  std::unordered_map<TensorName, std::vector<ShardId>> shards_by_tensor;
+};
 //==============================================================================
 class Coordinator {
  public:
@@ -220,6 +228,9 @@ class Coordinator {
     void HandleGetTensorSpecRequest(
         const Identity& node_agent_identity,
         const setu::commons::messages::GetTensorSpecRequest& request);
+    void HandleDeregisterShardsRequest(
+        const Identity& node_agent_identity,
+        const setu::commons::messages::DeregisterShardsRequest& request);
 
     /// @brief Unified shard submission logic for both Copy and Pull.
     void HandleShardSubmission(const Identity& node_agent_identity,
@@ -254,6 +265,15 @@ class Coordinator {
     /// Maps CopyOperationId to shared CopyOperationState (includes submitters
     /// and completion tracking)
     std::map<CopyOperationId, CopyOperationStatePtr> copy_operations_;
+
+    /// Tracks deregistration requests blocked by in-flight copy operations.
+    /// WaiterId=RequestId, BlockerId=CopyOperationId,
+    /// Payload=PendingDeregistration. As each copy completes, Resolve() is
+    /// called and the deregistration payload is returned when all its
+    /// blockers are resolved.
+    setu::commons::utils::PendingOperations<RequestId, CopyOperationId,
+                                            PendingDeregistration>
+        deregistration_tracker_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};

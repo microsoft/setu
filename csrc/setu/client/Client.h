@@ -73,6 +73,10 @@ class Client {
   [[nodiscard]] std::vector<TensorShardRefPtr> GetShards() const;
 
  private:
+  static constexpr std::int32_t kDeregisterTimeoutMs = 300000;
+
+  [[nodiscard]] bool DeregisterShards();
+
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
   ZmqSocketPtr request_socket_;
