@@ -18,10 +18,6 @@ AVAILABLE_PASSES: list = list(_PASS_REGISTRY.keys())
 def _make_shortest_path_routing(topology: Optional[Topology]):
     from setu._coordinator import ShortestPathRouting
 
-    if topology is None:
-        raise ValueError(
-            "Pass 'shortest_path_routing' requires a topology, but none was provided"
-        )
     return ShortestPathRouting(topology)
 
 
