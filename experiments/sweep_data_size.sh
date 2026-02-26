@@ -28,6 +28,8 @@ DST_SPECS=()
 BEGIN_SIZE="32"
 END_SIZE="8G"
 FACTOR=2
+NCCL_SOCKET_IFNAME=""
+ENV_ARGS=()
 
 # ── Parse args ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -49,6 +51,8 @@ while [[ $# -gt 0 ]]; do
     -b)  BEGIN_SIZE="$2"; shift 2 ;;
     -e)  END_SIZE="$2";   shift 2 ;;
     -f)  FACTOR="$2";     shift 2 ;;
+    --nccl-socket-ifname) NCCL_SOCKET_IFNAME="$2"; shift 2 ;;
+    --env) ENV_ARGS+=("--env" "$2"); shift 2 ;;
     -h|--help)
       cat <<'EOF'
 Usage: sweep_data_size.sh --ray-address ADDR --output-dir DIR --src SPECS --dst SPECS [OPTIONS]
@@ -63,6 +67,8 @@ Options:
   -b SIZE   Begin size (default: 32).  Suffixes: K, M, G.
   -e SIZE   End size   (default: 8G).  Suffixes: K, M, G.
   -f N      Step multiplier (default: 2)
+  --nccl-socket-ifname NAME  NCCL socket interface name (e.g. enp1s0f0)
+  --env KEY=VALUE            Extra env vars for actors (repeatable)
   -h        Show this help
 EOF
       exit 0
@@ -131,6 +137,12 @@ CLUSTER_CMD=(python -m setu.cluster.ray
   --dump-info "$CLUSTER_INFO"
   --ray-address "$RAY_ADDRESS"
 )
+if [[ -n "$NCCL_SOCKET_IFNAME" ]]; then
+  CLUSTER_CMD+=(--nccl-socket-ifname "$NCCL_SOCKET_IFNAME")
+fi
+if [[ ${#ENV_ARGS[@]} -gt 0 ]]; then
+  CLUSTER_CMD+=("${ENV_ARGS[@]}")
+fi
 
 echo "Starting cluster..."
 "${CLUSTER_CMD[@]}" > "$CLUSTER_LOG" 2>&1 &
