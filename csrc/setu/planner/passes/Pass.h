@@ -31,7 +31,7 @@ using setu::planner::hints::HintStore;
 class Pass : public setu::commons::NonCopyableNonMovable {
  public:
   virtual ~Pass() = default;
-  [[nodiscard]] virtual cir::Program Run(const cir::Program& program,
+  [[nodiscard]] virtual cir::Program Run(cir::Program program,
                                          const HintStore& hints) = 0;
   [[nodiscard]] virtual std::string Name() const = 0;
 };
