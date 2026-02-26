@@ -65,55 +65,106 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
+  auto t_start = std::chrono::high_resolution_clock::now();
+
   bool group_started = false;
+  std::uint32_t group_index = 0;
+  std::size_t ops_in_group = 0;
+  std::vector<GroupTimingState> event_states;
+  std::vector<setu::telemetry::NCCLGroupTiming> timings;
 
   for (const auto& instruction : program) {
-    ExecuteInstruction(instruction, group_started);
+    std::visit(
+        [&](const auto& inst) {
+          using T = std::decay_t<decltype(inst)>;
+
+          if constexpr (std::is_same_v<T, InitComm>) {
+            ExecuteInitComm(inst);
+          } else if constexpr (std::is_same_v<T, UseComm>) {
+            ExecuteUseComm(inst);
+          } else if constexpr (std::is_same_v<T, Copy> ||
+                               std::is_same_v<T, Send> ||
+                               std::is_same_v<T, Receive>) {
+            if (!group_started) {
+              NCCL_CHECK(ncclGroupStart());
+              group_started = true;
+              ops_in_group = 0;
+
+              // Record start event on GPU timeline
+              cudaEvent_t start_event;
+              CUDA_CHECK(cudaEventCreate(&start_event));
+              CUDA_CHECK(cudaEventRecord(start_event, stream_));
+              event_states.push_back({start_event, nullptr, 0});
+            }
+            ops_in_group++;
+
+            if constexpr (std::is_same_v<T, Copy>) {
+              ExecuteCopy(inst);
+            } else if constexpr (std::is_same_v<T, Send>) {
+              ExecuteSend(inst);
+            } else {
+              ExecuteReceive(inst);
+            }
+          } else if constexpr (std::is_same_v<T, Barrier>) {
+            if (group_started) {
+              NCCL_CHECK(ncclGroupEnd());
+
+              // Record end event before sync
+              cudaEvent_t end_event;
+              CUDA_CHECK(cudaEventCreate(&end_event));
+              CUDA_CHECK(cudaEventRecord(end_event, stream_));
+              event_states.back().end_event = end_event;
+              event_states.back().ops_in_group = ops_in_group;
+
+              CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+              timings.push_back({group_index, 0.0, ops_in_group});
+              group_started = false;
+              group_index++;
+            }
+          }
+        },
+        instruction.instr);
   }
 
+  // Handle trailing group (no final Barrier)
   if (group_started) {
     NCCL_CHECK(ncclGroupEnd());
+
+    cudaEvent_t end_event;
+    CUDA_CHECK(cudaEventCreate(&end_event));
+    CUDA_CHECK(cudaEventRecord(end_event, stream_));
+    event_states.back().end_event = end_event;
+    event_states.back().ops_in_group = ops_in_group;
+
     CUDA_CHECK(cudaStreamSynchronize(stream_));
+    timings.push_back({group_index, 0.0, ops_in_group});
   }
-}
 
-void NCCLWorker::ExecuteInstruction(const Instruction& instruction,
-                                    bool& group_started) {
-  std::visit(
-      [this, &group_started](const auto& inst) {
-        using T = std::decay_t<decltype(inst)>;
+  // Compute elapsed times from CUDA event pairs
+  for (std::size_t i = 0; i < event_states.size(); ++i) {
+    float ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&ms, event_states[i].start_event,
+                                    event_states[i].end_event));
+    timings[i].elapsed_ms = static_cast<double>(ms);
+    CUDA_CHECK(cudaEventDestroy(event_states[i].start_event));
+    CUDA_CHECK(cudaEventDestroy(event_states[i].end_event));
+  }
 
-        if constexpr (std::is_same_v<T, InitComm>) {
-          ExecuteInitComm(inst);
-        } else if constexpr (std::is_same_v<T, UseComm>) {
-          ExecuteUseComm(inst);
-        } else if constexpr (std::is_same_v<T, Copy>) {
-          if (!group_started) {
-            NCCL_CHECK(ncclGroupStart());
-            group_started = true;
-          }
-          ExecuteCopy(inst);
-        } else if constexpr (std::is_same_v<T, Send>) {
-          if (!group_started) {
-            NCCL_CHECK(ncclGroupStart());
-            group_started = true;
-          }
-          ExecuteSend(inst);
-        } else if constexpr (std::is_same_v<T, Receive>) {
-          if (!group_started) {
-            NCCL_CHECK(ncclGroupStart());
-            group_started = true;
-          }
-          ExecuteReceive(inst);
-        } else if constexpr (std::is_same_v<T, Barrier>) {
-          if (group_started) {
-            NCCL_CHECK(ncclGroupEnd());
-            CUDA_CHECK(cudaStreamSynchronize(stream_));
-            group_started = false;
-          }
-        }
-      },
-      instruction.instr);
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double total_ms =
+      std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+  // Submit metrics if sink is available
+  if (metrics_sink_ && metrics_sink_->IsEnabled()) {
+    setu::telemetry::NCCLWorkerMetrics wm;
+    wm.copy_op_id = current_copy_op_id_;
+    wm.node_id = node_id_;
+    wm.device_rank = device_.LocalDeviceIndex();
+    wm.group_timings = std::move(timings);
+    wm.total_execute_ms = total_ms;
+    metrics_sink_->Submit(setu::telemetry::MetricsMessage{wm});
+  }
 }
 
 //==============================================================================
@@ -128,13 +179,18 @@ void NCCLWorker::ExecuteInitComm(const InitComm& inst) {
   auto part = Participant(node_id_, device_);
   const std::int32_t rank = inst.participant_to_rank.at(part);
 
+  auto t0 = std::chrono::steady_clock::now();
   ncclComm_t comm;
   NCCL_CHECK(ncclCommInitRank(&comm, num_ranks, inst.comm_id, rank));
+  auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count();
 
   comm_cache_[key] = CommCacheEntry{.nccl_comm = comm};
 
   active_comm_key_ = key;
-  LOG_DEBUG("InitComm complete: {} ranks, this rank={}", num_ranks, rank);
+  LOG_INFO("InitComm[{}]: ncclCommInitRank took {}ms, {} ranks, this rank={}",
+           device_, dt, num_ranks, rank);
 }
 
 void NCCLWorker::ExecuteUseComm(const UseComm& inst) {

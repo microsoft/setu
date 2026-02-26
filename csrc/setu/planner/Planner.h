@@ -17,6 +17,7 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "metastore/MetaStore.h"
@@ -24,20 +25,31 @@
 #include "planner/hints/HintStore.h"
 #include "planner/passes/PassManager.h"
 #include "planner/targets/backend.h"
+#include "telemetry/MetricsData.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
 
+using setu::commons::CopyOperationId;
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
 using setu::planner::hints::HintStore;
 using setu::planner::ir::llc::Program;
 
+/// @brief Result of Planner::Compile, containing the Plan and compilation
+/// metrics.
+struct CompileResult {
+  Plan plan;
+  setu::telemetry::CompilationMetrics metrics;
+};
+
 class Planner {
  public:
   Planner(targets::BackendPtr backend, passes::PassManagerPtr pass_manager);
-  [[nodiscard]] Plan Compile(const CopySpec& spec, MetaStore& metastore,
-                             const HintStore& hints);
+  [[nodiscard]] CompileResult Compile(const CopySpec& spec,
+                                      MetaStore& metastore,
+                                      const HintStore& hints,
+                                      CopyOperationId copy_op_id);
 
  private:
   targets::BackendPtr backend_;

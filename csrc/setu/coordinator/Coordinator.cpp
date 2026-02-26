@@ -22,19 +22,34 @@ namespace setu::coordinator {
 //==============================================================================
 using setu::commons::datatypes::CopySpec;
 //==============================================================================
-Coordinator::Coordinator(std::size_t port, PlannerPtr planner)
+Coordinator::Coordinator(std::size_t port, PlannerPtr planner,
+                         std::string metrics_endpoint)
     : port_(port),
+      metrics_endpoint_(std::move(metrics_endpoint)),
       zmq_context_(std::make_shared<zmq::context_t>()),
       planner_(planner) {
+  // Create MetricsSink instances if metrics_endpoint is configured.
+  // Each thread gets its own sink (ZMQ sockets are not thread-safe).
+  setu::telemetry::MetricsSinkPtr handler_sink;
+  setu::telemetry::MetricsSinkPtr executor_sink;
+  if (!metrics_endpoint_.empty()) {
+    handler_sink = std::make_shared<setu::telemetry::MetricsSink>(
+        zmq_context_, metrics_endpoint_);
+    executor_sink = std::make_shared<setu::telemetry::MetricsSink>(
+        zmq_context_, metrics_endpoint_);
+  }
+
   gateway_ = std::make_unique<Gateway>(zmq_context_, port_, inbox_queue_,
                                        outbox_queue_);
 
   auto outbox_notify = [this]() { gateway_->NotifyOutbox(); };
 
-  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                       planner_queue_, outbox_notify);
-  executor_ = std::make_unique<Executor>(planner_queue_, outbox_queue_,
-                                         metastore_, *planner_, outbox_notify);
+  handler_ =
+      std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
+                                planner_queue_, outbox_notify, handler_sink);
+  executor_ =
+      std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_,
+                                 *planner_, outbox_notify, executor_sink);
 }
 
 Coordinator::~Coordinator() {

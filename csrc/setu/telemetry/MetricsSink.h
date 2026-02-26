@@ -18,48 +18,39 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "coordinator/Types.h"
-#include "metastore/MetaStore.h"
-#include "planner/Planner.h"
-#include "telemetry/MetricsSink.h"
+#include "commons/utils/ZmqHelper.h"
+#include "telemetry/MetricsData.h"
+#include "telemetry/NCCLWorkerMetrics.h"
 //==============================================================================
-namespace setu::coordinator {
+namespace setu::telemetry {
 //==============================================================================
-using setu::metastore::MetaStore;
-using setu::planner::Planner;
+using setu::commons::utils::ZmqContextPtr;
+using setu::commons::utils::ZmqSocketPtr;
 //==============================================================================
 
-/// @brief Compiles CopySpecs into execution plans and dispatches them to
-/// NodeAgents.
+/// @brief Non-blocking fire-and-forget metrics submitter over ZMQ PUSH.
 ///
-/// Executor runs on a dedicated thread, pulling PlannerTasks from the planner
-/// queue. For each task it compiles a Plan, fragments it per-node, and sends
-/// ExecuteRequests through the outbox queue.
-class Executor {
+/// Each thread that needs to submit metrics should create its own
+/// MetricsSink instance (ZMQ sockets are not thread-safe).
+/// If the server is down, messages are silently dropped.
+class MetricsSink {
  public:
-  Executor(Queue<PlannerTask>& planner_queue,
-           Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-           Planner& planner, OutboxNotifyFn outbox_notify,
-           setu::telemetry::MetricsSinkPtr metrics_sink);
+  MetricsSink(ZmqContextPtr zmq_context, std::string server_endpoint);
 
-  void Start();
-  void Stop();
+  /// @brief Serialize and send a MetricsMessage. Non-blocking.
+  void Submit(const MetricsMessage& message);
+
+  void SetEnabled(bool enabled);
+  [[nodiscard]] bool IsEnabled() const;
 
  private:
-  void Loop();
-
-  void PushOutbox(OutboxMessage msg);
-
-  Queue<PlannerTask>& planner_queue_;
-  Queue<OutboxMessage>& outbox_queue_;
-  MetaStore& metastore_;
-  Planner& planner_;
-  OutboxNotifyFn outbox_notify_;
-  setu::telemetry::MetricsSinkPtr metrics_sink_;
-
-  std::thread thread_;
-  std::atomic<bool> running_{false};
+  ZmqSocketPtr socket_;
+  std::string endpoint_;
+  std::atomic<bool> enabled_{true};
 };
+
+using MetricsSinkPtr = std::shared_ptr<MetricsSink>;
+
 //==============================================================================
-}  // namespace setu::coordinator
+}  // namespace setu::telemetry
 //==============================================================================

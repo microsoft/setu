@@ -161,6 +161,7 @@ class DispatchManager {
 
     auto state = std::make_shared<CopyOperationState>(completed.spec,
                                                       std::move(submitters));
+    state->start_time = std::chrono::high_resolution_clock::now();
 
     copy_operations_.emplace(copy_op_id, state);
 

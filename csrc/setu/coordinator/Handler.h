@@ -25,6 +25,7 @@
 #include "coordinator/Types.h"
 #include "messaging/Messages.h"
 #include "metastore/MetaStore.h"
+#include "telemetry/MetricsSink.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -50,7 +51,8 @@ class Handler {
  public:
   Handler(Queue<InboxMessage>& inbox_queue, Queue<OutboxMessage>& outbox_queue,
           MetaStore& metastore, Queue<PlannerTask>& planner_queue,
-          OutboxNotifyFn outbox_notify);
+          OutboxNotifyFn outbox_notify,
+          setu::telemetry::MetricsSinkPtr metrics_sink);
 
   void Start();
   void Stop();
@@ -82,6 +84,7 @@ class Handler {
   MetaStore& metastore_;
   Queue<PlannerTask>& planner_queue_;
   OutboxNotifyFn outbox_notify_;
+  setu::telemetry::MetricsSinkPtr metrics_sink_;
 
   DispatchManager dispatch_manager_;
 

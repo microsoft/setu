@@ -79,6 +79,10 @@ void Worker::CloseZmqSockets() {
   if (socket_) socket_->close();
 }
 
+void Worker::SetMetricsSink(MetricsSinkPtr sink) {
+  metrics_sink_ = std::move(sink);
+}
+
 void Worker::WorkerLoop() {
   LOG_DEBUG("WorkerLoop started on device {}", device_);
 
@@ -86,10 +90,19 @@ void Worker::WorkerLoop() {
   while (worker_running_) {
     // Receive ExecuteProgramRequest from NodeAgent
     auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
+    current_copy_op_id_ = request.copy_op_id;
     const auto& program = request.program;
+
+    auto t0 = std::chrono::steady_clock::now();
 
     // Execute each instruction in the program
     this->Execute(program);
+
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - t0)
+                  .count();
+    LOG_INFO("Worker[{}]: Execute took {}us, {} instructions", device_, dt,
+             program.size());
 
     // Send acknowledgment back to NodeAgent
     ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);

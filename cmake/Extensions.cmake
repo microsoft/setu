@@ -111,6 +111,9 @@ file(GLOB_RECURSE PLANNER_SRC "csrc/setu/planner/*.cpp")
 define_setu_static(_planner_static "${PLANNER_SRC}" "setu_common_objects"
                    "${NCCL_LIBRARY};_metastore_static")
 
+file(GLOB_RECURSE TELEMETRY_SRC "csrc/setu/telemetry/*.cpp")
+define_setu_static(_telemetry_static "${TELEMETRY_SRC}" "setu_common_objects" "")
+
 file(GLOB_RECURSE MESSAGES_SRC "csrc/setu/messaging/*.cpp")
 define_setu_static(_messaging_static "${MESSAGES_SRC}" "setu_common_objects" "_planner_static")
 
@@ -120,15 +123,15 @@ define_setu_static(_client_static "${CLIENT_SRC}" "setu_common_objects" "_messag
 
 file(GLOB_RECURSE NODE_MANAGER_SRC "csrc/setu/node_manager/*.cpp")
 define_setu_extension(_node_manager "${NODE_MANAGER_SRC}" "setu_common_objects"
-                      "_kernels_common;_messaging_static;_planner_static")
+                      "_kernels_common;_messaging_static;_planner_static;_telemetry_static")
 define_setu_static(_node_manager_static "${NODE_MANAGER_SRC}" "setu_common_objects"
-                   "_kernels_common;_messaging_static;_planner_static")
+                   "_kernels_common;_messaging_static;_planner_static;_telemetry_static")
 
 file(GLOB_RECURSE COORDINATOR_SRC "csrc/setu/coordinator/*.cpp")
 define_setu_extension(_coordinator "${COORDINATOR_SRC}" "setu_common_objects"
-                      "_messaging_static;_metastore_static;_planner_static")
+                      "_messaging_static;_metastore_static;_planner_static;_telemetry_static")
 define_setu_static(_coordinator_static "${COORDINATOR_SRC}" "setu_common_objects"
-                   "_messaging_static;_metastore_static;_planner_static")
+                   "_messaging_static;_metastore_static;_planner_static;_telemetry_static")
 target_include_directories(_coordinator PRIVATE ${NCCL_INCLUDE_DIR})
 target_include_directories(_coordinator_static PRIVATE ${NCCL_INCLUDE_DIR})
 

@@ -91,7 +91,8 @@ class NodeAgent {
  public:
   NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
             const std::vector<Device>& devices,
-            std::string lock_base_dir = GetDefaultLockBaseDir());
+            std::string lock_base_dir = GetDefaultLockBaseDir(),
+            std::string metrics_endpoint = "");
   ~NodeAgent();
 
   void Start();
@@ -264,6 +265,8 @@ class NodeAgent {
 
   TensorShardsConcurrentMap shard_id_to_tensor_;
   std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
+  std::string
+      metrics_endpoint_;  ///< Telemetry server endpoint (empty = disabled)
 };
 //==============================================================================
 }  // namespace setu::node_manager

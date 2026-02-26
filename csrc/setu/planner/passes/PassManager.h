@@ -20,6 +20,7 @@
 //==============================================================================
 #include "commons/ClassTraits.h"
 #include "planner/passes/Pass.h"
+#include "telemetry/MetricsData.h"
 //==============================================================================
 namespace setu::planner::passes {
 //==============================================================================
@@ -30,6 +31,13 @@ class PassManager : public setu::commons::NonCopyable {
   void AddPass(PassPtr pass);
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const HintStore& hints) const;
+
+  /// @brief Run all passes with per-pass timing.
+  /// Returns the transformed program and a vector of PassTiming records.
+  [[nodiscard]] std::pair<cir::Program,
+                          std::vector<setu::telemetry::PassTiming>>
+  RunTimed(cir::Program program, const HintStore& hints) const;
+
   [[nodiscard]] std::size_t NumPasses() const;
 
  private:

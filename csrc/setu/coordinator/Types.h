@@ -76,6 +76,9 @@ struct CopyOperationState {
 
   std::size_t completed_responses{0};  // Handler-thread only (not shared)
 
+  /// @brief Timestamp when the copy operation was first submitted.
+  std::chrono::high_resolution_clock::time_point start_time;
+
   explicit CopyOperationState(CopySpec spec_param,
                               std::vector<Identity> submitters_param)
       : spec(std::move(spec_param)), submitters(std::move(submitters_param)) {}

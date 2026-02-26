@@ -67,12 +67,13 @@ void InitWorkerPybindClass(py::module_& m) {
 void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
       .def(py::init<NodeId, std::size_t, std::string,
-                    const std::vector<Device>&, std::string>(),
+                    const std::vector<Device>&, std::string, std::string>(),
            py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
            py::arg("devices"),
            py::arg("lock_base_dir") = NodeAgent::GetDefaultLockBaseDir(),
+           py::arg("metrics_endpoint") = "",
            "Create a NodeAgent with specified port, coordinator endpoint, "
-           "devices, and lock directory")
+           "devices, lock directory, and optional metrics endpoint")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
       .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop");
 }

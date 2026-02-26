@@ -37,12 +37,14 @@ using setu::commons::utils::AggregationParticipant;
 Handler::Handler(Queue<InboxMessage>& inbox_queue,
                  Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
                  Queue<PlannerTask>& planner_queue,
-                 OutboxNotifyFn outbox_notify)
+                 OutboxNotifyFn outbox_notify,
+                 setu::telemetry::MetricsSinkPtr metrics_sink)
     : inbox_queue_(inbox_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_queue_(planner_queue),
-      outbox_notify_(std::move(outbox_notify)) {}
+      outbox_notify_(std::move(outbox_notify)),
+      metrics_sink_(std::move(metrics_sink)) {}
 
 void Handler::PushOutbox(OutboxMessage msg) {
   outbox_queue_.push(std::move(msg));
@@ -290,6 +292,19 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
 
   // All participants completed — notify submitters
   const auto& state = *completed_state;
+
+  // Submit E2E timing metrics
+  if (metrics_sink_ && metrics_sink_->IsEnabled()) {
+    double e2e_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - state->start_time)
+            .count();
+    setu::telemetry::E2EMetrics e2e;
+    e2e.copy_op_id = response.copy_op_id;
+    e2e.e2e_time_ms = e2e_ms;
+    metrics_sink_->Submit(setu::telemetry::MetricsMessage{e2e});
+  }
+
   for (const auto& submitter_identity : state->submitters) {
     CopyOperationFinishedRequest finish_req(response.copy_op_id);
     PushOutbox(OutboxMessage{submitter_identity, finish_req});

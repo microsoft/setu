@@ -33,6 +33,7 @@
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
+using setu::commons::CopyOperationId;
 using setu::commons::NodeId;
 using setu::commons::datatypes::Device;
 //==============================================================================
@@ -90,7 +91,8 @@ void InitPlannerClassPybind(py::module_& m) {
           "compile",
           [](Planner& self, const CopySpec& spec, MetaStore& metastore) {
             hints::HintStore empty_hints;
-            return self.Compile(spec, metastore, empty_hints);
+            CopyOperationId dummy_id{};
+            return self.Compile(spec, metastore, empty_hints, dummy_id).plan;
           },
           py::arg("spec"), py::arg("metastore"),
           "Compile a copy spec into a plan (with no hints)");

@@ -34,6 +34,22 @@ cir::Program PassManager::Run(cir::Program program,
   return program;
 }
 //==============================================================================
+std::pair<cir::Program, std::vector<setu::telemetry::PassTiming>>
+PassManager::RunTimed(cir::Program program, const HintStore& hints) const {
+  std::vector<setu::telemetry::PassTiming> timings;
+  timings.reserve(passes_.size());
+  for (const auto& pass : passes_) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    program = pass->Run(std::move(program), hints);
+    double elapsed_ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::high_resolution_clock::now() - t0)
+                            .count();
+    timings.push_back({pass->Name(), elapsed_ms});
+    LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
+  }
+  return {std::move(program), std::move(timings)};
+}
+//==============================================================================
 std::size_t PassManager::NumPasses() const { return passes_.size(); }
 //==============================================================================
 }  // namespace setu::planner::passes

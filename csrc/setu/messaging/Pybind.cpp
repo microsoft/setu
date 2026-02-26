@@ -25,6 +25,7 @@
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::CopyOperationId;
 using setu::commons::RequestId;
 using setu::commons::datatypes::TensorShardMetadata;
 using setu::commons::datatypes::TensorShardRef;
@@ -83,8 +84,11 @@ void InitRegisterTensorShardNodeAgentResponsePybind(py::module_& m) {
 void InitExecuteProgramRequestPybind(py::module_& m) {
   py::class_<ExecuteProgramRequest>(m, "ExecuteProgramRequest",
                                     py::module_local())
-      .def(py::init<Program>(), py::arg("program"),
-           "Create an ExecuteProgramRequest with a program")
+      .def(py::init<CopyOperationId, Program>(), py::arg("copy_op_id"),
+           py::arg("program"),
+           "Create an ExecuteProgramRequest with a copy_op_id and program")
+      .def_readonly("copy_op_id", &ExecuteProgramRequest::copy_op_id,
+                    "The copy operation ID")
       .def_readonly("program", &ExecuteProgramRequest::program,
                     "The program to execute")
       .def("__str__", &ExecuteProgramRequest::ToString)

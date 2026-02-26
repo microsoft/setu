@@ -27,11 +27,47 @@ Planner::Planner(targets::BackendPtr backend,
   ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
 //==============================================================================
-Plan Planner::Compile(const CopySpec& spec, MetaStore& metastore,
-                      const HintStore& hints) {
+CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
+                               const HintStore& hints,
+                               CopyOperationId copy_op_id) {
+  setu::telemetry::CompilationMetrics cm;
+  cm.copy_op_id = copy_op_id;
+
+  auto t_total = std::chrono::high_resolution_clock::now();
+
+  // Stage 1: CopySpec -> CIR
+  auto t0 = std::chrono::high_resolution_clock::now();
   auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
-  cir = pass_manager_->Run(std::move(cir), hints);
-  return backend_->Run(cir);
+  double stage1_ms = std::chrono::duration<double, std::milli>(
+                         std::chrono::high_resolution_clock::now() - t0)
+                         .count();
+  cm.pass_timings.push_back({"CopySpecToCIR", stage1_ms});
+
+  // Stage 2: Optimization passes (timed individually)
+  auto [optimized_cir, pass_timings] =
+      pass_manager_->RunTimed(std::move(cir), hints);
+  cm.pass_timings.insert(cm.pass_timings.end(), pass_timings.begin(),
+                         pass_timings.end());
+
+  // Stage 3: Backend lowering
+  t0 = std::chrono::high_resolution_clock::now();
+  Plan plan = backend_->Run(optimized_cir);
+  double stage3_ms = std::chrono::duration<double, std::milli>(
+                         std::chrono::high_resolution_clock::now() - t0)
+                         .count();
+  cm.pass_timings.push_back({"Backend", stage3_ms});
+
+  cm.total_compile_time_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::high_resolution_clock::now() - t_total)
+          .count();
+  cm.num_participants = static_cast<std::uint32_t>(plan.participants.size());
+  for (const auto& [p, prog] : plan.program) {
+    cm.participant_instruction_counts.emplace_back(
+        p.ToString(), static_cast<std::uint32_t>(prog.size()));
+  }
+
+  return {std::move(plan), std::move(cm)};
 }
 //==============================================================================
 }  // namespace setu::planner

@@ -28,12 +28,14 @@ using setu::planner::Plan;
 //==============================================================================
 Executor::Executor(Queue<PlannerTask>& planner_queue,
                    Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-                   Planner& planner, OutboxNotifyFn outbox_notify)
+                   Planner& planner, OutboxNotifyFn outbox_notify,
+                   setu::telemetry::MetricsSinkPtr metrics_sink)
     : planner_queue_(planner_queue),
       outbox_queue_(outbox_queue),
       metastore_(metastore),
       planner_(planner),
-      outbox_notify_(std::move(outbox_notify)) {}
+      outbox_notify_(std::move(outbox_notify)),
+      metrics_sink_(std::move(metrics_sink)) {}
 
 void Executor::PushOutbox(OutboxMessage msg) {
   outbox_queue_.push(std::move(msg));
@@ -65,9 +67,15 @@ void Executor::Loop() {
 
       LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-      auto t_compile_start = std::chrono::steady_clock::now();
-      Plan plan = planner_.Compile(task.copy_spec, metastore_, task.hints);
-      auto t_compile_end = std::chrono::steady_clock::now();
+      auto result = planner_.Compile(task.copy_spec, metastore_, task.hints,
+                                     task.copy_op_id);
+      Plan plan = std::move(result.plan);
+
+      // Submit compilation metrics
+      if (metrics_sink_ && metrics_sink_->IsEnabled()) {
+        metrics_sink_->Submit(
+            setu::telemetry::MetricsMessage{std::move(result.metrics)});
+      }
 
       LOG_DEBUG("Compiled plan:\n{}", plan);
 
@@ -93,11 +101,8 @@ void Executor::Loop() {
       auto to_us = [](auto d) {
         return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
       };
-      LOG_INFO(
-          "Executor: copy_op_id={}, compile={}us, fragment+dispatch={}us, "
-          "total={}us",
-          task.copy_op_id, to_us(t_compile_end - t_compile_start),
-          to_us(t_end - t_compile_end), to_us(t_end - t_after_dequeue));
+      LOG_INFO("Executor: copy_op_id={}, total={}us", task.copy_op_id,
+               to_us(t_end - t_after_dequeue));
 
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;

@@ -29,6 +29,7 @@
 #include "coordinator/Types.h"
 #include "metastore/MetaStore.h"
 #include "planner/Planner.h"
+#include "telemetry/MetricsSink.h"
 //==============================================================================
 namespace setu::coordinator {
 //==============================================================================
@@ -51,7 +52,8 @@ using setu::planner::PlannerPtr;
 /// communicating through thread-safe queues.
 class Coordinator {
  public:
-  Coordinator(std::size_t port, PlannerPtr planner);
+  Coordinator(std::size_t port, PlannerPtr planner,
+              std::string metrics_endpoint = "");
   ~Coordinator();
 
   std::optional<TensorShardMetadata> RegisterTensorShard(
@@ -66,6 +68,7 @@ class Coordinator {
 
  private:
   std::size_t port_;
+  std::string metrics_endpoint_;
 
   std::shared_ptr<zmq::context_t> zmq_context_;
 
