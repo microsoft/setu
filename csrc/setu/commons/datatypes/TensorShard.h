@@ -129,6 +129,9 @@ using TensorShardPtr = std::shared_ptr<TensorShard>;
 
 /// @brief Map of shard IDs to TensorShard objects
 using TensorShardsMap = std::unordered_map<ShardId, TensorShardPtr>;
+
+/// @brief Concurrent map for looking up tensor shards by shard ID
+using TensorShardsConcurrentMap = ConcurrentMap<ShardId, TensorShardPtr>;
 //==============================================================================
 }  // namespace setu::commons::datatypes
 //==============================================================================

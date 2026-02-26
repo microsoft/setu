@@ -68,8 +68,6 @@ using TensorIndicesBitset = datatypes::IndexRangeSet;
 using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndicesBitset>;
 /// @brief Unique identifier for a tensor shard (UUID)
 using ShardId = boost::uuids::uuid;
-/// @brief Lookup tensor shard given shard id
-using TensorShardsConcurrentMap = ConcurrentMap<ShardId, torch::Tensor>;
 /// @brief Unique identifier for a copy operation (UUID)
 using CopyOperationId = boost::uuids::uuid;
 /// @brief Unique identifier for a request (UUID)

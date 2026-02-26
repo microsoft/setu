@@ -17,8 +17,10 @@
 #include "node_manager/NodeAgent.h"
 //==============================================================================
 #include "commons/Logging.h"
+#include "commons/datatypes/TensorShardHandle.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
+#include "planner/ir/llc/ShardAccess.h"
 #include "node_manager/worker/NCCLWorker.h"
 #include "planner/RegisterSet.h"
 #include "telemetry/MetricsSink.h"
@@ -36,8 +38,13 @@ using setu::commons::datatypes::TensorDimMap;
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
+using setu::commons::datatypes::TensorShardPtr;
+using setu::commons::datatypes::TensorShardReadHandle;
+using setu::commons::datatypes::TensorShardReadHandlePtr;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpecPtr;
+using setu::commons::datatypes::TensorShardWriteHandle;
+using setu::commons::datatypes::TensorShardWriteHandlePtr;
 using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
@@ -74,10 +81,62 @@ using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
 using setu::planner::Plan;
 using setu::planner::RegisterSet;
+using setu::planner::ir::llc::GetShardAccess;
 using setu::planner::ir::llc::Instruction;
 using setu::planner::ir::llc::Program;
+using setu::planner::ir::llc::ShardAccessMap;
+using setu::planner::ir::llc::ShardAccessMode;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
+//==============================================================================
+
+/// @brief Holds all acquired shard lock handles for a plan execution.
+/// Handles are released automatically when this struct goes out of scope.
+struct ProgramLockGuard {
+  std::vector<TensorShardReadHandlePtr> read_handles;
+  std::vector<TensorShardWriteHandlePtr> write_handles;
+};
+
+/// @brief Acquires read/write lock handles for all shards referenced across
+/// all programs in a plan.
+[[nodiscard]] static ProgramLockGuard AcquirePlanLocks(
+    const setu::planner::Plan& plan,
+    const TensorShardsConcurrentMap& shard_map) {
+  // Merge shard access across all programs in the plan
+  ShardAccessMap plan_access_map;
+  for (const auto& [participant, program] : plan.program) {
+    for (const auto& [shard_id, mode] : GetShardAccess(program)) {
+      if (mode == ShardAccessMode::kWrite) {
+        plan_access_map[shard_id] = ShardAccessMode::kWrite;
+      } else {
+        plan_access_map.try_emplace(shard_id, ShardAccessMode::kRead);
+      }
+    }
+  }
+
+  // Acquire locks in sorted order (ShardAccessMap is sorted by ShardId)
+  ProgramLockGuard guard;
+  for (const auto& [shard_id, mode] : plan_access_map) {
+    TensorShardPtr shard_ptr = nullptr;
+    bool found = shard_map.visit(shard_id, [&shard_ptr](const auto& entry) {
+      shard_ptr = entry.second;
+    });
+    ASSERT_VALID_RUNTIME(found, "AcquirePlanLocks: shard {} not found in map",
+                         shard_id);
+
+    if (mode == ShardAccessMode::kWrite) {
+      guard.write_handles.push_back(
+          std::make_shared<TensorShardWriteHandle>(shard_ptr));
+    } else {
+      guard.read_handles.push_back(
+          std::make_shared<TensorShardReadHandle>(shard_ptr));
+    }
+  }
+
+  LOG_DEBUG("Acquired {} read + {} write shard locks for plan",
+            guard.read_handles.size(), guard.write_handles.size());
+  return guard;
+}
 //==============================================================================
 // NodeAgent Implementation
 //==============================================================================
@@ -427,7 +486,7 @@ void NodeAgent::Handler::HandleGetTensorHandleRequest(
 
   bool found_allocated = shard_id_to_tensor_.visit(
       request.shard_id, [&tensor_ipc_spec](const auto& entry) {
-        tensor_ipc_spec.emplace(PrepareTensorIPCSpec(entry.second));
+        tensor_ipc_spec.emplace(PrepareTensorIPCSpec(entry.second->tensor));
       });
 
   if (!found_allocated) {
@@ -601,7 +660,9 @@ void NodeAgent::Handler::AllocateTensor(
       torch::TensorOptions().dtype(spec.dtype).device(spec.device.torch_device);
   torch::Tensor tensor = torch::empty(shape, options);
 
-  shard_id_to_tensor_.insert_or_assign(shard_metadata.id, tensor);
+  auto shard = std::make_shared<TensorShard>(shard_metadata, std::move(tensor),
+                                             lock_base_dir_);
+  shard_id_to_tensor_.insert_or_assign(shard_metadata.id, std::move(shard));
 
   LOG_DEBUG("Successfully allocated shard {} with shape {} on device {}",
             shard_metadata.id, shape, spec.device.torch_device.str());
@@ -746,9 +807,14 @@ void NodeAgent::Executor::Loop() {
       auto [copy_op_id, plan] = executor_queue_.pull();
       auto t_dequeued = std::chrono::steady_clock::now();
 
-      // For each worker program in the plan, send it to the corresponding
-      // worker. We send all programs first so workers can execute in parallel,
-      // then collect all responses.
+      for (auto& [participant, program] : plan.program) {
+        EmbellishProgram(program);
+      }
+
+      // Acquire shard locks for all programs in the plan.
+      auto lock_guard = AcquirePlanLocks(plan, shard_id_to_tensor_);
+
+      // Send programs to workers
       std::vector<std::int32_t> sent_device_ranks;
       for (auto& [participant, program] : plan.program) {
         auto device_rank = participant.LocalDeviceIndex();
@@ -757,12 +823,7 @@ void NodeAgent::Executor::Loop() {
                              "No socket found for device_rank: {}",
                              device_rank);
 
-        // Populate device ptrs for instructions
-        EmbellishProgram(program);
-
         LOG_DEBUG("Embellished program: {} {}", participant, program);
-
-        // Send ExecuteProgramRequest to worker
         LOG_DEBUG("Sending program with {} instructions to worker {}",
                   program.size(), device_rank);
         ExecuteProgramRequest request(copy_op_id, program);
@@ -781,7 +842,7 @@ void NodeAgent::Executor::Loop() {
 
       auto t_workers_done = std::chrono::steady_clock::now();
 
-      // Notify coordinator that execution is complete (async, fire-and-forget)
+      // Notify coordinator that execution is complete
       ExecuteResponse response(RequestId{}, copy_op_id, ErrorCode::kSuccess);
 
       auto to_us = [](auto d) {
@@ -807,8 +868,9 @@ void NodeAgent::Executor::EmbellishProgram(Program& program) {
       const auto& shard = ref.AsShard();
       DevicePtr result = nullptr;
       bool found = this->shard_id_to_tensor_.visit(
-          shard.shard_id,
-          [&result](const auto& entry) { result = entry.second.data_ptr(); });
+          shard.shard_id, [&result](const auto& entry) {
+            result = entry.second->GetDevicePtr();
+          });
       ASSERT_VALID_RUNTIME(
           found,
           "Embellish failed: Tensor: {}, Shard: {} not found in "
