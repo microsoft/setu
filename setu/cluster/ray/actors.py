@@ -46,11 +46,12 @@ class CoordinatorActor:
     to connect to.
     """
 
-    def __init__(self, metrics_endpoint: str = "") -> None:
+    def __init__(self, metrics_endpoint: str = "", register_size: int = 0) -> None:
         self._coordinator = None
         self._port: int = 0
         self._ip_address: str = ""
         self._metrics_endpoint = metrics_endpoint
+        self._register_size = register_size
 
     def start(self, passes=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
@@ -72,7 +73,21 @@ class CoordinatorActor:
         pass_manager = PassManager()
         for p in resolve_passes(passes):
             pass_manager.add_pass(p)
-        backend = NCCLBackend()
+
+        if self._register_size > 0:
+            from setu._coordinator import RegisterSet
+            from setu._commons.datatypes import Device
+
+            # Discover local devices and build per-device register sets
+            register_sets = {}
+            num_gpus = torch.cuda.device_count()
+            for i in range(num_gpus):
+                dev = Device(torch_device=torch.device(f"cuda:{i}"))
+                register_sets[dev] = RegisterSet.uniform(1, self._register_size)
+            backend = NCCLBackend(register_sets)
+        else:
+            backend = NCCLBackend()
+
         planner = Planner(backend, pass_manager)
         self._coordinator = Coordinator(
             self._port, planner, self._metrics_endpoint
@@ -111,10 +126,14 @@ class NodeAgentActor:
     """
 
     def __init__(
-        self, coordinator_endpoint: str, metrics_endpoint: str = ""
+        self,
+        coordinator_endpoint: str,
+        metrics_endpoint: str = "",
+        register_size: int = 0,
     ) -> None:
         self._coordinator_endpoint = coordinator_endpoint
         self._metrics_endpoint = metrics_endpoint
+        self._register_size = register_size
         self._node_agent = None
         self._port: int = 0
         self._ip_address: str = ""
@@ -141,13 +160,16 @@ class NodeAgentActor:
             for i in range(self._num_gpus)
         ]
 
-        self._node_agent = NodeAgent(
+        kwargs = dict(
             node_id=self._node_id,
             port=self._port,
             coordinator_endpoint=self._coordinator_endpoint,
             devices=devices,
             metrics_endpoint=self._metrics_endpoint,
         )
+        if self._register_size > 0:
+            kwargs["register_size"] = self._register_size
+        self._node_agent = NodeAgent(**kwargs)
         self._node_agent.start()
 
         endpoint = f"tcp://{self._ip_address}:{self._port}"

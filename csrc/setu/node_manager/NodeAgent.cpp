@@ -20,6 +20,7 @@
 #include "commons/utils/Comm.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "node_manager/worker/NCCLWorker.h"
+#include "planner/RegisterSet.h"
 #include "telemetry/MetricsSink.h"
 //==============================================================================
 namespace setu::node_manager {
@@ -70,6 +71,7 @@ using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
 using setu::planner::Plan;
+using setu::planner::RegisterSet;
 using setu::planner::ir::llc::Instruction;
 using setu::planner::ir::llc::Program;
 //==============================================================================
@@ -81,20 +83,24 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
                      std::string coordinator_endpoint,
                      const std::vector<Device>& devices,
                      std::string lock_base_dir,
-                     std::string metrics_endpoint)
+                     std::string metrics_endpoint,
+                     std::size_t register_size)
     : node_id_(node_id),
       port_(port),
       coordinator_endpoint_(std::move(coordinator_endpoint)),
       devices_(devices),
       zmq_context_(std::make_shared<zmq::context_t>()),
       lock_base_dir_(std::move(lock_base_dir)),
-      metrics_endpoint_(std::move(metrics_endpoint)) {
+      metrics_endpoint_(std::move(metrics_endpoint)),
+      register_size_(register_size) {
   // Create workers and connect them via inproc sockets on the shared context
   for (const auto& device : devices_) {
     auto device_rank = device.LocalDeviceIndex();
     auto endpoint =
         std::format("inproc://node_{}_worker_{}", node_id_, device_rank);
-    auto worker = std::make_unique<worker::NCCLWorker>(node_id_, device);
+    auto worker = std::make_unique<worker::NCCLWorker>(
+        node_id_, device,
+        RegisterSet::Uniform(1, register_size_));
     worker->Connect(zmq_context_, endpoint);
 
     // Set up telemetry sink for each worker (each gets its own ZMQ socket)

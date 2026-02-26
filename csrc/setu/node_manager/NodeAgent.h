@@ -31,6 +31,7 @@
 #include "commons/utils/ZmqHelper.h"
 #include "messaging/Messages.h"
 #include "node_manager/worker/Worker.h"
+#include "planner/Constants.h"
 #include "planner/Planner.h"
 //==============================================================================
 namespace setu::node_manager {
@@ -92,7 +93,8 @@ class NodeAgent {
   NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
             const std::vector<Device>& devices,
             std::string lock_base_dir = GetDefaultLockBaseDir(),
-            std::string metrics_endpoint = "");
+            std::string metrics_endpoint = "",
+            std::size_t register_size = setu::planner::kRegisterSize);
   ~NodeAgent();
 
   void Start();
@@ -266,6 +268,7 @@ class NodeAgent {
   TensorShardsConcurrentMap shard_id_to_tensor_;
   std::string lock_base_dir_;       ///< Directory for file-based locks (IPC)
   std::string metrics_endpoint_;    ///< Telemetry server endpoint (empty = disabled)
+  std::size_t register_size_;       ///< Per-register buffer size in bytes
 };
 //==============================================================================
 }  // namespace setu::node_manager

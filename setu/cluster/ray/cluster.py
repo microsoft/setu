@@ -164,6 +164,7 @@ class Cluster(ClusterProto):
         env_vars: Optional[Dict[str, str]] = None,
         passes: Optional[List[str]] = None,
         metrics_endpoint: str = "",
+        register_size: int = 0,
     ) -> None:
         self._coordinator_actor: Optional[ray.actor.ActorHandle] = None
         self._node_agent_actors: List[ray.actor.ActorHandle] = []
@@ -173,6 +174,7 @@ class Cluster(ClusterProto):
         self._passes = passes
         self._metrics_endpoint = metrics_endpoint
         self._metrics_server: Optional[MetricsServer] = None
+        self._register_size = register_size
 
     @property
     def cluster_info(self) -> Optional[ClusterInfo]:
@@ -240,7 +242,10 @@ class Cluster(ClusterProto):
             name=COORDINATOR_ACTOR_NAME,
             namespace=COORDINATOR_ACTOR_NAMESPACE,
             **coordinator_options,
-        ).remote(metrics_endpoint=metrics_connect_endpoint)
+        ).remote(
+            metrics_endpoint=metrics_connect_endpoint,
+            register_size=self._register_size,
+        )
 
         coordinator_result = ray.get(
             self._coordinator_actor.start.remote(passes=self._passes)
@@ -262,7 +267,11 @@ class Cluster(ClusterProto):
                 node_options["runtime_env"] = {"env_vars": self._env_vars}
             actor = NodeAgentActor.options(
                 **node_options,
-            ).remote(coordinator_endpoint, metrics_endpoint=metrics_connect_endpoint)
+            ).remote(
+                coordinator_endpoint,
+                metrics_endpoint=metrics_connect_endpoint,
+                register_size=self._register_size,
+            )
             self._node_agent_actors.append(actor)
 
         # Start all NodeAgentActors in parallel

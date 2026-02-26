@@ -60,7 +60,19 @@ void InitTopoPybind(py::module_& m) {
       .def_readonly("total_latency_us", &Path::total_latency_us)
       .def_readonly("bottleneck_bandwidth_gbps",
                     &Path::bottleneck_bandwidth_gbps)
-      .def("__repr__", &Path::ToString);
+      .def("__repr__", &Path::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const Path& p) {  // __getstate__
+            return py::make_tuple(p.hops, p.links);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for Path");
+            }
+            return Path(t[0].cast<std::vector<Participant>>(),
+                        t[1].cast<std::vector<Link>>());
+          }));
 
   py::class_<Topology, TopologyPtr>(m, "Topology")
       .def(py::init<>(), "Create an empty topology")

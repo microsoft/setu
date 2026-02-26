@@ -41,6 +41,7 @@ def _source_body(
     dst_name,
     selections,
     n_copy_rounds,
+    hints=None,
 ):
     """Register a source shard, fill with init_value, then run N copy rounds.
 
@@ -103,7 +104,7 @@ def _source_body(
                     src_selection = src_selection.where(dim_name, indices)
                     dst_selection = dst_selection.where(dim_name, indices)
 
-            copy_op_id = client.copy(src_selection, dst_selection)
+            copy_op_id = client.copy(src_selection, dst_selection, hints=hints)
             assert copy_op_id is not None, "Copy operation returned None"
             logger.debug(
                 "%s: round %d, submitted copy op %s, waiting...",
@@ -141,6 +142,7 @@ def _dest_body(
     value_to_match,
     selections,
     n_copy_rounds,
+    hints=None,
 ):
     """Register a dest shard, then run N copy rounds with verification on the last.
 
@@ -184,9 +186,9 @@ def _dest_body(
                 dst_selection = dst_selection.where(dim_name, indices)
 
         if copy_mode == CopyMode.PULL:
-            copy_op_id = client.pull(src_selection, dst_selection)
+            copy_op_id = client.pull(src_selection, dst_selection, hints=hints)
         else:
-            copy_op_id = client.copy(src_selection, dst_selection)
+            copy_op_id = client.copy(src_selection, dst_selection, hints=hints)
 
         assert copy_op_id is not None, "Copy operation returned None"
         logger.debug(
@@ -294,6 +296,7 @@ def run_experiment(
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
     metrics_http_url: str = "",
+    hints: Optional[List] = None,
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -395,6 +398,7 @@ def run_experiment(
                 dst_name=dst.name,
                 selections=selections,
                 n_copy_rounds=n_total_rounds,
+                hints=hints,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1
@@ -410,6 +414,7 @@ def run_experiment(
                 value_to_match=init_value,
                 selections=selections,
                 n_copy_rounds=n_total_rounds,
+                hints=hints,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1
