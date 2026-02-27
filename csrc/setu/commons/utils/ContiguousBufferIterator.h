@@ -23,7 +23,7 @@
 //==============================================================================
 namespace setu::commons::utils {
 using setu::commons::TensorDimName;
-using setu::commons::TensorIndicesBitset;
+using setu::commons::TensorIndices;
 using setu::commons::datatypes::TensorSelectionPtr;
 //==============================================================================
 struct ContiguousBufferRange {
@@ -64,9 +64,6 @@ class ContiguousBufferRangeView {
 
  private:
   std::vector<ContiguousBufferRange> ranges_;
-
-  static std::vector<ContiguousBufferRange> BitsetToRanges(
-      const TensorIndicesBitset& bitset);
 
   void ComputeRanges(const std::vector<TensorDimName>& dim_names,
                      TensorSelectionPtr selection);

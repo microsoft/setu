@@ -54,7 +54,8 @@ cir::Program ShortestPathRouting::Run(const cir::Program& program,
 
             // shortest path is the same as direct transfer
             // no additional hops required
-            if (path.hops.size() == 2) {
+            // <= 2 because self-copies have 1 hop, direct transfers have 2
+            if (path.hops.size() <= 2) {
               rw.CloneOp(i);
               return;
             }

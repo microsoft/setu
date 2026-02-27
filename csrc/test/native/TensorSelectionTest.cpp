@@ -29,7 +29,7 @@ namespace setu::test::native {
 //==============================================================================
 using setu::commons::GenerateUUID;
 using setu::commons::NodeId;
-using setu::commons::TensorIndicesBitset;
+using setu::commons::TensorIndices;
 using setu::commons::TensorIndicesMap;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
@@ -42,31 +42,26 @@ using setu::commons::datatypes::TensorShardSpec;
 //==============================================================================
 namespace {
 //==============================================================================
-// Helper to create a bitset with specific indices set
-TensorIndicesBitset MakeBitset(std::size_t size,
-                               const std::vector<std::size_t>& selected) {
-  TensorIndicesBitset bitset(size);
+// Helper to create an IndexRangeSet with specific indices set
+TensorIndices MakeBitset(std::size_t size,
+                         const std::vector<std::size_t>& selected) {
+  std::set<std::int64_t> index_set;
   for (auto idx : selected) {
-    bitset[idx] = true;
+    index_set.insert(static_cast<std::int64_t>(idx));
   }
-  return bitset;
+  return TensorIndices::FromIndices(size, index_set);
 }
 
-// Helper to create a fully selected bitset
-TensorIndicesBitset MakeFullBitset(std::size_t size) {
-  TensorIndicesBitset bitset(size);
-  bitset.set();
-  return bitset;
+// Helper to create a fully selected IndexRangeSet
+TensorIndices MakeFullBitset(std::size_t size) {
+  return TensorIndices::MakeFull(size);
 }
 
-// Helper to create a contiguous range bitset [start, end)
-TensorIndicesBitset MakeRangeBitset(std::size_t size, std::size_t start,
-                                    std::size_t end) {
-  TensorIndicesBitset bitset(size);
-  for (std::size_t i = start; i < end; ++i) {
-    bitset[i] = true;
-  }
-  return bitset;
+// Helper to create a contiguous range IndexRangeSet [start, end)
+TensorIndices MakeRangeBitset(std::size_t size, std::size_t start,
+                              std::size_t end) {
+  return TensorIndices::MakeSingle(size, static_cast<std::int64_t>(start),
+                                   static_cast<std::int64_t>(end));
 }
 
 // Helper to create a 1D shard metadata
@@ -108,12 +103,13 @@ TensorShardMetadataPtr Make3DShardMetadata(
   return std::make_shared<TensorShardMetadata>(spec, GenerateUUID());
 }
 
-// Helper to get selected indices from a bitset as a vector
-std::vector<std::size_t> GetSelectedIndices(const TensorIndicesBitset& bitset) {
+// Helper to get selected indices from an IndexRangeSet as a vector
+std::vector<std::size_t> GetSelectedIndices(const TensorIndices& range_set) {
   std::vector<std::size_t> indices;
-  for (auto pos = bitset.find_first(); pos != TensorIndicesBitset::npos;
-       pos = bitset.find_next(pos)) {
-    indices.push_back(pos);
+  for (const auto& r : range_set.ranges) {
+    for (std::int64_t i = r.start; i < r.end; ++i) {
+      indices.push_back(static_cast<std::size_t>(i));
+    }
   }
   return indices;
 }
@@ -126,7 +122,7 @@ TEST(TensorSelectionLocalizeTest, OneDim_FullSelection_LocalizesToShardSize) {
   // Full tensor: size 100
   // Shard owns [25, 50) - 25 elements
   // Selection: all indices (full tensor)
-  // Expected: localized selection has all 25 indices set in a bitset of size 25
+  // Expected: localized selection has all 25 indices set in size 25
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -137,16 +133,16 @@ TEST(TensorSelectionLocalizeTest, OneDim_FullSelection_LocalizesToShardSize) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
-  EXPECT_TRUE(local_bitset.all());
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
+  EXPECT_TRUE(local.All());
 }
 
 TEST(TensorSelectionLocalizeTest, OneDim_PartialSelection_LocalizesCorrectly) {
   // Full tensor: size 100
   // Shard owns [25, 50)
   // Selection: indices {30, 31, 35, 40} (all within shard)
-  // Expected: localized indices {5, 6, 10, 15} in bitset of size 25
+  // Expected: localized indices {5, 6, 10, 15} in size 25
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -157,10 +153,10 @@ TEST(TensorSelectionLocalizeTest, OneDim_PartialSelection_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({5, 6, 10, 15}));
 }
 
@@ -180,10 +176,10 @@ TEST(TensorSelectionLocalizeTest,
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({0, 5}));
 }
 
@@ -203,16 +199,16 @@ TEST(TensorSelectionLocalizeTest,
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
-  EXPECT_TRUE(local_bitset.none());
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
+  EXPECT_TRUE(local.None());
 }
 
 TEST(TensorSelectionLocalizeTest, OneDim_ShardAtStart_LocalizesCorrectly) {
   // Full tensor: size 100
   // Shard owns [0, 30)
   // Selection: indices {0, 5, 10, 25, 29}
-  // Expected: same indices in bitset of size 30
+  // Expected: same indices in size 30
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -223,10 +219,10 @@ TEST(TensorSelectionLocalizeTest, OneDim_ShardAtStart_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 30);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 30);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({0, 5, 10, 25, 29}));
 }
 
@@ -234,7 +230,7 @@ TEST(TensorSelectionLocalizeTest, OneDim_ShardAtEnd_LocalizesCorrectly) {
   // Full tensor: size 100
   // Shard owns [70, 100)
   // Selection: indices {70, 80, 99}
-  // Expected: localized indices {0, 10, 29} in bitset of size 30
+  // Expected: localized indices {0, 10, 29} in size 30
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -245,10 +241,10 @@ TEST(TensorSelectionLocalizeTest, OneDim_ShardAtEnd_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 30);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 30);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({0, 10, 29}));
 }
 
@@ -256,7 +252,7 @@ TEST(TensorSelectionLocalizeTest, OneDim_ContiguousRange_LocalizesCorrectly) {
   // Full tensor: size 100
   // Shard owns [20, 60)
   // Selection: contiguous range [30, 50)
-  // Expected: localized range [10, 30) in bitset of size 40
+  // Expected: localized range [10, 30) in size 40
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -267,10 +263,10 @@ TEST(TensorSelectionLocalizeTest, OneDim_ContiguousRange_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 40);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 40);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   // Should be contiguous from 10 to 29
   EXPECT_EQ(selected.size(), 20);
   EXPECT_EQ(selected.front(), 10);
@@ -295,13 +291,13 @@ TEST(TensorSelectionLocalizeTest, TwoDim_FullSelection_LocalizesToShardSize) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 3);
-  EXPECT_EQ(col_bitset.size(), 10);
-  EXPECT_TRUE(row_bitset.all());
-  EXPECT_TRUE(col_bitset.all());
+  EXPECT_EQ(row.Size(), 3);
+  EXPECT_EQ(col.Size(), 10);
+  EXPECT_TRUE(row.All());
+  EXPECT_TRUE(col.All());
 }
 
 TEST(TensorSelectionLocalizeTest, TwoDim_PartialSelection_LocalizesCorrectly) {
@@ -320,14 +316,14 @@ TEST(TensorSelectionLocalizeTest, TwoDim_PartialSelection_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 3);
-  EXPECT_EQ(col_bitset.size(), 10);
+  EXPECT_EQ(row.Size(), 3);
+  EXPECT_EQ(col.Size(), 10);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto row_selected = GetSelectedIndices(row);
+  auto col_selected = GetSelectedIndices(col);
 
   EXPECT_EQ(row_selected, std::vector<std::size_t>({1, 2}));
   EXPECT_EQ(col_selected, std::vector<std::size_t>({2, 5, 7}));
@@ -337,7 +333,7 @@ TEST(TensorSelectionLocalizeTest, TwoDim_RowsOutsideShard_RowBitsetEmpty) {
   // Full tensor: 10x20
   // Shard owns rows [2, 5), cols [5, 15)
   // Selection: rows {0, 1} (outside shard), cols {7, 10}
-  // Expected: row bitset is empty, col bitset has {2, 5}
+  // Expected: row is empty, col has {2, 5}
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -349,15 +345,15 @@ TEST(TensorSelectionLocalizeTest, TwoDim_RowsOutsideShard_RowBitsetEmpty) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 3);
-  EXPECT_EQ(col_bitset.size(), 10);
+  EXPECT_EQ(row.Size(), 3);
+  EXPECT_EQ(col.Size(), 10);
 
-  EXPECT_TRUE(row_bitset.none());
+  EXPECT_TRUE(row.None());
 
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto col_selected = GetSelectedIndices(col);
   EXPECT_EQ(col_selected, std::vector<std::size_t>({2, 5}));
 }
 
@@ -365,7 +361,7 @@ TEST(TensorSelectionLocalizeTest, TwoDim_ColsOutsideShard_ColBitsetEmpty) {
   // Full tensor: 10x20
   // Shard owns rows [2, 5), cols [5, 15)
   // Selection: rows {3, 4}, cols {0, 1, 18, 19} (outside shard)
-  // Expected: row bitset has {1, 2}, col bitset is empty
+  // Expected: row has {1, 2}, col is empty
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -377,16 +373,16 @@ TEST(TensorSelectionLocalizeTest, TwoDim_ColsOutsideShard_ColBitsetEmpty) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 3);
-  EXPECT_EQ(col_bitset.size(), 10);
+  EXPECT_EQ(row.Size(), 3);
+  EXPECT_EQ(col.Size(), 10);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
+  auto row_selected = GetSelectedIndices(row);
   EXPECT_EQ(row_selected, std::vector<std::size_t>({1, 2}));
 
-  EXPECT_TRUE(col_bitset.none());
+  EXPECT_TRUE(col.None());
 }
 
 TEST(TensorSelectionLocalizeTest, TwoDim_ContiguousRanges_LocalizesCorrectly) {
@@ -405,14 +401,14 @@ TEST(TensorSelectionLocalizeTest, TwoDim_ContiguousRanges_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 4);
-  EXPECT_EQ(col_bitset.size(), 8);
+  EXPECT_EQ(row.Size(), 4);
+  EXPECT_EQ(col.Size(), 8);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto row_selected = GetSelectedIndices(row);
+  auto col_selected = GetSelectedIndices(col);
 
   EXPECT_EQ(row_selected, std::vector<std::size_t>({1, 2}));
   EXPECT_EQ(col_selected, std::vector<std::size_t>({2, 3, 4, 5}));
@@ -433,14 +429,14 @@ TEST(TensorSelectionLocalizeTest, TwoDim_ShardAtCorner_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 5);
-  EXPECT_EQ(col_bitset.size(), 5);
+  EXPECT_EQ(row.Size(), 5);
+  EXPECT_EQ(col.Size(), 5);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto row_selected = GetSelectedIndices(row);
+  auto col_selected = GetSelectedIndices(col);
 
   // Only indices within [0, 5) should remain
   EXPECT_EQ(row_selected, std::vector<std::size_t>({0, 2, 4}));
@@ -463,14 +459,14 @@ TEST(TensorSelectionLocalizeTest,
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 5);
-  EXPECT_EQ(col_bitset.size(), 5);
+  EXPECT_EQ(row.Size(), 5);
+  EXPECT_EQ(col.Size(), 5);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto row_selected = GetSelectedIndices(row);
+  auto col_selected = GetSelectedIndices(col);
 
   // Indices 5,7,9 -> 0,2,4 in local coords
   EXPECT_EQ(row_selected, std::vector<std::size_t>({0, 2, 4}));
@@ -497,16 +493,16 @@ TEST(TensorSelectionLocalizeTest, ThreeDim_FullSelection_LocalizesToShardSize) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& batch_bitset = localized->GetDimIndices("batch");
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& batch = localized->GetDimIndices("batch");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(batch_bitset.size(), 2);
-  EXPECT_EQ(row_bitset.size(), 4);
-  EXPECT_EQ(col_bitset.size(), 8);
-  EXPECT_TRUE(batch_bitset.all());
-  EXPECT_TRUE(row_bitset.all());
-  EXPECT_TRUE(col_bitset.all());
+  EXPECT_EQ(batch.Size(), 2);
+  EXPECT_EQ(row.Size(), 4);
+  EXPECT_EQ(col.Size(), 8);
+  EXPECT_TRUE(batch.All());
+  EXPECT_TRUE(row.All());
+  EXPECT_TRUE(col.All());
 }
 
 TEST(TensorSelectionLocalizeTest,
@@ -540,7 +536,7 @@ TEST(TensorSelectionLocalizeTest, ThreeDim_OneDimOutsideShard_ThatDimEmpty) {
   // Full tensor: 4x8x16
   // Shard owns batch [1, 3), rows [2, 6), cols [4, 12)
   // Selection: batch {0, 3} (both outside shard), rows/cols within shard
-  // Expected: batch bitset empty
+  // Expected: batch empty
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -553,8 +549,8 @@ TEST(TensorSelectionLocalizeTest, ThreeDim_OneDimOutsideShard_ThatDimEmpty) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& batch_bitset = localized->GetDimIndices("batch");
-  EXPECT_TRUE(batch_bitset.none());
+  const auto& batch = localized->GetDimIndices("batch");
+  EXPECT_TRUE(batch.None());
 
   auto row_selected = GetSelectedIndices(localized->GetDimIndices("row"));
   auto col_selected = GetSelectedIndices(localized->GetDimIndices("col"));
@@ -619,7 +615,7 @@ TEST(TensorSelectionLocalizeTest, ThreeDim_ShardCoversEntireTensor_NoShift) {
 //==============================================================================
 TEST(TensorSelectionLocalizeTest, ShardCoversEntireTensor_NoChange) {
   // Shard owns entire tensor
-  // Localized selection should have same indices but in same-sized bitset
+  // Localized selection should have same indices but in same-sized set
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -630,17 +626,17 @@ TEST(TensorSelectionLocalizeTest, ShardCoversEntireTensor_NoChange) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 100);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 100);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({10, 20, 50, 90}));
 }
 
 TEST(TensorSelectionLocalizeTest, SingleElementShard_LocalizesCorrectly) {
   // Shard owns just one element [50, 51)
   // Selection includes index 50
-  // Expected: bitset of size 1 with index 0 set
+  // Expected: size 1 with index 0 set
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -651,10 +647,10 @@ TEST(TensorSelectionLocalizeTest, SingleElementShard_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 1);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 1);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected, std::vector<std::size_t>({0}));
 }
 
@@ -662,7 +658,7 @@ TEST(TensorSelectionLocalizeTest,
      SingleElementShard_SelectionDoesNotInclude_Empty) {
   // Shard owns just one element [50, 51)
   // Selection does not include index 50
-  // Expected: empty bitset of size 1
+  // Expected: empty set of size 1
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
@@ -673,9 +669,9 @@ TEST(TensorSelectionLocalizeTest,
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 1);
-  EXPECT_TRUE(local_bitset.none());
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 1);
+  EXPECT_TRUE(local.None());
 }
 
 TEST(TensorSelectionLocalizeTest, BoundaryIndex_IncludedCorrectly) {
@@ -693,10 +689,10 @@ TEST(TensorSelectionLocalizeTest, BoundaryIndex_IncludedCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   // 25 -> 0, 49 -> 24
   EXPECT_EQ(selected, std::vector<std::size_t>({0, 24}));
 }
@@ -707,16 +703,16 @@ TEST(TensorSelectionLocalizeTest, EmptySelection_LocalizesToEmpty) {
 
   const TensorName name = "tensor";
   TensorIndicesMap indices;
-  indices["x"] = TensorIndicesBitset(100);  // All zeros
+  indices["x"] = TensorIndices::MakeEmpty(100);
 
   auto selection = std::make_shared<TensorSelection>(name, indices);
   auto shard = Make1DShardMetadata(name, 100, 25, 50);
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 25);
-  EXPECT_TRUE(local_bitset.none());
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 25);
+  EXPECT_TRUE(local.None());
 }
 
 TEST(TensorSelectionLocalizeTest,
@@ -734,14 +730,14 @@ TEST(TensorSelectionLocalizeTest,
 
   auto localized = selection->Localize(shard);
 
-  const auto& row_bitset = localized->GetDimIndices("row");
-  const auto& col_bitset = localized->GetDimIndices("col");
+  const auto& row = localized->GetDimIndices("row");
+  const auto& col = localized->GetDimIndices("col");
 
-  EXPECT_EQ(row_bitset.size(), 1);
-  EXPECT_EQ(col_bitset.size(), 1);
+  EXPECT_EQ(row.Size(), 1);
+  EXPECT_EQ(col.Size(), 1);
 
-  auto row_selected = GetSelectedIndices(row_bitset);
-  auto col_selected = GetSelectedIndices(col_bitset);
+  auto row_selected = GetSelectedIndices(row);
+  auto col_selected = GetSelectedIndices(col);
 
   EXPECT_EQ(row_selected, std::vector<std::size_t>({0}));
   EXPECT_EQ(col_selected, std::vector<std::size_t>({0}));
@@ -760,10 +756,10 @@ TEST(TensorSelectionLocalizeTest, LargeTensor_LocalizesCorrectly) {
 
   auto localized = selection->Localize(shard);
 
-  const auto& local_bitset = localized->GetDimIndices("x");
-  EXPECT_EQ(local_bitset.size(), 250);
+  const auto& local = localized->GetDimIndices("x");
+  EXPECT_EQ(local.Size(), 250);
 
-  auto selected = GetSelectedIndices(local_bitset);
+  auto selected = GetSelectedIndices(local);
   EXPECT_EQ(selected.size(), 100);
   // 600 -> 100, 699 -> 199
   EXPECT_EQ(selected.front(), 100);

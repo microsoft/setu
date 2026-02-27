@@ -5,7 +5,7 @@ import uuid
 import pytest
 import torch
 
-from setu._commons.datatypes import Device
+from setu._commons.datatypes import Device, TensorDim
 from setu._coordinator import Participant
 from setu.cluster import ClusterSpec, DeviceSpec
 from setu.cluster.mesh import Mesh, P, PartitionSpec

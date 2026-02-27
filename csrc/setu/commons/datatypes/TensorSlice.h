@@ -69,27 +69,6 @@ struct TensorSlice {
 
   static TensorSlice Deserialize(const BinaryRange& range);
 
-  /**
-   * @brief Converts the slice to a bitset representation
-   *
-   * Creates a bitset where bits corresponding to indices within the slice
-   * are set to true, enabling efficient set operations for tensor selections.
-   *
-   * @param dim_size Total size of the dimension
-   * @return Bitset with bits set for indices within the slice
-   *
-   * @throws std::invalid_argument if dim_size is smaller than slice size
-   */
-  [[nodiscard]] TensorIndicesBitset ToBitset(std::size_t dim_size) const {
-    ASSERT_VALID_ARGUMENTS(
-        dim_size >= size,
-        "Dim size {} must be greater than or equal to slice size {}", dim_size,
-        size);
-    TensorIndicesBitset bitset(dim_size);
-    bitset.set(start, size, true);
-    return bitset;
-  }
-
   const TensorDimName dim_name;  ///< Name of the dimension being sliced
   const TensorIndex start;       ///< Starting index (inclusive) of the slice
   const TensorIndex end;         ///< Ending index (exclusive) of the slice

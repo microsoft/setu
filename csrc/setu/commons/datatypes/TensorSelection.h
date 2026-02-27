@@ -68,14 +68,14 @@ struct TensorSelection {
           "Dim {} not found in other selection", dim_name);
 
       intersection[dim_name] =
-          indices.at(dim_name) & other->indices.at(dim_name);
+          indices.at(dim_name).Intersect(other->indices.at(dim_name));
     }
     return std::make_shared<TensorSelection>(name, intersection);
   }
 
   [[nodiscard]] bool IsSpanning() const {
     for (const auto& [dim_name, dim] : indices) {
-      if (!dim.all()) {
+      if (!dim.All()) {
         return false;
       }
     }
@@ -84,7 +84,7 @@ struct TensorSelection {
 
   [[nodiscard]] bool IsEmpty() const {
     for (const auto& [dim_name, dim] : indices) {
-      if (dim.none()) {
+      if (dim.None()) {
         return true;
       }
     }
@@ -99,7 +99,7 @@ struct TensorSelection {
 
     // Now we need to make sure that the size of the dimensions are the same
     for (const auto& [dim_name, dim] : indices) {
-      if (dim.size() != other->indices.at(dim_name).size()) {
+      if (dim.Size() != other->indices.at(dim_name).Size()) {
         return false;
       }
     }
@@ -143,10 +143,10 @@ struct TensorSelection {
    * @brief Get the indices bitset for a specific dimension
    *
    * @param dim_name The name of the dimension
-   * @return const reference to the TensorIndicesBitset for the dimension
+   * @return const reference to the TensorIndices for the dimension
    * @throws std::invalid_argument if dimension is not found
    */
-  [[nodiscard]] const TensorIndicesBitset& GetDimIndices(
+  [[nodiscard]] const TensorIndices& GetDimIndices(
       const TensorDimName& dim_name) const {
     auto it = indices.find(dim_name);
     ASSERT_VALID_ARGUMENTS(it != indices.end(),
@@ -162,36 +162,21 @@ struct TensorSelection {
    * @return New TensorSelection with the specified indices for the dimension
    */
   [[nodiscard]] TensorSelectionPtr Where(
-      const TensorDimName& dim_name, const TensorIndicesPtr index_set) const {
+      const TensorDimName& dim_name,
+      const std::set<TensorIndex>& index_set) const {
     ASSERT_VALID_ARGUMENTS(indices.find(dim_name) != indices.end(),
                            "Dimension {} not found in selection", dim_name);
 
-    // Create a copy of current indices
     TensorIndicesMap new_indices = indices;
 
-    // Convert the index set to a bitset
-    const auto& current_bitset = indices.at(dim_name);
-    TensorIndicesBitset new_bitset(current_bitset.size());
-
-    for (TensorIndex idx : *index_set) {
-      ASSERT_VALID_ARGUMENTS(
-          idx >= 0 && static_cast<std::size_t>(idx) < current_bitset.size(),
-          "Index {} is out of bounds for dimension {} (size: {})", idx,
-          dim_name, current_bitset.size());
-      new_bitset[static_cast<std::size_t>(idx)] = true;
-    }
+    const auto& current = indices.at(dim_name);
+    auto from_set = TensorIndices::FromIndices(current.Size(), index_set);
 
     // Intersect with current selection (only keep indices that are both
     // selected and requested)
-    new_indices[dim_name] = current_bitset & new_bitset;
+    new_indices[dim_name] = current.Intersect(from_set);
 
     return std::make_shared<TensorSelection>(name, new_indices);
-  }
-
-  [[nodiscard]] TensorSelectionPtr Where(
-      const TensorDimName& dim_name,
-      const std::set<TensorIndex>& index_set) const {
-    return Where(dim_name, std::make_shared<std::set<TensorIndex>>(index_set));
   }
 
   /**
@@ -210,13 +195,13 @@ struct TensorSelection {
     // Create a copy of current indices
     TensorIndicesMap new_indices = indices;
 
-    // Convert the slice to a bitset
-    const auto& current_bitset = indices.at(dim_name);
-    TensorIndicesBitset slice_bitset = slice->ToBitset(current_bitset.size());
+    const auto& current = indices.at(dim_name);
+    auto slice_range =
+        TensorIndices::MakeSingle(current.Size(), slice->start, slice->end);
 
     // Intersect with current selection (only keep indices that are both
     // selected and in slice)
-    new_indices[dim_name] = current_bitset & slice_bitset;
+    new_indices[dim_name] = current.Intersect(slice_range);
 
     return std::make_shared<TensorSelection>(name, new_indices);
   }
@@ -248,11 +233,9 @@ struct TensorSelection {
     TensorIndicesMap localized_indices;
     for (const auto& dim_spec : shard->spec.dims) {
       std::size_t local_size = dim_spec.GetOwnedSize();
-      std::size_t start = static_cast<std::size_t>(dim_spec.start);
-      const auto& bitset = indices.at(dim_spec.name);
-      auto local_bitset = bitset >> start;
-      local_bitset.resize(local_size);
-      localized_indices[dim_spec.name] = local_bitset;
+      const auto& current = indices.at(dim_spec.name);
+      localized_indices[dim_spec.name] =
+          current.ShiftAndClamp(dim_spec.start, local_size);
     }
 
     return std::make_shared<TensorSelection>(name, localized_indices);
@@ -264,10 +247,7 @@ struct TensorSelection {
   static TensorIndicesMap BuildIndicesFromDims(TensorDimMap dims_param) {
     TensorIndicesMap result_indices;
     for (const auto& [dim_name, dim] : dims_param) {
-      // Initialize with all bits set (selecting all indices by default)
-      TensorIndicesBitset bitset(dim.size);
-      bitset.set();  // Set all bits to 1
-      result_indices[dim_name] = bitset;
+      result_indices[dim_name] = TensorIndices::MakeFull(dim.size);
     }
     return result_indices;
   }
@@ -292,13 +272,8 @@ inline TensorSelectionPtr CreateSelectionFromShardSpec(
 
   TensorIndicesMap result_indices;
   for (const auto& dim_spec : spec->dims) {
-    // Create bitset for the full dimension size
-    TensorIndicesBitset bitset(dim_spec.size);
-    // Set bits only for the range owned by this shard [start, end)
-    for (TensorIndex i = dim_spec.start; i < dim_spec.end; ++i) {
-      bitset[static_cast<std::size_t>(i)] = true;
-    }
-    result_indices[dim_spec.name] = bitset;
+    result_indices[dim_spec.name] =
+        TensorIndices::MakeSingle(dim_spec.size, dim_spec.start, dim_spec.end);
   }
   return std::make_shared<TensorSelection>(spec->name, result_indices);
 }

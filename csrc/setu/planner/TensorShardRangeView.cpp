@@ -30,12 +30,14 @@ void TensorShardRangeView::ComputeRanges(TensorOwnershipMapPtr ownership_map) {
   for (const auto& [selection_subset, shard_metadata] :
        ownership_map->shard_mapping) {
     auto localized = selection_subset->Localize(shard_metadata);
+
     std::vector<TensorDimName> dim_order;
     for (const auto& dim : shard_metadata->spec.dims) {
       dim_order.push_back(dim.name);
     }
 
     ContiguousBufferRangeView range_view(dim_order, localized);
+
     for (const auto& range : range_view) {
       ranges_.push_back(
           ShardBufferRange{.metadata = shard_metadata, .range = range});

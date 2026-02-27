@@ -62,13 +62,15 @@ struct ShardBufferState {
 
 cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec,
                                 MetaStore& metastore) {
-  auto src_own = metastore.GetTensorMetadata(copy_spec.src_name)
-                     ->GetOwnershipMap(copy_spec.src_selection);
-  auto dst_own = metastore.GetTensorMetadata(copy_spec.dst_name)
-                     ->GetOwnershipMap(copy_spec.dst_selection);
+  auto src_meta = metastore.GetTensorMetadata(copy_spec.src_name);
+  auto dst_meta = metastore.GetTensorMetadata(copy_spec.dst_name);
+
+  auto src_own = src_meta->GetOwnershipMap(copy_spec.src_selection);
+  auto dst_own = dst_meta->GetOwnershipMap(copy_spec.dst_selection);
 
   auto src_view = TensorShardRangeView(src_own);
   auto dst_view = TensorShardRangeView(dst_own);
+
   ASSERT_VALID_RUNTIME(!src_view.empty() && !dst_view.empty(),
                        "Source and destination views must not be empty");
 

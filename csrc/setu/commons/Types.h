@@ -20,6 +20,8 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "commons/datatypes/IndexRangeSet.h"
+//==============================================================================
 /**
  * @namespace setu::commons
  * @brief Common types and type aliases used throughout the Setu system
@@ -56,14 +58,11 @@ using DevicePtr = void*;
 /// @brief Index type for addressing tensor elements (signed for negative
 /// indexing)
 using TensorIndex = std::int64_t;
-/// @brief Set of tensor indices for sparse selections
-using TensorIndices = std::set<TensorIndex>;
-/// @brief Shared pointer to a set of tensor indices
-using TensorIndicesPtr = std::shared_ptr<TensorIndices>;
-/// @brief Efficient bitset representation for large index sets
-using TensorIndicesBitset = boost::dynamic_bitset<>;
-/// @brief Map from dimension names to their corresponding index bitsets
-using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndicesBitset>;
+/// @brief Representation-agnostic set of tensor indices for dimension
+/// selections
+using TensorIndices = datatypes::IndexRangeSet;
+/// @brief Map from dimension names to their corresponding index sets
+using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndices>;
 /// @brief Unique identifier for a tensor shard (UUID)
 using ShardId = boost::uuids::uuid;
 /// @brief Lookup tensor shard given shard id

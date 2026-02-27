@@ -26,30 +26,20 @@ ContiguousBufferRangeView::ContiguousBufferRangeView(
   ComputeRanges(dim_names, selection);
 }
 //==============================================================================
-std::vector<ContiguousBufferRange> ContiguousBufferRangeView::BitsetToRanges(
-    const TensorIndicesBitset& bitset) {
-  std::vector<ContiguousBufferRange> ranges;
-
-  auto pos = bitset.find_first();
-  if (pos == TensorIndicesBitset::npos) {
-    return ranges;
+/**
+ * @brief Convert IndexRangeSet ranges to ContiguousBufferRange vector
+ *
+ * Simple conversion from the IndexRangeSet's ranges to our buffer range format.
+ */
+static std::vector<ContiguousBufferRange> ToBufferRanges(
+    const TensorIndices& index_set) {
+  std::vector<ContiguousBufferRange> result;
+  result.reserve(index_set.ranges.size());
+  for (const auto& r : index_set.ranges) {
+    result.push_back({static_cast<std::size_t>(r.start),
+                      static_cast<std::size_t>(r.end - r.start)});
   }
-
-  std::size_t start = pos;
-  std::size_t length = 1;
-
-  while ((pos = bitset.find_next(pos)) != TensorIndicesBitset::npos) {
-    if (pos == start + length) {
-      ++length;
-    } else {
-      ranges.push_back({start, length});
-      start = pos;
-      length = 1;
-    }
-  }
-  ranges.push_back({start, length});
-
-  return ranges;
+  return result;
 }
 //==============================================================================
 void ContiguousBufferRangeView::ComputeRanges(
@@ -60,19 +50,19 @@ void ContiguousBufferRangeView::ComputeRanges(
 
   // Check for empty selections
   for (const auto& name : dim_names) {
-    if (selection->GetDimIndices(name).none()) {
+    if (selection->GetDimIndices(name).None()) {
       return;
     }
   }
 
   // Start with innermost dimension (last in the vector)
   const auto& innermost = selection->GetDimIndices(dim_names.back());
-  ranges_ = BitsetToRanges(innermost);
-  std::size_t block_size = innermost.size();
+  ranges_ = ToBufferRanges(innermost);
+  std::size_t block_size = innermost.Size();
 
   // Process dimensions from inner to outer (reverse iteration excluding last)
   for (std::size_t i = dim_names.size() - 1; i-- > 0;) {
-    const auto& bitset = selection->GetDimIndices(dim_names[i]);
+    const auto& dim_index_set = selection->GetDimIndices(dim_names[i]);
     const std::size_t stride = block_size;
 
     const bool is_full_range = (ranges_.size() == 1 && ranges_[0].start == 0 &&
@@ -80,35 +70,38 @@ void ContiguousBufferRangeView::ComputeRanges(
 
     if (is_full_range) {
       // Optimization: if inner dimensions are fully selected, just scale
-      ranges_ = BitsetToRanges(bitset);
+      ranges_ = ToBufferRanges(dim_index_set);
       for (auto& range : ranges_) {
         range.start *= stride;
         range.length *= stride;
       }
     } else {
-      // General case: replicate ranges for each selected index
+      // General case: replicate ranges for each selected index in this dim
       std::vector<ContiguousBufferRange> new_ranges;
 
-      for (auto idx = bitset.find_first(); idx != TensorIndicesBitset::npos;
-           idx = bitset.find_next(idx)) {
-        const std::size_t base = idx * stride;
+      for (const auto& outer_range : dim_index_set.ranges) {
+        for (std::int64_t idx = outer_range.start; idx < outer_range.end;
+             ++idx) {
+          const std::size_t base = static_cast<std::size_t>(idx) * stride;
 
-        for (const auto& range : ranges_) {
-          const std::size_t new_start = base + range.start;
+          for (const auto& range : ranges_) {
+            const std::size_t new_start = base + range.start;
 
-          // Merge with previous range if contiguous
-          if (!new_ranges.empty() &&
-              new_ranges.back().start + new_ranges.back().length == new_start) {
-            new_ranges.back().length += range.length;
-          } else {
-            new_ranges.push_back({new_start, range.length});
+            // Merge with previous range if contiguous
+            if (!new_ranges.empty() &&
+                new_ranges.back().start + new_ranges.back().length ==
+                    new_start) {
+              new_ranges.back().length += range.length;
+            } else {
+              new_ranges.push_back({new_start, range.length});
+            }
           }
         }
       }
       ranges_ = std::move(new_ranges);
     }
 
-    block_size *= bitset.size();
+    block_size *= dim_index_set.Size();
   }
 }
 //==============================================================================
