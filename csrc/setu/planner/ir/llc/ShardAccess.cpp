@@ -14,20 +14,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/ir/llc/instructions/Barrier.h"
+#include "planner/ir/llc/ShardAccess.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
 
-std::string Barrier::ToString() const { return "Barrier()"; }
+ShardAccessMap GetShardAccess(const Program& program) {
+  ShardAccessMap access_map;
 
-void Barrier::Serialize(BinaryBuffer& /*buffer*/) const {
-  // No fields to serialize — the type tag is written by Instruction::Serialize
+  for (const auto& instruction : program) {
+    for (const auto& [shard_id, mode] : instruction.GetShardAccess()) {
+      if (mode == ShardAccessMode::kWrite) {
+        // Write always wins (override any existing read)
+        access_map[shard_id] = ShardAccessMode::kWrite;
+      } else {
+        // Read: only insert if not already present (don't downgrade write)
+        access_map.try_emplace(shard_id, ShardAccessMode::kRead);
+      }
+    }
+  }
+
+  return access_map;
 }
-
-Barrier Barrier::Deserialize(const BinaryRange& /*range*/) { return Barrier(); }
-
-ShardAccessMap Barrier::GetShardAccess() const { return {}; }
 
 //==============================================================================
 }  // namespace setu::planner::ir::llc

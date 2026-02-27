@@ -16,45 +16,24 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include <nccl.h>
-//==============================================================================
-#include "planner/ir/llc/ShardAccessTypes.h"
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/Types.h"
-#include "setu/commons/utils/Serialization.h"
+#include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
-using setu::commons::utils::BinaryBuffer;
-using setu::commons::utils::BinaryRange;
-using setu::commons::utils::BinaryReader;
-using setu::commons::utils::BinaryWriter;
+using setu::commons::ShardId;
 //==============================================================================
 
-/// Switch to an already-initialized NCCL communicator.
-///
-/// Subsequent Send/Receive instructions use this communicator until the
-/// next UseComm or InitComm instruction.
-struct UseComm {
-  explicit UseComm(ncclUniqueId comm_id) : comm_id(std::move(comm_id)) {}
-
-  ~UseComm() = default;
-  UseComm(const UseComm&) = default;
-  UseComm& operator=(const UseComm&) = default;
-  UseComm(UseComm&&) = default;
-  UseComm& operator=(UseComm&&) = default;
-
-  [[nodiscard]] std::string ToString() const;
-
-  void Serialize(BinaryBuffer& buffer) const;
-
-  static UseComm Deserialize(const BinaryRange& range);
-
-  /// @brief Extract shard access requirements for this instruction.
-  [[nodiscard]] ShardAccessMap GetShardAccess() const;
-
-  ncclUniqueId comm_id;
+/// @brief Access mode for a tensor shard within a program
+enum class ShardAccessMode : std::uint8_t {
+  kRead,   ///< Shared read access (source of Copy/Send)
+  kWrite,  ///< Exclusive write access (destination of Copy/Receive)
 };
+
+/// @brief Sorted map from shard ID to its access mode.
+/// Sorted by ShardId (UUID) for consistent lock ordering.
+/// Each shard appears at most once; write takes precedence over read.
+using ShardAccessMap = std::map<ShardId, ShardAccessMode>;
 
 //==============================================================================
 }  // namespace setu::planner::ir::llc

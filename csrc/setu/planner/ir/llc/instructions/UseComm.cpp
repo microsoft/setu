@@ -39,6 +39,8 @@ UseComm UseComm::Deserialize(const BinaryRange& range) {
   return UseComm(comm_id);
 }
 
+ShardAccessMap UseComm::GetShardAccess() const { return {}; }
+
 //==============================================================================
 }  // namespace setu::planner::ir::llc
 //==============================================================================

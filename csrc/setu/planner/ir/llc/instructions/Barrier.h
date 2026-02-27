@@ -19,6 +19,8 @@
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/utils/Serialization.h"
 //==============================================================================
+#include "planner/ir/llc/ShardAccessTypes.h"
+//==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
 using setu::commons::utils::BinaryBuffer;
@@ -45,6 +47,9 @@ struct Barrier {
   void Serialize(BinaryBuffer& buffer) const;
 
   static Barrier Deserialize(const BinaryRange& range);
+
+  /// @brief Extract shard access requirements for this instruction.
+  [[nodiscard]] ShardAccessMap GetShardAccess() const;
 };
 
 //==============================================================================

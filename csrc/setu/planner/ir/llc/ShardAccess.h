@@ -14,20 +14,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/ir/llc/instructions/Barrier.h"
+#pragma once
+//==============================================================================
+#include "planner/ir/llc/Instruction.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
 
-std::string Barrier::ToString() const { return "Barrier()"; }
-
-void Barrier::Serialize(BinaryBuffer& /*buffer*/) const {
-  // No fields to serialize — the type tag is written by Instruction::Serialize
-}
-
-Barrier Barrier::Deserialize(const BinaryRange& /*range*/) { return Barrier(); }
-
-ShardAccessMap Barrier::GetShardAccess() const { return {}; }
+/**
+ * @brief Extract merged, sorted shard access requirements for an entire
+ * program.
+ *
+ * Scans all instructions via Instruction::GetShardAccess(), merges access
+ * modes per shard (write takes precedence over read for the same shard),
+ * and returns results sorted by ShardId for consistent lock ordering.
+ *
+ * @param program The IR program to analyze
+ * @return Sorted map of shard IDs to access modes, deduplicated
+ */
+[[nodiscard]] ShardAccessMap GetShardAccess(const Program& program);
 
 //==============================================================================
 }  // namespace setu::planner::ir::llc

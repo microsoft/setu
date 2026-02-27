@@ -21,6 +21,7 @@
 #include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
+#include "planner/ir/llc/ShardAccessTypes.h"
 #include "planner/ir/ref/BufferRef.h"
 #include "planner/ir/ref/ShardRef.h"
 //==============================================================================
@@ -68,6 +69,9 @@ struct Send {
    * @brief Populates the device pointers by looking up the base address.
    */
   void Embellish(const std::function<DevicePtr(const BufferRef&)>& resolver);
+
+  /// @brief Extract shard access requirements for this instruction.
+  [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
   BufferRef src_ref;
   std::size_t offset_bytes;

@@ -18,6 +18,7 @@
 //==============================================================================
 #include <nccl.h>
 //==============================================================================
+#include "planner/ir/llc/ShardAccessTypes.h"
 #include "setu/commons/StdCommon.h"
 #include "setu/commons/Types.h"
 #include "setu/commons/datatypes/Device.h"
@@ -57,6 +58,9 @@ struct InitComm {
   void Serialize(BinaryBuffer& buffer) const;
 
   static InitComm Deserialize(const BinaryRange& range);
+
+  /// @brief Extract shard access requirements for this instruction.
+  [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
   ncclUniqueId comm_id;
   std::unordered_map<Participant, DeviceRank> participant_to_rank;
