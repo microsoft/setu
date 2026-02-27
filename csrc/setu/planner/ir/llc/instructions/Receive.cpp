@@ -51,6 +51,14 @@ void Receive::Embellish(
   dst_ptr = resolver(dst_ref);
 }
 
+ShardAccessMap Receive::GetShardAccess() const {
+  ShardAccessMap access_map;
+  if (dst_ref.IsShard()) {
+    access_map[dst_ref.AsShard().shard_id] = ShardAccessMode::kWrite;
+  }
+  return access_map;
+}
+
 //==============================================================================
 }  // namespace setu::planner::ir::llc
 //==============================================================================

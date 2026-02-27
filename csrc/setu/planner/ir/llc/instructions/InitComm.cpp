@@ -52,6 +52,8 @@ InitComm InitComm::Deserialize(const BinaryRange& range) {
   return InitComm(comm_id, participant_to_rank);
 }
 
+ShardAccessMap InitComm::GetShardAccess() const { return {}; }
+
 //==============================================================================
 }  // namespace setu::planner::ir::llc
 //==============================================================================
