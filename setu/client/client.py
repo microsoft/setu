@@ -123,6 +123,19 @@ class Client:
 
         return shard_ref
 
+    def wait_for_shard_allocation(self, shard_ref: TensorShardRef) -> None:
+        """
+        Block until the shard has been allocated on the NodeAgent.
+
+        After ``register_tensor_shard`` returns a ``TensorShardRef``, the
+        backing memory may not yet be ready.  Call this method before any
+        read/write/copy operation that touches the shard.
+
+        Args:
+            shard_ref: Reference returned by ``register_tensor_shard``.
+        """
+        self._client.wait_for_shard_allocation(shard_ref.shard_id)
+
     def select(self, name: TensorName) -> TensorSelection:
         """
         Create a tensor selection covering only indices owned by this client's shards.
@@ -185,6 +198,51 @@ class Client:
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
 
         copy_op_id = self._client.submit_copy(copy_spec, hints=hints or [])
+
+        if copy_op_id is None:
+            raise RuntimeError("Copy operation submission failed")
+
+        logger.debug(
+            "Submitted copy operation %d: %s -> %s", copy_op_id, src.name, dst.name
+        )
+        return copy_op_id
+
+    def pull(
+        self,
+        src: TensorSelection,
+        dst: TensorSelection,
+        hints: Optional[List[CompilerHint]] = None,
+    ) -> Optional[CopyOperationId]:
+        """
+        One-sided pull: copy data from a remote source into a local destination.
+
+        Unlike ``copy``, which is two-sided, ``pull`` is initiated entirely by
+        the destination.  Every destination shard that needs data must call this
+        method; no action is required on the source side.
+
+        Args:
+            src: Source tensor selection (may reside on a remote node).
+            dst: Destination tensor selection (must be owned by this client).
+            hints: Optional list of compiler hints (e.g. RoutingHint) for
+                this operation. In SPMD programs all ranks should pass
+                identical hints.
+
+        Returns:
+            CopyOperationId that can be passed to ``wait()`` to block until
+            the transfer completes.
+
+        Raises:
+            RuntimeError: If the pull submission fails.
+
+        Example:
+            >>> src = client.select("remote_kv_cache").where("page", [0, 1, 2])
+            >>> dst = client.select("local_kv_cache").where("page", [0, 1, 2])
+            >>> op_id = client.pull(src, dst)
+            >>> client.wait(op_id)
+        """
+        copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
+
+        copy_op_id = self._client.submit_pull(copy_spec, hints=hints or [])
 
         if copy_op_id is None:
             raise RuntimeError("Copy operation submission failed")

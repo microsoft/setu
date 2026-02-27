@@ -1,10 +1,5 @@
 """
 Cluster abstraction for E2E tests.
 
-Re-exports SingleNodeCluster from setu.cluster as SetuTestCluster
-for backwards compatibility.
+Re-exports the multiprocessing Cluster as SetuTestCluster.
 """
-
-from setu.cluster import SingleNodeCluster
-
-SetuTestCluster = SingleNodeCluster

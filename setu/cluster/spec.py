@@ -29,11 +29,15 @@ class ClusterSpec:
         coordinator_port: Port for the coordinator to bind on.
         nodes: Mapping from node_id to (port, device_specs).
         topology: Optional topology.
+        passes: Planner passes to enable.  ``None`` means default behaviour
+            (add ShortestPathRouting when topology is set), ``[]`` disables
+            all passes (useful for ablation).
     """
 
     coordinator_port: int
     nodes: Dict[uuid.UUID, Tuple[int, List[DeviceSpec]]]
     topology: Optional[Topology] = None
+    passes: Optional[List[str]] = None
 
     @property
     def coordinator_endpoint(self) -> str:
@@ -67,4 +71,5 @@ class ClusterSpec:
             coordinator_port=self.coordinator_port,
             nodes=self.nodes,
             topology=topology,
+            passes=self.passes,
         )

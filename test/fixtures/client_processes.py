@@ -101,6 +101,7 @@ def run_dest_client(
     result_queue,
     client_id,
     device_index=0,
+    selections=None,
 ):
     """Dest client process: wait for sources, register shard, pull, verify.
 
@@ -114,6 +115,8 @@ def run_dest_client(
         result_queue: Queue to put result dict into.
         client_id: Identifier for this client (for logging).
         device_index: CUDA device index to use.
+        selections: Optional dict mapping dim name -> set of indices to apply
+            via .where() on both source and destination selections.
     """
     from setu._client import Client
     from setu._commons.datatypes import (
@@ -152,6 +155,12 @@ def run_dest_client(
         }
         src_selection = TensorSelection(src_tensor_name, dim_map)
         dst_selection = TensorSelection(dst_tensor_name, dim_map)
+
+        if selections is not None:
+            for dim_name, indices in selections.items():
+                src_selection = src_selection.where(dim_name, set(indices))
+                dst_selection = dst_selection.where(dim_name, set(indices))
+
         copy_spec = CopySpec(
             src_tensor_name, dst_tensor_name, src_selection, dst_selection
         )

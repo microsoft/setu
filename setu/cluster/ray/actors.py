@@ -17,6 +17,19 @@ from setu.logger import init_logger
 
 logger = init_logger(__name__)
 
+COORDINATOR_ACTOR_NAME = "setu_coordinator"
+COORDINATOR_ACTOR_NAMESPACE = "setu"
+
+
+def get_coordinator_actor():
+    """Get the named CoordinatorActor handle. Returns None if not found."""
+    try:
+        return ray.get_actor(
+            COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_ACTOR_NAMESPACE
+        )
+    except ValueError:
+        return None
+
 
 def _find_free_port() -> int:
     """Find a free port on the current node using OS assignment."""
@@ -35,27 +48,39 @@ class CoordinatorActor:
     to connect to.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, metrics_endpoint: str = "") -> None:
         self._coordinator = None
         self._port: int = 0
         self._ip_address: str = ""
+        self._metrics_endpoint = metrics_endpoint
 
-    def start(self) -> dict:
+    def start(self, passes=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
+
+        Args:
+            passes: Optional list of pass name strings. ``None`` means
+                default, ``[]`` means no passes.
 
         Returns:
             Dict with coordinator_endpoint and ip_address.
         """
         from setu._coordinator import Coordinator, NCCLBackend, PassManager, Planner
+        from setu.cluster.passes import resolve_passes
 
         self._ip_address = ray.util.get_node_ip_address()
 
         self._port = _find_free_port()
 
         pass_manager = PassManager()
+        for p in resolve_passes(passes):
+            pass_manager.add_pass(p)
+
+        # Register sets are provided by NodeAgents during onboarding,
+        # so the backend starts empty.
         backend = NCCLBackend()
+
         planner = Planner(backend, pass_manager)
-        self._coordinator = Coordinator(self._port, planner)
+        self._coordinator = Coordinator(self._port, planner, self._metrics_endpoint)
         self._coordinator.start()
 
         endpoint = f"tcp://{self._ip_address}:{self._port}"
@@ -76,22 +101,6 @@ class CoordinatorActor:
             self._coordinator = None
             logger.info("CoordinatorActor stopped")
 
-    def add_hint(self, hint) -> None:
-        """Add a compiler hint to the Coordinator.
-
-        Args:
-            hint: A compiler hint (e.g. RoutingHint).
-        """
-        if self._coordinator is None:
-            raise RuntimeError("Coordinator is not started")
-        self._coordinator.add_hint(hint)
-
-    def clear_hints(self) -> None:
-        """Clear all compiler hints from the Coordinator."""
-        if self._coordinator is None:
-            raise RuntimeError("Coordinator is not started")
-        self._coordinator.clear_hints()
-
     def is_alive(self) -> bool:
         """Check if the Coordinator is running."""
         return self._coordinator is not None
@@ -105,8 +114,15 @@ class NodeAgentActor:
     all CUDA GPUs on the node and creates Device objects for each.
     """
 
-    def __init__(self, coordinator_endpoint: str) -> None:
+    def __init__(
+        self,
+        coordinator_endpoint: str,
+        metrics_endpoint: str = "",
+        register_size: int = 0,
+    ) -> None:
         self._coordinator_endpoint = coordinator_endpoint
+        self._metrics_endpoint = metrics_endpoint
+        self._register_size = register_size
         self._node_agent = None
         self._port: int = 0
         self._ip_address: str = ""
@@ -133,12 +149,16 @@ class NodeAgentActor:
             for i in range(self._num_gpus)
         ]
 
-        self._node_agent = NodeAgent(
+        kwargs = dict(
             node_id=self._node_id,
             port=self._port,
             coordinator_endpoint=self._coordinator_endpoint,
             devices=devices,
+            metrics_endpoint=self._metrics_endpoint,
         )
+        if self._register_size > 0:
+            kwargs["register_size"] = self._register_size
+        self._node_agent = NodeAgent(**kwargs)
         self._node_agent.start()
 
         endpoint = f"tcp://{self._ip_address}:{self._port}"

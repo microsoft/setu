@@ -1,5 +1,6 @@
-"""Helper functions for building shards, topologies, and copy specs."""
+"""Helper functions for building shards and copy specs."""
 
+from dataclasses import dataclass
 from typing import List
 
 import numpy as np
@@ -11,6 +12,38 @@ from setu._commons.datatypes import (
     TensorShardSpec,
 )
 from setu.cluster.mesh import Mesh, PartitionSpec
+
+
+@dataclass(frozen=True)
+class ShardedTensor:
+    """A global tensor with its mesh-based sharding description.
+
+    Wraps the tensor metadata (name, dims, dtype) together with the Mesh and
+    PartitionSpec that describe how it is distributed.  The ``.shards``
+    property materialises the concrete ``TensorShardSpec`` list on demand.
+    """
+
+    name: str
+    dims: List[TensorDim]
+    mesh: Mesh
+    partition: PartitionSpec
+    dtype: torch.dtype = torch.float32
+
+    @property
+    def shards(self) -> List[TensorShardSpec]:
+        return shard_tensor(self.name, self.dims, self.mesh, self.partition, self.dtype)
+
+    @property
+    def shard_bytes(self) -> List[int]:
+        """Per-shard data size in bytes."""
+        element_size = self.dtype.itemsize
+        result = []
+        for shard in self.shards:
+            n_elements = 1
+            for d in shard.dims:
+                n_elements *= d.get_owned_size()
+            result.append(n_elements * element_size)
+        return result
 
 
 def shard_tensor(

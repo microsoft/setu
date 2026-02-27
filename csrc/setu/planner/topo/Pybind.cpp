@@ -32,6 +32,12 @@ void InitTopoPybind(py::module_& m) {
            py::arg("latency_us"), py::arg("bandwidth_gbps"),
            py::arg("tag") = std::nullopt,
            "Create a link with latency and bandwidth")
+      .def_readonly("latency_us", &Link::latency_us, "Latency in microseconds")
+      .def_readonly("bandwidth_gbps", &Link::bandwidth_gbps,
+                    "Bandwidth in Gbps")
+      .def_readonly("tag", &Link::tag, "Optional tag for the link")
+      .def("__str__", &Link::ToString)
+      .def("__repr__", &Link::ToString)
       // Pickle support for multiprocessing
       .def(py::pickle(
           [](const Link& l) {  // __getstate__
@@ -54,7 +60,19 @@ void InitTopoPybind(py::module_& m) {
       .def_readonly("total_latency_us", &Path::total_latency_us)
       .def_readonly("bottleneck_bandwidth_gbps",
                     &Path::bottleneck_bandwidth_gbps)
-      .def("__repr__", &Path::ToString);
+      .def("__repr__", &Path::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const Path& p) {  // __getstate__
+            return py::make_tuple(p.hops, p.links);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for Path");
+            }
+            return Path(t[0].cast<std::vector<Participant>>(),
+                        t[1].cast<std::vector<Link>>());
+          }));
 
   py::class_<Topology, TopologyPtr>(m, "Topology")
       .def(py::init<>(), "Create an empty topology")
