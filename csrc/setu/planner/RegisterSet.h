@@ -17,6 +17,7 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
@@ -59,6 +60,9 @@ struct RegisterSet {
 
   /// Whether this register set is empty (no registers).
   [[nodiscard]] bool Empty() const { return sizes_.empty(); }
+
+  void Serialize(setu::commons::BinaryBuffer& buffer) const;
+  static RegisterSet Deserialize(const setu::commons::BinaryRange& range);
 
   std::vector<std::size_t> sizes_;  ///< Size in bytes per register index
 };

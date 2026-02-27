@@ -51,6 +51,10 @@ struct NCCL : public Backend {
 
   [[nodiscard]] Plan Run(const cir::Program& program /*[in]*/) override;
 
+  void AddRegisterSets(
+      const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
+          register_sets /*[in]*/) override;
+
  private:
   std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets_;
 

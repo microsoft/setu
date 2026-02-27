@@ -37,7 +37,7 @@ using setu::planner::Planner;
 /// ExecuteRequests through the outbox queue.
 class Executor {
  public:
-  Executor(Queue<PlannerTask>& planner_queue,
+  Executor(Queue<ExecutorTask>& planner_queue,
            Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
            Planner& planner, OutboxNotifyFn outbox_notify,
            setu::telemetry::MetricsSinkPtr metrics_sink);
@@ -50,7 +50,10 @@ class Executor {
 
   void PushOutbox(OutboxMessage msg);
 
-  Queue<PlannerTask>& planner_queue_;
+  void HandlePlannerTask(PlannerTask task);
+  void HandleOnboardingTask(OnboardingTask task);
+
+  Queue<ExecutorTask>& planner_queue_;
   Queue<OutboxMessage>& outbox_queue_;
   MetaStore& metastore_;
   Planner& planner_;

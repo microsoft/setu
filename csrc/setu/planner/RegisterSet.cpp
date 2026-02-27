@@ -14,33 +14,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#pragma once
-//==============================================================================
-#include "planner/Plan.h"
 #include "planner/RegisterSet.h"
-#include "planner/ir/cir/Program.h"
 //==============================================================================
-namespace setu::planner::targets {
+#include "commons/utils/Serialization.h"
+//==============================================================================
+namespace setu::planner {
+//==============================================================================
+using setu::commons::utils::BinaryReader;
+using setu::commons::utils::BinaryWriter;
 //==============================================================================
 
-namespace cir = setu::planner::ir::cir;
+void RegisterSet::Serialize(setu::commons::BinaryBuffer& buffer) const {
+  BinaryWriter writer(buffer);
+  writer.Write(sizes_);
+}
 
-/// Abstract backend that lowers a CIR Program into a per-device LLC Plan.
-class Backend {
- public:
-  virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
-
-  /// Merge additional per-device register sets into the backend.
-  /// Called during NodeAgent onboarding so the backend learns about all
-  /// devices in the cluster before any compilation occurs.
-  virtual void AddRegisterSets(
-      const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
-          register_sets /*[in]*/) = 0;
-};
-
-using BackendPtr = std::shared_ptr<Backend>;
+RegisterSet RegisterSet::Deserialize(const setu::commons::BinaryRange& range) {
+  BinaryReader reader(range);
+  RegisterSet set;
+  set.sizes_ = reader.Read<std::vector<std::size_t>>();
+  return set;
+}
 
 //==============================================================================
-}  // namespace setu::planner::targets
+}  // namespace setu::planner
 //==============================================================================

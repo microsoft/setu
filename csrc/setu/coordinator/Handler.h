@@ -34,6 +34,7 @@ using setu::commons::NodeId;
 using setu::commons::messages::DeregisterShardsRequest;
 using setu::commons::messages::ExecuteResponse;
 using setu::commons::messages::GetTensorSpecRequest;
+using setu::commons::messages::OnboardNodeAgentRequest;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
 using setu::commons::messages::SubmitPullRequest;
@@ -50,7 +51,7 @@ using setu::metastore::MetaStore;
 class Handler {
  public:
   Handler(Queue<InboxMessage>& inbox_queue, Queue<OutboxMessage>& outbox_queue,
-          MetaStore& metastore, Queue<PlannerTask>& planner_queue,
+          MetaStore& metastore, Queue<ExecutorTask>& planner_queue,
           OutboxNotifyFn outbox_notify,
           setu::telemetry::MetricsSinkPtr metrics_sink);
 
@@ -75,6 +76,8 @@ class Handler {
                                   const GetTensorSpecRequest& request);
   void HandleDeregisterShardsRequest(const Identity& node_agent_identity,
                                      const DeregisterShardsRequest& request);
+  void HandleOnboardNodeAgentRequest(const Identity& node_agent_identity,
+                                     const OnboardNodeAgentRequest& request);
 
   /// @brief Unified shard submission logic for both Copy and Pull.
   void HandleShardSubmission(DispatchManager::ShardSubmission submission);
@@ -82,7 +85,7 @@ class Handler {
   Queue<InboxMessage>& inbox_queue_;
   Queue<OutboxMessage>& outbox_queue_;
   MetaStore& metastore_;
-  Queue<PlannerTask>& planner_queue_;
+  Queue<ExecutorTask>& planner_queue_;
   OutboxNotifyFn outbox_notify_;
   setu::telemetry::MetricsSinkPtr metrics_sink_;
 
