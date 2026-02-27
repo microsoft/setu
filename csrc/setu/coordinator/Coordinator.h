@@ -161,6 +161,10 @@ class Coordinator {
     void Start();
     void Stop();
 
+    /// @brief Wake the Gateway from its poll() call so it drains the outbox
+    /// immediately. Thread-safe: can be called from any thread.
+    void NotifyOutbox();
+
    private:
     void InitSockets();
     void CloseSockets();
@@ -174,6 +178,13 @@ class Coordinator {
 
     ZmqSocketPtr node_agent_socket_;
 
+    /// Inproc PAIR sockets for self-pipe wakeup pattern.
+    /// When a producer pushes to outbox_queue_, it sends a byte on
+    /// wakeup_send_ which causes zmq::poll() (watching wakeup_recv_) to
+    /// return immediately.
+    ZmqSocketPtr wakeup_recv_;
+    ZmqSocketPtr wakeup_send_;
+
     std::thread thread_;
     std::atomic<bool> running_{false};
   };
@@ -181,16 +192,20 @@ class Coordinator {
   //============================================================================
   // Handler: Processes incoming requests (pure business logic, no ZMQ)
   //============================================================================
+  using OutboxNotifyFn = std::function<void()>;
+
   struct Handler {
     Handler(Queue<InboxMessage>& inbox_queue,
             Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-            Queue<PlannerTask>& planner_queue);
+            Queue<PlannerTask>& planner_queue, OutboxNotifyFn outbox_notify);
 
     void Start();
     void Stop();
 
    private:
     void Loop();
+
+    void PushOutbox(OutboxMessage msg);
 
     void HandleRegisterTensorShardRequest(
         const Identity& node_agent_identity,
@@ -228,6 +243,7 @@ class Coordinator {
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Queue<PlannerTask>& planner_queue_;
+    OutboxNotifyFn outbox_notify_;
 
     /// Aggregates shard submissions per (src, dst) pair until all expected
     /// shards arrive
@@ -249,7 +265,8 @@ class Coordinator {
   struct Executor {
     Executor(Queue<PlannerTask>& planner_queue,
              Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-             Planner& planner, HintStore& hint_store);
+             Planner& planner, HintStore& hint_store,
+             OutboxNotifyFn outbox_notify);
 
     void Start();
     void Stop();
@@ -257,11 +274,14 @@ class Coordinator {
    private:
     void Loop();
 
+    void PushOutbox(OutboxMessage msg);
+
     Queue<PlannerTask>& planner_queue_;
     Queue<OutboxMessage>& outbox_queue_;
     MetaStore& metastore_;
     Planner& planner_;
     HintStore& hint_store_;
+    OutboxNotifyFn outbox_notify_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};
