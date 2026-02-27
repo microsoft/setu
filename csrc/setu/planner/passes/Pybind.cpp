@@ -39,8 +39,8 @@ void InitPassesPybind(py::module_& m) {
 
   py::class_<ShortestPathRouting, Pass, std::shared_ptr<ShortestPathRouting>>(
       m, "ShortestPathRouting")
-      .def(py::init<TopologyPtr>(), py::arg("topology"),
-           "Create a ShortestPathRouting pass with the given topology");
+      .def(py::init<TopologyPtr>(), py::arg("topology").none(true),
+           "Create a ShortestPathRouting pass with an optional topology");
 }
 //==============================================================================
 }  // namespace setu::planner::passes
