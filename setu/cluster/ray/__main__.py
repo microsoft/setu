@@ -11,6 +11,7 @@ Usage::
 import argparse
 import signal
 import threading
+from pathlib import Path
 from typing import Dict, Optional
 
 import ray
@@ -32,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ray-address",
         type=str,
-        default="auto",
-        help='Ray cluster address to connect to (default: "auto").',
+        default=None,
+        help="Ray cluster address to connect to. If not given, starts a local Ray instance.",
     )
     parser.add_argument(
         "--nccl-socket-ifname",
@@ -55,6 +56,26 @@ def parse_args() -> argparse.Namespace:
         metavar="KEY=VALUE",
         help="Additional env vars to set on actors (repeatable).",
     )
+    parser.add_argument(
+        "--dump-info",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Dump ClusterInfo YAML to this file path.",
+    )
+    parser.add_argument(
+        "--passes",
+        nargs="*",
+        default=None,
+        help="Planner passes to enable. Omit for default, pass none with "
+        "'--passes' for ablation.",
+    )
+    parser.add_argument(
+        "--enable-metrics",
+        action="store_true",
+        default=False,
+        help="Enable telemetry metrics collection (starts MetricsServer).",
+    )
     return parser.parse_args()
 
 
@@ -65,6 +86,10 @@ def display_cluster_info(info: ClusterInfo) -> None:
     console.rule("Setu Cluster Info")
     console.print(f"  Coordinator: {info.coordinator_endpoint}")
     console.print(f"  Nodes: {info.num_nodes}  |  Total GPUs: {info.total_gpus}")
+    if info.metrics_endpoint:
+        console.print(f"  Metrics ZMQ: {info.metrics_endpoint}")
+    if info.metrics_http_url:
+        console.print(f"  Metrics HTTP: {info.metrics_http_url}")
     console.print()
 
     table = Table(title="Node Agents")
@@ -105,14 +130,32 @@ def main() -> None:
     """Start a Setu cluster, display topology, and block until interrupted."""
     args = parse_args()
 
-    logger.info("Connecting to Ray at address=%s", args.ray_address)
-    ray.init(address=args.ray_address, ignore_reinit_error=True)
+    if args.ray_address is not None:
+        logger.info("Connecting to Ray at address=%s", args.ray_address)
+        ray.init(address=args.ray_address, ignore_reinit_error=True)
+    else:
+        logger.info("Starting local Ray instance")
+        ray.init(ignore_reinit_error=True)
+
+    metrics_endpoint = ""
+    if args.enable_metrics:
+        from setu.cluster.ray.actors import _find_free_port
+
+        metrics_endpoint = f"tcp://*:{_find_free_port()}"
 
     env_vars = _build_env_vars(args)
-    cluster = Cluster(env_vars=env_vars)
+    cluster = Cluster(
+        env_vars=env_vars,
+        passes=args.passes,
+        metrics_endpoint=metrics_endpoint,
+    )
     try:
         info = cluster.start()
         display_cluster_info(info)
+
+        if args.dump_info:
+            Path(args.dump_info).write_text(info.to_yaml())
+            logger.info("ClusterInfo written to %s", args.dump_info)
 
         stop_event = threading.Event()
 
