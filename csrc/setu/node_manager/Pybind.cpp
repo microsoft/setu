@@ -26,6 +26,7 @@
 #include "node_manager/NodeAgent.h"
 #include "node_manager/worker/NCCLWorker.h"
 #include "node_manager/worker/Worker.h"
+#include "planner/Constants.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -66,14 +67,17 @@ void InitWorkerPybindClass(py::module_& m) {
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {
   py::class_<NodeAgent, std::shared_ptr<NodeAgent>>(m, "NodeAgent")
-      .def(py::init<NodeId, std::size_t, std::string,
-                    const std::vector<Device>&, std::string, std::string>(),
-           py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
-           py::arg("devices"),
-           py::arg("lock_base_dir") = NodeAgent::GetDefaultLockBaseDir(),
-           py::arg("metrics_endpoint") = "",
-           "Create a NodeAgent with specified port, coordinator endpoint, "
-           "devices, lock directory, and optional metrics endpoint")
+      .def(
+          py::init<NodeId, std::size_t, std::string, const std::vector<Device>&,
+                   std::string, std::string, std::size_t>(),
+          py::arg("node_id"), py::arg("port"), py::arg("coordinator_endpoint"),
+          py::arg("devices"),
+          py::arg("lock_base_dir") = NodeAgent::GetDefaultLockBaseDir(),
+          py::arg("metrics_endpoint") = "",
+          py::arg("register_size") = setu::planner::kRegisterSize,
+          "Create a NodeAgent with specified port, coordinator endpoint, "
+          "devices, lock directory, optional metrics endpoint, and register "
+          "size")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
       .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop");
 }

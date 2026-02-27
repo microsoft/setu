@@ -32,7 +32,19 @@ void InitHintsPybind(py::module_& m) {
       .def_readonly("src", &RoutingHint::src, "Source participant")
       .def_readonly("dst", &RoutingHint::dst, "Destination participant")
       .def_readonly("path", &RoutingHint::path, "Override path")
-      .def("__repr__", &RoutingHint::ToString);
+      .def("__repr__", &RoutingHint::ToString)
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const RoutingHint& rh) {  // __getstate__
+            return py::make_tuple(rh.src, rh.dst, rh.path);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 3) {
+              throw std::runtime_error("Invalid state for RoutingHint");
+            }
+            return RoutingHint(t[0].cast<Participant>(),
+                               t[1].cast<Participant>(), t[2].cast<Path>());
+          }));
 }
 //==============================================================================
 }  // namespace setu::planner::hints
