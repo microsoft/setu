@@ -17,6 +17,7 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/utils/Serialization.h"
 //==============================================================================
 #include "planner/Participant.h"
 #include "planner/topo/Topology.h"
@@ -32,6 +33,8 @@ struct RoutingHint {
   Participant dst;
   Path path;
 
+  RoutingHint() = default;
+
   RoutingHint(Participant src_param, Participant dst_param, Path path_param)
       : src(std::move(src_param)),
         dst(std::move(dst_param)),
@@ -40,9 +43,39 @@ struct RoutingHint {
   [[nodiscard]] std::string ToString() const {
     return std::format("RoutingHint(src={}, dst={}, path={})", src, dst, path);
   }
+
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    writer.WriteFields(src, dst, path);
+  }
+
+  static RoutingHint Deserialize(const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    auto [s, d, p] = reader.ReadFields<Participant, Participant, Path>();
+    return RoutingHint(std::move(s), std::move(d), std::move(p));
+  }
 };
 
 using CompilerHint = std::variant<RoutingHint>;
+
+/// @brief Compute an FNV-1a fingerprint of a hints vector for SPMD
+/// consistency verification. Cheap (~nanoseconds for typical hint lists).
+[[nodiscard]] inline std::uint64_t Fingerprint(
+    const std::vector<CompilerHint>& hints) {
+  setu::commons::BinaryBuffer buffer;
+  setu::commons::utils::BinaryWriter writer(buffer);
+  writer.Write(hints);
+
+  // FNV-1a over the serialized bytes
+  constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
+  constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+  std::uint64_t hash = kFnvOffset;
+  for (const auto& byte : buffer) {
+    hash ^= static_cast<std::uint64_t>(byte);
+    hash *= kFnvPrime;
+  }
+  return hash;
+}
 
 //==============================================================================
 }  // namespace setu::planner::hints

@@ -18,55 +18,45 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "planner/hints/Hint.h"
+#include "coordinator/Types.h"
+#include "metastore/MetaStore.h"
+#include "planner/Planner.h"
 //==============================================================================
-namespace setu::planner::hints {
+namespace setu::coordinator {
+//==============================================================================
+using setu::metastore::MetaStore;
+using setu::planner::Planner;
 //==============================================================================
 
-class HintStore {
+/// @brief Compiles CopySpecs into execution plans and dispatches them to
+/// NodeAgents.
+///
+/// Executor runs on a dedicated thread, pulling PlannerTasks from the planner
+/// queue. For each task it compiles a Plan, fragments it per-node, and sends
+/// ExecuteRequests through the outbox queue.
+class Executor {
  public:
-  HintStore() = default;
+  Executor(Queue<PlannerTask>& planner_queue,
+           Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
+           Planner& planner, OutboxNotifyFn outbox_notify);
 
-  explicit HintStore(std::vector<CompilerHint> hints)
-      : hints_(std::move(hints)) {}
-
-  HintStore(HintStore&& other) noexcept : hints_(std::move(other.hints_)) {}
-
-  HintStore& operator=(HintStore&& other) noexcept {
-    if (this != &other) {
-      hints_ = std::move(other.hints_);
-    }
-    return *this;
-  }
-
-  HintStore(const HintStore&) = delete;
-  HintStore& operator=(const HintStore&) = delete;
-
-  void AddHint(CompilerHint hint);
-
-  [[nodiscard]] HintStore Snapshot() const;
-
-  template <typename T>
-  [[nodiscard]] std::vector<std::reference_wrapper<const T>> GetHints() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<std::reference_wrapper<const T>> result;
-    for (const auto& hint : hints_) {
-      if (auto* ptr = std::get_if<T>(&hint)) {
-        result.emplace_back(*ptr);
-      }
-    }
-    return result;
-  }
-
-  void Clear();
-
-  [[nodiscard]] std::size_t Size() const;
+  void Start();
+  void Stop();
 
  private:
-  mutable std::mutex mutex_;
-  std::vector<CompilerHint> hints_;
-};
+  void Loop();
 
+  void PushOutbox(OutboxMessage msg);
+
+  Queue<PlannerTask>& planner_queue_;
+  Queue<OutboxMessage>& outbox_queue_;
+  MetaStore& metastore_;
+  Planner& planner_;
+  OutboxNotifyFn outbox_notify_;
+
+  std::thread thread_;
+  std::atomic<bool> running_{false};
+};
 //==============================================================================
-}  // namespace setu::planner::hints
+}  // namespace setu::coordinator
 //==============================================================================

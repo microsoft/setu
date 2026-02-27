@@ -47,10 +47,14 @@ struct CompletedGroup {
 /// validation, and participant info. When all expected shards have arrived, the
 /// completed group is returned and the internal state is cleaned up.
 ///
-/// @tparam KeyType The group key type (must support operator<).
+/// @tparam KeyType The group key type (must be hashable via KeyHash).
 /// @tparam PayloadType The payload type stored per group. Must support
 /// operator== for validation of consistency across submissions.
-template <typename KeyType, typename PayloadType>
+/// @tparam KeyHash Hash function object for KeyType.
+/// @tparam KeyEqual Equality function object for KeyType.
+template <typename KeyType, typename PayloadType,
+          typename KeyHash = boost::hash<KeyType>,
+          typename KeyEqual = std::equal_to<KeyType>>
 class ShardAggregator {
  public:
   /// @brief Submit a shard for aggregation.
@@ -63,7 +67,8 @@ class ShardAggregator {
   /// @param participant [in] The identity and request_id of the submitter.
   /// @param expected_count [in] Total number of shards expected for this group.
   /// @param validate_fn [in] Callable(const PayloadType& stored, const
-  ///   PayloadType& incoming) that asserts payload consistency.
+  ///   PayloadType& incoming) → bool. Returns true if payloads are consistent,
+  ///   false to reject and cancel the group.
   /// @return CompletedGroup if this submission completes the group, nullopt
   ///   otherwise.
   template <typename ValidateFn>
@@ -82,8 +87,8 @@ class ShardAggregator {
     // Store or validate the payload
     if (!group.payload.has_value()) {
       group.payload.emplace(payload);
-    } else {
-      validate_fn(group.payload.value(), payload);
+    } else if (!validate_fn(group.payload.value(), payload)) {
+      return std::nullopt;
     }
 
     group.shards_received.insert(shard_id);
@@ -98,6 +103,21 @@ class ShardAggregator {
     }
 
     return std::nullopt;
+  }
+
+  /// @brief Cancel and remove the group for a specific key.
+  ///
+  /// @param key [in] The group key to cancel.
+  /// @return All participants from the cancelled group.
+  [[nodiscard]] std::vector<AggregationParticipant> Cancel(
+      const KeyType& key /*[in]*/) {
+    std::vector<AggregationParticipant> cancelled_participants;
+    auto it = groups_.find(key);
+    if (it != groups_.end()) {
+      cancelled_participants = std::move(it->second.participants);
+      groups_.erase(it);
+    }
+    return cancelled_participants;
   }
 
   /// @brief Cancel and remove all groups whose key matches the predicate.
@@ -134,7 +154,7 @@ class ShardAggregator {
     std::vector<AggregationParticipant> participants;
   };
 
-  std::map<KeyType, PendingGroup> groups_;
+  std::unordered_map<KeyType, PendingGroup, KeyHash, KeyEqual> groups_;
 };
 
 //==============================================================================
