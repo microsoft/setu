@@ -31,6 +31,7 @@
 #include "commons/utils/ZmqHelper.h"
 #include "messaging/Messages.h"
 #include "node_manager/worker/Worker.h"
+#include "planner/Constants.h"
 #include "planner/Planner.h"
 //==============================================================================
 namespace setu::node_manager {
@@ -67,6 +68,8 @@ using setu::commons::messages::GetTensorSelectionRequest;
 using setu::commons::messages::GetTensorSelectionResponse;
 using setu::commons::messages::GetTensorSpecRequest;
 using setu::commons::messages::GetTensorSpecResponse;
+using setu::commons::messages::OnboardNodeAgentRequest;
+using setu::commons::messages::OnboardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardCoordinatorResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
@@ -92,7 +95,8 @@ class NodeAgent {
   NodeAgent(NodeId node_id, std::size_t port, std::string coordinator_endpoint,
             const std::vector<Device>& devices,
             std::string lock_base_dir = GetDefaultLockBaseDir(),
-            std::string metrics_endpoint = "");
+            std::string metrics_endpoint = "",
+            std::size_t register_size = setu::planner::kRegisterSize);
   ~NodeAgent();
 
   void Start();
@@ -118,7 +122,10 @@ class NodeAgent {
             std::size_t port, const std::string& coordinator_endpoint,
             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
             TensorShardsConcurrentMap& shard_id_to_tensor,
-            std::string lock_base_dir);
+            std::string lock_base_dir,
+            std::unordered_map<setu::planner::Participant,
+                               setu::planner::RegisterSet>
+                register_sets);
     ~Handler();
 
     void Start();
@@ -198,10 +205,16 @@ class NodeAgent {
     setu::commons::utils::PendingOperations<Identity, ShardId>
         pending_shard_allocs_;
 
+    void OnboardWithCoordinator();
+
     TensorShardMetadataMap tensor_shard_metadata_map_;
     TensorSpecMap tensor_spec_cache_;
     TensorShardsConcurrentMap& shard_id_to_tensor_;
     std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
+
+    /// Per-device register sets to send to coordinator during onboarding.
+    std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
+        register_sets_;
 
     /// Tracks deregistration requests: 1 request (waiter) blocked by 1
     /// coordinator response key (blocker). WaiterId=RequestId,
@@ -266,7 +279,8 @@ class NodeAgent {
   TensorShardsConcurrentMap shard_id_to_tensor_;
   std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)
   std::string
-      metrics_endpoint_;  ///< Telemetry server endpoint (empty = disabled)
+      metrics_endpoint_;       ///< Telemetry server endpoint (empty = disabled)
+  std::size_t register_size_;  ///< Per-register buffer size in bytes
 };
 //==============================================================================
 }  // namespace setu::node_manager

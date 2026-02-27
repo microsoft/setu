@@ -15,7 +15,11 @@ cir::Program ShortestPathRouting::Run(cir::Program program,
   // No topology and no routing hints — every copy would resolve to a direct
   // 2-hop path and be cloned unchanged, so skip the rewrite entirely.
   if (!topo_ && hints.GetHints<RoutingHint>().empty()) {
-    return program;
+    auto rw = cir::ProgramRewriter(program);
+    for (std::size_t i = 0; i < program.NumOperations(); ++i) {
+      rw.CloneOp(i);
+    }
+    return rw.Finish();
   }
 
   // Calculate override map from routing hints

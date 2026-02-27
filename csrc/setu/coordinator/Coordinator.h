@@ -79,9 +79,9 @@ class Coordinator {
   Queue<InboxMessage> inbox_queue_;
   Queue<OutboxMessage> outbox_queue_;
 
-  /// Queue of PlannerTasks (CopyOperationId + CopySpec) for the Executor to
-  /// compile and dispatch
-  Queue<PlannerTask> planner_queue_;
+  /// Queue of ExecutorTasks for the Executor to process (compile+dispatch or
+  /// onboarding)
+  Queue<ExecutorTask> planner_queue_;
 
   std::unique_ptr<Gateway> gateway_;
   std::unique_ptr<Handler> handler_;

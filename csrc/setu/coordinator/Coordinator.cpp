@@ -44,9 +44,9 @@ Coordinator::Coordinator(std::size_t port, PlannerPtr planner,
 
   auto outbox_notify = [this]() { gateway_->NotifyOutbox(); };
 
-  handler_ =
-      std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
-                                planner_queue_, outbox_notify, handler_sink);
+  handler_ = std::make_unique<Handler>(inbox_queue_, outbox_queue_, metastore_,
+                                       planner_queue_, outbox_notify,
+                                       handler_sink);
   executor_ =
       std::make_unique<Executor>(planner_queue_, outbox_queue_, metastore_,
                                  *planner_, outbox_notify, executor_sink);

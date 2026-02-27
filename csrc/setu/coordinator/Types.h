@@ -22,6 +22,8 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "messaging/Messages.h"
+#include "planner/Participant.h"
+#include "planner/RegisterSet.h"
 #include "planner/hints/HintStore.h"
 //==============================================================================
 namespace setu::coordinator {
@@ -107,6 +109,20 @@ struct PlannerTask {
   CopyOperationStatePtr state;  // Shared with Handler's copy_operations_ map
   HintStore hints;              // Per-operation hints (first-writer-wins)
 };
+//==============================================================================
+// Onboarding task
+//==============================================================================
+
+/// @brief Task to add register sets to the planner backend.
+struct OnboardingTask {
+  Identity node_agent_identity;
+  RequestId request_id;
+  std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
+      register_sets;
+};
+
+/// @brief Variant of tasks the Executor can process.
+using ExecutorTask = std::variant<PlannerTask, OnboardingTask>;
 //==============================================================================
 }  // namespace setu::coordinator
 //==============================================================================

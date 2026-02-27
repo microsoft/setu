@@ -17,52 +17,34 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+//==============================================================================
 #include "commons/Types.h"
+#include "commons/utils/Serialization.h"
+#include "messaging/BaseResponse.h"
 //==============================================================================
-#include "commons/datatypes/CopySpec.h"
-#include "metastore/MetaStore.h"
-#include "planner/Plan.h"
-#include "planner/hints/HintStore.h"
-#include "planner/passes/PassManager.h"
-#include "planner/targets/backend.h"
-#include "telemetry/MetricsData.h"
+namespace setu::commons::messages {
 //==============================================================================
-namespace setu::planner {
+using setu::commons::RequestId;
+using setu::commons::utils::BinaryBuffer;
+using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-using setu::commons::CopyOperationId;
-using setu::commons::datatypes::CopySpec;
-using setu::metastore::MetaStore;
-using setu::planner::hints::HintStore;
-using setu::planner::ir::llc::Program;
+/// Acknowledgment from Coordinator to NodeAgent after onboarding.
+struct OnboardNodeAgentResponse : public BaseResponse {
+  explicit OnboardNodeAgentResponse(
+      RequestId request_id_param,
+      ErrorCode error_code_param = ErrorCode::kSuccess)
+      : BaseResponse(request_id_param, error_code_param) {}
 
-/// @brief Result of Planner::Compile, containing the Plan and compilation
-/// metrics.
-struct CompileResult {
-  Plan plan;
-  setu::telemetry::CompilationMetrics metrics;
+  [[nodiscard]] std::string ToString() const {
+    return std::format("OnboardNodeAgentResponse(request_id={}, error_code={})",
+                       request_id, error_code);
+  }
+
+  void Serialize(BinaryBuffer& buffer) const;
+  static OnboardNodeAgentResponse Deserialize(const BinaryRange& range);
 };
 
-class Planner {
- public:
-  Planner(targets::BackendPtr backend, passes::PassManagerPtr pass_manager);
-  [[nodiscard]] CompileResult Compile(const CopySpec& spec,
-                                      MetaStore& metastore,
-                                      const HintStore& hints,
-                                      CopyOperationId copy_op_id);
-
-  /// Forward per-device register sets to the backend.
-  void AddBackendRegisterSets(
-      const std::unordered_map<ir::cir::Device, RegisterSet>&
-          register_sets /*[in]*/);
-
- private:
-  targets::BackendPtr backend_;
-  passes::PassManagerPtr pass_manager_;
-};
-
-using PlannerPtr = std::shared_ptr<Planner>;
-
 //==============================================================================
-}  // namespace setu::planner
+}  // namespace setu::commons::messages
 //==============================================================================

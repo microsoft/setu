@@ -36,6 +36,8 @@
 #include "messaging/GetTensorSelectionResponse.h"
 #include "messaging/GetTensorSpecRequest.h"
 #include "messaging/GetTensorSpecResponse.h"
+#include "messaging/OnboardNodeAgentRequest.h"
+#include "messaging/OnboardNodeAgentResponse.h"
 #include "messaging/RegisterTensorShardCoordinatorResponse.h"
 #include "messaging/RegisterTensorShardNodeAgentResponse.h"
 #include "messaging/RegisterTensorShardRequest.h"
@@ -60,14 +62,14 @@ using ClientRequest =
 using NodeAgentRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                  SubmitPullRequest, ExecuteResponse, GetTensorSpecRequest,
-                 DeregisterShardsRequest>;
+                 DeregisterShardsRequest, OnboardNodeAgentRequest>;
 
 /// @brief All messages from Coordinator to NodeAgent
 using CoordinatorMessage =
     std::variant<AllocateTensorRequest, CopyOperationFinishedRequest,
                  ExecuteRequest, RegisterTensorShardCoordinatorResponse,
                  SubmitCopyResponse, WaitForCopyResponse, GetTensorSpecResponse,
-                 DeregisterShardsResponse>;
+                 DeregisterShardsResponse, OnboardNodeAgentResponse>;
 
 using Request =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,

@@ -36,7 +36,7 @@ using setu::commons::utils::AggregationParticipant;
 //==============================================================================
 Handler::Handler(Queue<InboxMessage>& inbox_queue,
                  Queue<OutboxMessage>& outbox_queue, MetaStore& metastore,
-                 Queue<PlannerTask>& planner_queue,
+                 Queue<ExecutorTask>& planner_queue,
                  OutboxNotifyFn outbox_notify,
                  setu::telemetry::MetricsSinkPtr metrics_sink)
     : inbox_queue_(inbox_queue),
@@ -88,6 +88,8 @@ void Handler::Loop() {
               HandleGetTensorSpecRequest(inbox_msg.node_agent_identity, msg);
             } else if constexpr (std::is_same_v<T, DeregisterShardsRequest>) {
               HandleDeregisterShardsRequest(inbox_msg.node_agent_identity, msg);
+            } else if constexpr (std::is_same_v<T, OnboardNodeAgentRequest>) {
+              HandleOnboardNodeAgentRequest(inbox_msg.node_agent_identity, msg);
             } else {
               LOG_WARNING("Handler: Unknown message type (index={})",
                           inbox_msg.request.index());
@@ -433,6 +435,19 @@ void Handler::HandleDeregisterShardsRequest(
         "in-flight copy operations",
         tensor_names.size(), node_agent_identity);
   }
+}
+
+void Handler::HandleOnboardNodeAgentRequest(
+    const Identity& node_agent_identity,
+    const OnboardNodeAgentRequest& request) {
+  LOG_INFO("Coordinator received OnboardNodeAgentRequest from {} ({} devices)",
+           node_agent_identity, request.register_sets.size());
+
+  // Route to Executor thread — Planner is only accessed from Executor.
+  // Executor sends the response after processing.
+  planner_queue_.push(
+      OnboardingTask{node_agent_identity, request.request_id,
+                     request.register_sets});
 }
 //==============================================================================
 }  // namespace setu::coordinator
