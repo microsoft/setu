@@ -83,6 +83,7 @@ class ExperimentResult:
     shard_bytes: List[int] = field(default_factory=list)
     n_warmup_rounds: int = 0
     warmup_round_elapsed_s: List[float] = field(default_factory=list)
+    blocking: bool = True
     metrics_reports: Optional[Dict] = None
 
     def pretty_print(self) -> str:
@@ -112,6 +113,7 @@ class ExperimentResult:
         header.add_row("Result", Text(status_text, style=status_style))
         if self.copy_mode is not None:
             header.add_row("Copy mode", self.copy_mode.value.upper())
+        header.add_row("Blocking", "yes" if self.blocking else "no")
         header.add_row("E2E wall time", _format_time(self.elapsed_s))
         if total_bytes:
             header.add_row("Total data", _format_size(total_bytes))
@@ -153,10 +155,11 @@ class ExperimentResult:
 
         # -- Per-round summary --
         if self.round_elapsed_s:
-            rt = Table(
-                title="Round Summary (barrier-to-barrier, max across clients)",
-                show_lines=False,
-            )
+            if self.blocking:
+                round_table_title = "Round Summary (blocking, max across clients)"
+            else:
+                round_table_title = "Round Summary (non-blocking, amortized throughput)"
+            rt = Table(title=round_table_title, show_lines=False)
             rt.add_column("Round", justify="right")
             rt.add_column("Latency", justify="right")
             rt.add_column("Agg BW", justify="right")

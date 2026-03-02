@@ -40,7 +40,9 @@ def _source_body(
     copy_mode,
     dst_name,
     selections,
+    n_warmup_rounds,
     n_copy_rounds,
+    blocking,
     hints=None,
 ):
     """Register a source shard, fill with init_value, then run N copy rounds.
@@ -89,37 +91,61 @@ def _source_body(
 
     barrier.wait()  # all registered
 
-    round_times = []
-    for round_i in range(n_copy_rounds):
+    def _submit_source_copy():
+        src_selection = client.select(shard_spec.name)
+        dst_selection = client.select(dst_name)
+        if selections is not None:
+            for dim_name, indices in selections.items():
+                src_selection = src_selection.where(dim_name, indices)
+                dst_selection = dst_selection.where(dim_name, indices)
+        op_id = client.copy(src_selection, dst_selection, hints=hints)
+        assert op_id is not None, "Copy operation returned None"
+        return op_id
+
+    # Warmup rounds — always blocking so NCCL communicators are fully initialised
+    # before the timed section.
+    warmup_times = []
+    for round_i in range(n_warmup_rounds):
         barrier.wait()  # round start
-
         t_round = time.monotonic()
-
         if copy_mode == CopyMode.COPY:
-            src_selection = client.select(shard_spec.name)
-            dst_selection = client.select(dst_name)
-
-            if selections is not None:
-                for dim_name, indices in selections.items():
-                    src_selection = src_selection.where(dim_name, indices)
-                    dst_selection = dst_selection.where(dim_name, indices)
-
-            copy_op_id = client.copy(src_selection, dst_selection, hints=hints)
-            assert copy_op_id is not None, "Copy operation returned None"
-            logger.debug(
-                "%s: round %d, submitted copy op %s, waiting...",
-                tag,
-                round_i,
-                copy_op_id,
-            )
-            client.wait(copy_op_id)
-
+            client.wait(_submit_source_copy())
         elapsed = time.monotonic() - t_round
-
         barrier.wait()  # round end
+        warmup_times.append(elapsed)
+        logger.debug("%s: warmup %d complete in %.3fs", tag, round_i, elapsed)
 
-        round_times.append(elapsed)
-        logger.debug("%s: round %d complete in %.3fs", tag, round_i, elapsed)
+    # Measured rounds.
+    round_times = []
+    if blocking:
+        for round_i in range(n_copy_rounds):
+            barrier.wait()  # round start
+            t_round = time.monotonic()
+            if copy_mode == CopyMode.COPY:
+                op_id = _submit_source_copy()
+                logger.debug("%s: round %d, submitted copy op %s, waiting...", tag, round_i, op_id)
+                client.wait(op_id)
+            elapsed = time.monotonic() - t_round
+            barrier.wait()  # round end
+            round_times.append(elapsed)
+            logger.debug("%s: round %d complete in %.3fs", tag, round_i, elapsed)
+    else:
+        # Non-blocking: submit all copies, then wait for all.  Mirrors nccl-test
+        # -C 0 behaviour where ops are queued and synced once at the end.
+        barrier.wait()  # all ranks start together
+        t_all = time.monotonic()
+        op_ids = []
+        if copy_mode == CopyMode.COPY:
+            for round_i in range(n_copy_rounds):
+                op_ids.append(_submit_source_copy())
+                logger.debug("%s: round %d, submitted (non-blocking)", tag, round_i)
+        for op_id in op_ids:
+            client.wait(op_id)
+        total_elapsed = time.monotonic() - t_all
+        barrier.wait()  # all ranks done
+        per_round = total_elapsed / n_copy_rounds if n_copy_rounds > 0 else 0.0
+        round_times = [per_round] * n_copy_rounds
+        logger.debug("%s: non-blocking batch complete in %.3fs (%.3f/round)", tag, total_elapsed, per_round)
 
     logger.debug("%s: total body time=%.3fs", tag, time.monotonic() - t_body)
 
@@ -128,7 +154,7 @@ def _source_body(
         "success": True,
         "shard_name": shard_spec.name,
         "device": str(shard_spec.device.torch_device),
-        "round_elapsed_s": round_times,
+        "round_elapsed_s": warmup_times + round_times,
     }
 
 
@@ -141,7 +167,9 @@ def _dest_body(
     copy_mode,
     value_to_match,
     selections,
+    n_warmup_rounds,
     n_copy_rounds,
+    blocking,
     hints=None,
 ):
     """Register a dest shard, then run N copy rounds with verification on the last.
@@ -171,41 +199,57 @@ def _dest_body(
 
     barrier.wait()  # all registered
 
-    round_times = []
-    for round_i in range(n_copy_rounds):
-        barrier.wait()  # round start
-
-        t_round = time.monotonic()
-
+    def _submit_dest_copy():
         src_selection = client.select(src_name)
         dst_selection = client.select(shard_spec.name)
-
         if selections is not None:
             for dim_name, indices in selections.items():
                 src_selection = src_selection.where(dim_name, indices)
                 dst_selection = dst_selection.where(dim_name, indices)
-
         if copy_mode == CopyMode.PULL:
-            copy_op_id = client.pull(src_selection, dst_selection, hints=hints)
+            op_id = client.pull(src_selection, dst_selection, hints=hints)
         else:
-            copy_op_id = client.copy(src_selection, dst_selection, hints=hints)
+            op_id = client.copy(src_selection, dst_selection, hints=hints)
+        assert op_id is not None, "Copy operation returned None"
+        return op_id
 
-        assert copy_op_id is not None, "Copy operation returned None"
-        logger.debug(
-            "%s: round %d, submit %s op %s, waiting...",
-            tag,
-            round_i,
-            copy_mode.value,
-            copy_op_id,
-        )
-        client.wait(copy_op_id)
-
+    # Warmup rounds — always blocking.
+    warmup_times = []
+    for round_i in range(n_warmup_rounds):
+        barrier.wait()  # round start
+        t_round = time.monotonic()
+        client.wait(_submit_dest_copy())
         elapsed = time.monotonic() - t_round
-
         barrier.wait()  # round end
+        warmup_times.append(elapsed)
+        logger.debug("%s: warmup %d complete in %.3fs", tag, round_i, elapsed)
 
-        round_times.append(elapsed)
-        logger.debug("%s: round %d complete in %.3fs", tag, round_i, elapsed)
+    # Measured rounds.
+    round_times = []
+    if blocking:
+        for round_i in range(n_copy_rounds):
+            barrier.wait()  # round start
+            t_round = time.monotonic()
+            op_id = _submit_dest_copy()
+            logger.debug("%s: round %d, submit %s op %s, waiting...", tag, round_i, copy_mode.value, op_id)
+            client.wait(op_id)
+            elapsed = time.monotonic() - t_round
+            barrier.wait()  # round end
+            round_times.append(elapsed)
+            logger.debug("%s: round %d complete in %.3fs", tag, round_i, elapsed)
+    else:
+        # Non-blocking: queue all copies, sync once at the end.
+        barrier.wait()  # all ranks start together
+        t_all = time.monotonic()
+        op_ids = [_submit_dest_copy() for round_i in range(n_copy_rounds)]
+        logger.debug("%s: submitted %d %s ops (non-blocking)", tag, n_copy_rounds, copy_mode.value)
+        for op_id in op_ids:
+            client.wait(op_id)
+        total_elapsed = time.monotonic() - t_all
+        barrier.wait()  # all ranks done
+        per_round = total_elapsed / n_copy_rounds if n_copy_rounds > 0 else 0.0
+        round_times = [per_round] * n_copy_rounds
+        logger.debug("%s: non-blocking batch complete in %.3fs (%.3f/round)", tag, total_elapsed, per_round)
 
     # Verify values after all rounds complete
     t_read = time.monotonic()
@@ -228,7 +272,7 @@ def _dest_body(
         "success": True,
         "shard_name": shard_spec.name,
         "device": str(shard_spec.device.torch_device),
-        "round_elapsed_s": round_times,
+        "round_elapsed_s": warmup_times + round_times,
         "expected_value": value_to_match,
         "actual_value": actual_value,
         "values_match": values_match,
@@ -295,6 +339,7 @@ def run_experiment(
     timeout: float = 60.0,
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
+    blocking: bool = True,
     metrics_http_url: str = "",
     hints: Optional[List] = None,
 ) -> ExperimentResult:
@@ -324,9 +369,6 @@ def run_experiment(
     from setu.bench.backends import backend_for
 
     backend = backend_for(cluster_info)
-
-    # Bodies execute warmup + measured rounds; we strip warmup from results.
-    n_total_rounds = n_warmup_rounds + n_copy_rounds
 
     src_shards = src.shards
     dst_shards = dst.shards
@@ -397,7 +439,9 @@ def run_experiment(
                 copy_mode=copy_mode,
                 dst_name=dst.name,
                 selections=selections,
-                n_copy_rounds=n_total_rounds,
+                n_warmup_rounds=n_warmup_rounds,
+                n_copy_rounds=n_copy_rounds,
+                blocking=blocking,
                 hints=hints,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
@@ -413,7 +457,9 @@ def run_experiment(
                 copy_mode=copy_mode,
                 value_to_match=init_value,
                 selections=selections,
-                n_copy_rounds=n_total_rounds,
+                n_warmup_rounds=n_warmup_rounds,
+                n_copy_rounds=n_copy_rounds,
+                blocking=blocking,
                 hints=hints,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
@@ -516,5 +562,6 @@ def run_experiment(
         shard_bytes=shard_bytes,
         n_warmup_rounds=n_warmup_rounds,
         warmup_round_elapsed_s=warmup_round_elapsed_s,
+        blocking=blocking,
         metrics_reports=metrics_reports,
     )
