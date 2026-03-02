@@ -164,6 +164,14 @@ def parse_args():
         help="Timeout in seconds for the experiment (default: 600).",
     )
     parser.add_argument(
+        "--blocking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Block after each copy round (default: True). "
+        "--no-blocking queues all rounds then syncs once, "
+        "amortising control-plane overhead like nccl-test -C 0.",
+    )
+    parser.add_argument(
         "--enable-metrics",
         action="store_true",
         default=False,
@@ -367,8 +375,9 @@ def main():
     )
     print(f"Src: {args.src or 'all of node 0'}")
     print(f"Dst: {args.dst or 'all of node 0'}")
+    blocking_str = "blocking" if args.blocking else "non-blocking"
     print(
-        f"Mode: {copy_mode.value}, rounds: {args.rounds} + {args.warmup_rounds} warmup"
+        f"Mode: {copy_mode.value}, rounds: {args.rounds} + {args.warmup_rounds} warmup, {blocking_str}"
     )
     print()
 
@@ -385,6 +394,7 @@ def main():
             timeout=args.timeout,
             n_copy_rounds=args.rounds,
             n_warmup_rounds=args.warmup_rounds,
+            blocking=args.blocking,
             metrics_http_url=cluster_info.metrics_http_url,
         )
         print(result.pretty_print())
