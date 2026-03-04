@@ -14,41 +14,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/passes/Pybind.h"
+#pragma once
 //==============================================================================
-#include "commons/Logging.h"
 #include "commons/StdCommon.h"
-#include "commons/TorchCommon.h"
 //==============================================================================
-#include "planner/passes/PackUnpackCopies.h"
-#include "planner/passes/PassManager.h"
-#include "planner/passes/ShortestPathRouting.h"
+#include "planner/passes/Pass.h"
 //==============================================================================
 namespace setu::planner::passes {
 //==============================================================================
-using setu::planner::topo::TopologyPtr;
-//==============================================================================
-void InitPassesPybind(py::module_& m) {
-  py::class_<Pass, PassPtr>(m, "Pass");
 
-  py::class_<PassManager, PassManagerPtr>(m, "PassManager")
-      .def(py::init<>(), "Create an empty PassManager")
-      .def("add_pass", &PassManager::AddPass, py::arg("pass_"),
-           "Add a pass to the pipeline")
-      .def("num_passes", &PassManager::NumPasses,
-           "Return the number of passes in the pipeline");
+/// Consolidates cross-device CopyOps that share the same (src_device,
+/// dst_device, dtype) triple into a single pack → copy → unpack sequence.
+///
+/// For each group of 2+ cross-device copies between the same device pair:
+///   1. Allocate a temp buffer on the source device (total size of all sources)
+///   2. Pack all source values into that temp
+///   3. Allocate a temp buffer on the destination device (same size)
+///   4. Single cross-device copy from src temp to dst temp
+///   5. Unpack dst temp into all original destination values
+///
+/// Same-device copies and singleton cross-device copies are left unchanged.
+/// This pass should run after ShortestPathRouting.
+class PackUnpackCopies : public Pass {
+ public:
+  PackUnpackCopies() = default;
+  [[nodiscard]] cir::Program Run(cir::Program program,
+                                 const HintStore& hints) override;
+  [[nodiscard]] std::string Name() const override { return "PackUnpackCopies"; }
+};
 
-  py::class_<ShortestPathRouting, Pass, std::shared_ptr<ShortestPathRouting>>(
-      m, "ShortestPathRouting")
-      .def(py::init<TopologyPtr>(), py::arg("topology").none(true),
-           "Create a ShortestPathRouting pass with an optional topology");
-
-  py::class_<PackUnpackCopies, Pass, std::shared_ptr<PackUnpackCopies>>(
-      m, "PackUnpackCopies")
-      .def(py::init<>(),
-           "Create a PackUnpackCopies pass that consolidates cross-device "
-           "copies into pack/copy/unpack sequences");
-}
 //==============================================================================
 }  // namespace setu::planner::passes
 //==============================================================================
