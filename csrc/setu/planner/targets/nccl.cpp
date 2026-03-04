@@ -191,10 +191,86 @@ Plan NCCL::Run(const cir::Program& program) {
                                  concrete.src.ToString());
             view_map.try_emplace(concrete.out, src_it->second);
 
+          } else if constexpr (std::is_same_v<T, cir::PackOp>) {
+            auto dst_it = view_map.find(concrete.dst_in);
+            ASSERT_VALID_RUNTIME(dst_it != view_map.end(),
+                                 "PackOp dst_in {} not found in view_map",
+                                 concrete.dst_in.ToString());
+
+            const auto& dst = dst_it->second;
+
+            // Each source is copied into the destination at a running offset.
+            // Sources are packed contiguously in order.
+            std::size_t running_offset_bytes = dst.offset_bytes;
+            for (const auto& src_val : concrete.srcs) {
+              auto src_it = view_map.find(src_val);
+              ASSERT_VALID_RUNTIME(src_it != view_map.end(),
+                                   "PackOp source {} not found in view_map",
+                                   src_val.ToString());
+
+              const auto& src = src_it->second;
+
+              pending_copies.push_back(PendingCopy{
+                  .src_part = src.participant,
+                  .src_ref = src.buffer_ref,
+                  .src_offset_bytes = src.offset_bytes,
+                  .dst_part = dst.participant,
+                  .dst_ref = dst.buffer_ref,
+                  .dst_offset_bytes = running_offset_bytes,
+                  .count = src.count,
+                  .dtype = src.dtype,
+                  .cir_op_index = op_idx,
+              });
+
+              running_offset_bytes += src.count * torch::elementSize(src.dtype);
+            }
+
+            // dst_out inherits dst view info so downstream ops resolve.
+            view_map.try_emplace(concrete.dst_out, dst_it->second);
+
+          } else if constexpr (std::is_same_v<T, cir::UnpackOp>) {
+            auto src_it = view_map.find(concrete.src);
+            ASSERT_VALID_RUNTIME(src_it != view_map.end(),
+                                 "UnpackOp source {} not found in view_map",
+                                 concrete.src.ToString());
+
+            const auto& src = src_it->second;
+
+            ASSERT_VALID_RUNTIME(
+                concrete.dst_ins.size() == concrete.dst_outs.size(),
+                "UnpackOp dst_ins and dst_outs size mismatch");
+
+            // Each destination receives a contiguous slice of the source.
+            // Destinations are filled in order.
+            std::size_t running_offset_bytes = src.offset_bytes;
+            for (std::size_t i = 0; i < concrete.dst_ins.size(); ++i) {
+              auto dst_it = view_map.find(concrete.dst_ins[i]);
+              ASSERT_VALID_RUNTIME(dst_it != view_map.end(),
+                                   "UnpackOp dst_in {} not found in view_map",
+                                   concrete.dst_ins[i].ToString());
+
+              const auto& dst = dst_it->second;
+
+              pending_copies.push_back(PendingCopy{
+                  .src_part = src.participant,
+                  .src_ref = src.buffer_ref,
+                  .src_offset_bytes = running_offset_bytes,
+                  .dst_part = dst.participant,
+                  .dst_ref = dst.buffer_ref,
+                  .dst_offset_bytes = dst.offset_bytes,
+                  .count = dst.count,
+                  .dtype = dst.dtype,
+                  .cir_op_index = op_idx,
+              });
+
+              running_offset_bytes += dst.count * torch::elementSize(dst.dtype);
+
+              // Each dst_out inherits its corresponding dst_in view info.
+              view_map.try_emplace(concrete.dst_outs[i], dst_it->second);
+            }
+
           } else {
-            RAISE_RUNTIME_ERROR(
-                "NCCL backend: unsupported CIR operation (only view, "
-                "alloc_tmp, slice, copy, and consume are supported)");
+            RAISE_RUNTIME_ERROR("NCCL backend: unsupported CIR operation");
           }
         },
         op.op);

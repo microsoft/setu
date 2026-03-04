@@ -105,16 +105,20 @@ struct RegisterAllocation {
 
 //==============================================================================
 
-/// Copy-depth analysis: for each CopyOp, the number of CopyOp ancestors
-/// along the src chain.  Used to stage multi-hop relay copies so that
-/// NCCL sends at depth N only execute after depth N-1 receives complete.
+/// Copy-depth analysis: for each data-moving op (CopyOp, PackOp, UnpackOp),
+/// the number of data-moving ancestors along the src chain.  Used to stage
+/// multi-hop relay copies so that NCCL sends at depth N only execute after
+/// depth N-1 receives complete.
 struct CopyDepthAnalysis {
-  /// Indexed by CIR operation index. Only populated for CopyOp operations.
-  /// Depth 0 = src has no CopyOp ancestor (reads directly from View/AllocTmp).
-  /// Depth N = src traces through Slice/Consume to a CopyOp at depth N-1.
+  /// Indexed by CIR operation index. Only populated for data-moving operations
+  /// (CopyOp, PackOp, UnpackOp).
+  /// Depth 0 = src has no data-moving ancestor (reads directly from
+  /// View/AllocTmp).
+  /// Depth N = src traces through Slice/Consume to a data-moving op at depth
+  /// N-1.
   std::vector<std::optional<std::uint32_t>> depth;
 
-  /// Maximum depth across all CopyOps (0 if no copies, or all are depth 0).
+  /// Maximum depth across all data-moving ops (0 if none, or all are depth 0).
   std::uint32_t max_depth;
 
   [[nodiscard]] static CopyDepthAnalysis Build(const Program& program);

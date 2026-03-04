@@ -43,8 +43,9 @@ namespace cir = setu::planner::ir::cir;
 ///               is performed internally using pool_sizes)
 ///   slice     — creates a sub-region view of an existing value
 ///   copy      — emits LLC Copy (same-device) or Send+Receive (cross-device)
-///
-/// Unsupported (will assert): pack, unpack
+///   consume   — propagates view info (marker only, no LLC emission)
+///   pack      — concatenates sources into destination (multiple copies)
+///   unpack    — splits source into destinations (multiple copies)
 struct NCCL : public Backend {
   explicit NCCL(std::unordered_map<cir::Device, setu::planner::RegisterSet>
                     register_sets = {});

@@ -192,44 +192,56 @@ CopyDepthAnalysis CopyDepthAnalysis::Build(const Program& program) {
 
   for (std::uint32_t op_idx = 0; op_idx < program.NumOperations(); ++op_idx) {
     const auto& op = program.Operations()[op_idx];
-    if (op.Type() != OpType::kCopy) {
+
+    // Collect the source operands that determine this op's depth.
+    // CopyOp and UnpackOp have a single src; PackOp has multiple srcs.
+    std::vector<Value> src_operands;
+    if (op.Type() == OpType::kCopy) {
+      src_operands.push_back(std::get<CopyOp>(op.op).src);
+    } else if (op.Type() == OpType::kPack) {
+      src_operands = std::get<PackOp>(op.op).srcs;
+    } else if (op.Type() == OpType::kUnpack) {
+      src_operands.push_back(std::get<UnpackOp>(op.op).src);
+    } else {
       continue;
     }
 
-    const auto& copy_op = std::get<CopyOp>(op.op);
+    // Compute depth as the max across all source chains.
+    std::uint32_t depth = 0;
+    for (const auto& src : src_operands) {
+      // Trace the src operand back through SliceOp/ConsumeOp chains to find
+      // the root defining operation.
+      Value current = src;
+      while (true) {
+        const auto& def_op = program.GetDefiningOp(current);
+        if (def_op.Type() == OpType::kSlice) {
+          current = std::get<SliceOp>(def_op.op).src;
+        } else if (def_op.Type() == OpType::kConsume) {
+          current = std::get<ConsumeOp>(def_op.op).src;
+        } else {
+          break;
+        }
+      }
 
-    // Trace the src operand back through SliceOp/ConsumeOp chains to find
-    // the root defining operation.
-    Value current = copy_op.src;
-    while (true) {
-      const auto& def_op = program.GetDefiningOp(current);
-      if (def_op.Type() == OpType::kSlice) {
-        current = std::get<SliceOp>(def_op.op).src;
-      } else if (def_op.Type() == OpType::kConsume) {
-        current = std::get<ConsumeOp>(def_op.op).src;
-      } else {
-        break;
+      // current now points to a value defined by the root op.
+      // Check if the root is a data-moving op (meaning this is a relay chain).
+      const auto& root_op = program.GetDefiningOp(current);
+      const auto& root_info = program.GetValueInfo(current);
+      auto root_op_idx = root_info.def_op_index;
+
+      if (root_op.Type() == OpType::kCopy || root_op.Type() == OpType::kPack ||
+          root_op.Type() == OpType::kUnpack) {
+        ASSERT_VALID_RUNTIME(
+            result.depth[root_op_idx].has_value(),
+            "Data-moving op at index {} depends on op at index {} which has "
+            "no depth (topological order violation?)",
+            op_idx, root_op_idx);
+        depth = std::max(depth, result.depth[root_op_idx].value() + 1);
       }
     }
 
-    // current now points to a value defined by the root op.
-    // Check if the root is a CopyOp (meaning this is a relay chain).
-    const auto& root_op = program.GetDefiningOp(current);
-    const auto& root_info = program.GetValueInfo(current);
-    auto root_op_idx = root_info.def_op_index;
-
-    if (root_op.Type() == OpType::kCopy) {
-      ASSERT_VALID_RUNTIME(
-          result.depth[root_op_idx].has_value(),
-          "CopyOp at index {} depends on CopyOp at index {} which has no "
-          "depth (topological order violation?)",
-          op_idx, root_op_idx);
-      result.depth[op_idx] = result.depth[root_op_idx].value() + 1;
-    } else {
-      result.depth[op_idx] = 0;
-    }
-
-    result.max_depth = std::max(result.max_depth, result.depth[op_idx].value());
+    result.depth[op_idx] = depth;
+    result.max_depth = std::max(result.max_depth, depth);
   }
 
   return result;
