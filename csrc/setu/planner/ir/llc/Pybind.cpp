@@ -60,21 +60,34 @@ void InitShardRefPybind(py::module_& m) {
       .def("__eq__", &ShardRef::operator==);
 }
 //==============================================================================
-void InitCopyInstructionPybind(py::module_& m) {
-  py::class_<Copy>(m, "Copy")
+void InitCopyEntryPybind(py::module_& m) {
+  py::class_<CopyEntry>(m, "CopyEntry")
       .def(py::init<BufferRef, std::size_t, BufferRef, std::size_t, std::size_t,
                     torch::Dtype>(),
            py::arg("src_ref"), py::arg("src_offset_bytes"), py::arg("dst_ref"),
            py::arg("dst_offset_bytes"), py::arg("count"), py::arg("dtype"),
-           "Create a copy instruction for GPU memory transfer")
-      .def_readonly("src_ref", &Copy::src_ref, "Source buffer reference")
-      .def_readonly("src_offset_bytes", &Copy::src_offset_bytes,
+           "Create a single copy entry for a batched Copy instruction")
+      .def_readonly("src_ref", &CopyEntry::src_ref, "Source buffer reference")
+      .def_readonly("src_offset_bytes", &CopyEntry::src_offset_bytes,
                     "Byte offset in source memory")
-      .def_readonly("dst_ref", &Copy::dst_ref, "Destination buffer reference")
-      .def_readonly("dst_offset_bytes", &Copy::dst_offset_bytes,
+      .def_readonly("dst_ref", &CopyEntry::dst_ref,
+                    "Destination buffer reference")
+      .def_readonly("dst_offset_bytes", &CopyEntry::dst_offset_bytes,
                     "Byte offset in destination memory")
-      .def_readonly("count", &Copy::count, "Number of elements to copy")
-      .def_readonly("dtype", &Copy::dtype, "Data type of elements")
+      .def_readonly("count", &CopyEntry::count, "Number of elements to copy")
+      .def_readonly("dtype", &CopyEntry::dtype, "Data type of elements");
+}
+//==============================================================================
+void InitCopyInstructionPybind(py::module_& m) {
+  py::class_<Copy>(m, "Copy")
+      .def(py::init<std::vector<CopyEntry>>(), py::arg("entries"),
+           "Create a batched copy instruction from a list of CopyEntry items")
+      .def(py::init<BufferRef, std::size_t, BufferRef, std::size_t, std::size_t,
+                    torch::Dtype>(),
+           py::arg("src_ref"), py::arg("src_offset_bytes"), py::arg("dst_ref"),
+           py::arg("dst_offset_bytes"), py::arg("count"), py::arg("dtype"),
+           "Create a single-entry copy instruction (convenience)")
+      .def_readonly("entries", &Copy::entries, "Batched copy entries")
       .def("__str__", &Copy::ToString)
       .def("__repr__", &Copy::ToString);
 }
@@ -213,6 +226,7 @@ void InitLLCPybind(py::module_& m) {
         "Generate a new NCCL unique ID for communicator initialization");
 
   // Instruction types (must be registered before Instruction itself)
+  InitCopyEntryPybind(m);
   InitCopyInstructionPybind(m);
   InitSendInstructionPybind(m);
   InitReceiveInstructionPybind(m);

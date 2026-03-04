@@ -36,17 +36,13 @@ using setu::planner::ir::ref::BufferRef;
 using setu::planner::ir::ref::ShardRef;
 //==============================================================================
 
-/// Local (same-device) memory copy between two buffer regions.
-///
-/// Copies `count` elements of type `dtype` from `src_ref` at
-/// `src_offset_bytes` to `dst_ref` at `dst_offset_bytes`.  Both buffers
-/// must reside on the same device.  Device pointers are resolved lazily via
-/// Embellish() before execution.
-struct Copy {
-  Copy(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
-       BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
-       std::size_t count_param, torch::Dtype dtype_param,
-       DevicePtr src_ptr_param = nullptr, DevicePtr dst_ptr_param = nullptr)
+/// A single copy entry within a batched Copy instruction.
+struct CopyEntry {
+  CopyEntry(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
+            BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
+            std::size_t count_param, torch::Dtype dtype_param,
+            DevicePtr src_ptr_param = nullptr,
+            DevicePtr dst_ptr_param = nullptr)
       : src_ref(std::move(src_ref_param)),
         src_offset_bytes(src_offset_bytes_param),
         dst_ref(std::move(dst_ref_param)),
@@ -55,6 +51,46 @@ struct Copy {
         dtype(dtype_param),
         src_ptr(src_ptr_param),
         dst_ptr(dst_ptr_param) {}
+
+  ~CopyEntry() = default;
+  CopyEntry(const CopyEntry&) = default;
+  CopyEntry& operator=(const CopyEntry&) = default;
+  CopyEntry(CopyEntry&&) = default;
+  CopyEntry& operator=(CopyEntry&&) = default;
+
+  BufferRef src_ref;
+  std::size_t src_offset_bytes;
+  BufferRef dst_ref;
+  std::size_t dst_offset_bytes;
+  std::size_t count;
+  torch::Dtype dtype;
+
+  // Embellished pointers — resolved lazily via Copy::Embellish().
+  DevicePtr src_ptr;
+  DevicePtr dst_ptr;
+};
+
+/// Batched local (same-device) memory copy instruction.
+///
+/// Contains one or more CopyEntry items, each describing a copy of `count`
+/// elements of type `dtype` from `src_ref` at `src_offset_bytes` to `dst_ref`
+/// at `dst_offset_bytes`.  All entries must target the same device.
+///
+/// At execution time the worker issues a single `cudaMemcpyBatchAsync` call
+/// for all entries, reducing per-copy driver overhead.  Device pointers are
+/// resolved lazily via Embellish() before execution.
+struct Copy {
+  explicit Copy(std::vector<CopyEntry> entries_param)
+      : entries(std::move(entries_param)) {}
+
+  /// Convenience constructor for a single-entry copy.
+  Copy(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
+       BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
+       std::size_t count_param, torch::Dtype dtype_param) {
+    entries.emplace_back(std::move(src_ref_param), src_offset_bytes_param,
+                         std::move(dst_ref_param), dst_offset_bytes_param,
+                         count_param, dtype_param);
+  }
 
   ~Copy() = default;
   Copy(const Copy&) = default;
@@ -68,24 +104,13 @@ struct Copy {
 
   static Copy Deserialize(const BinaryRange& range);
 
-  /**
-   * @brief Populates the device pointers by looking up the base address.
-   */
+  /// Populates device pointers for all entries by looking up base addresses.
   void Embellish(const std::function<DevicePtr(const BufferRef&)>& resolver);
 
   /// @brief Extract shard access requirements for this instruction.
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
-  BufferRef src_ref;
-  std::size_t src_offset_bytes;
-  BufferRef dst_ref;
-  std::size_t dst_offset_bytes;
-  std::size_t count;
-  torch::Dtype dtype;
-
-  // Embellished pointers
-  DevicePtr src_ptr;
-  DevicePtr dst_ptr;
+  std::vector<CopyEntry> entries;
 };
 
 //==============================================================================

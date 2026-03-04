@@ -199,15 +199,31 @@ void NCCLWorker::ExecuteUseComm(const UseComm& inst) {
 }
 
 void NCCLWorker::ExecuteCopy(const Copy& inst) {
-  const std::size_t bytes = inst.count * GetDTypeSizeBytes(inst.dtype);
+  ASSERT_VALID_RUNTIME(!inst.entries.empty(),
+                       "Copy instruction must have at least one entry");
 
-  CUDA_CHECK(
-      cudaMemcpyAsync(static_cast<char*>(inst.dst_ptr) + inst.dst_offset_bytes,
-                      static_cast<char*>(inst.src_ptr) + inst.src_offset_bytes,
-                      bytes, cudaMemcpyDeviceToDevice, stream_));
+  const std::size_t count = inst.entries.size();
 
-  LOG_DEBUG("Copy: {} bytes from {} to {}", bytes, inst.src_ref.ToString(),
-            inst.dst_ref.ToString());
+  std::vector<void*> srcs(count);
+  std::vector<void*> dsts(count);
+  std::vector<std::size_t> sizes(count);
+
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto& e = inst.entries[i];
+    srcs[i] = static_cast<char*>(e.src_ptr) + e.src_offset_bytes;
+    dsts[i] = static_cast<char*>(e.dst_ptr) + e.dst_offset_bytes;
+    sizes[i] = e.count * GetDTypeSizeBytes(e.dtype);
+  }
+
+  // All entries are device-to-device with stream-ordered source access.
+  cudaMemcpyAttributes attrs = {};
+  attrs.srcAccessOrder = cudaMemcpySrcAccessOrderStream;
+
+  std::size_t fail_idx = 0;
+  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
+                                  attrs, &fail_idx, stream_));
+
+  LOG_DEBUG("Copy: {} entries batched via cudaMemcpyBatchAsync", count);
 }
 
 void NCCLWorker::ExecuteSend(const Send& inst) {

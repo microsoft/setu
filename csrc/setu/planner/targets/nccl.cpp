@@ -317,11 +317,25 @@ Plan NCCL::Run(const cir::Program& program) {
     return copy_depth.depth[a.cir_op_index] < copy_depth.depth[b.cir_op_index];
   });
 
+  // Flush accumulated same-device copies as batched Copy instructions, one per
+  // participant.  Called at stage boundaries and at the end of the loop.
+  std::unordered_map<Participant, std::vector<llc::CopyEntry>> copy_batches;
+
+  auto flush_copy_batches = [&]() {
+    for (auto& [part, batch] : copy_batches) {
+      if (!batch.empty()) {
+        programs[part].emplace_back(llc::Copy(std::move(batch)));
+      }
+    }
+    copy_batches.clear();
+  };
+
   std::uint32_t prev_stage = 0;
   for (const auto& c : pending_copies) {
     auto stage = copy_depth.depth[c.cir_op_index].value();
 
     if (stage != prev_stage) {
+      flush_copy_batches();
       for (const auto& part : parts) {
         programs[part].emplace_back(llc::Barrier());
       }
@@ -329,9 +343,9 @@ Plan NCCL::Run(const cir::Program& program) {
     }
 
     if (c.src_part == c.dst_part) {
-      programs[c.src_part].emplace_back(llc::Copy(c.src_ref, c.src_offset_bytes,
-                                                  c.dst_ref, c.dst_offset_bytes,
-                                                  c.count, c.dtype));
+      copy_batches[c.src_part].emplace_back(c.src_ref, c.src_offset_bytes,
+                                            c.dst_ref, c.dst_offset_bytes,
+                                            c.count, c.dtype);
     } else {
       programs[c.src_part].emplace_back(llc::Send(c.src_ref, c.src_offset_bytes,
                                                   c.count, c.dtype,
@@ -341,6 +355,9 @@ Plan NCCL::Run(const cir::Program& program) {
                        entry.ranks.at(c.src_part)));
     }
   }
+
+  // Flush remaining copies from the last stage.
+  flush_copy_batches();
 
   return plan;
 }

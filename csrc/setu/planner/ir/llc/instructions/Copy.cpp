@@ -22,49 +22,72 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string Copy::ToString() const {
-  return std::format(
-      "Copy(src_ref={}, src_offset_bytes={}, dst_ref={}, "
-      "dst_offset_bytes={}, count={}, dtype={}, src_ptr={}, dst_ptr={})",
-      src_ref.ToString(), src_offset_bytes, dst_ref.ToString(),
-      dst_offset_bytes, count, static_cast<int>(dtype), src_ptr, dst_ptr);
+  std::string result = std::format("Copy(num_entries={})", entries.size());
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const auto& e = entries[i];
+    result += std::format(
+        "\n  [{}] src_ref={}, src_offset_bytes={}, dst_ref={}, "
+        "dst_offset_bytes={}, count={}, dtype={}, src_ptr={}, dst_ptr={}",
+        i, e.src_ref.ToString(), e.src_offset_bytes, e.dst_ref.ToString(),
+        e.dst_offset_bytes, e.count, static_cast<int>(e.dtype), e.src_ptr,
+        e.dst_ptr);
+  }
+  return result;
 }
 
 void Copy::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(src_ptr);
-  const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  writer.WriteFields(src_ref, src_offset_bytes, dst_ref, dst_offset_bytes,
-                     count, dtype, src_ptr_value, dst_ptr_value);
+  writer.Write<std::size_t>(entries.size());
+  for (const auto& e : entries) {
+    const auto src_ptr_value = reinterpret_cast<std::uintptr_t>(e.src_ptr);
+    const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(e.dst_ptr);
+    writer.WriteFields(e.src_ref, e.src_offset_bytes, e.dst_ref,
+                       e.dst_offset_bytes, e.count, e.dtype, src_ptr_value,
+                       dst_ptr_value);
+  }
 }
 
 Copy Copy::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [src_ref, src_offset_bytes, dst_ref, dst_offset_bytes, count, dtype,
-        src_ptr_val, dst_ptr_val] =
-      reader.ReadFields<BufferRef, std::size_t, BufferRef, std::size_t,
-                        std::size_t, torch::Dtype, std::uintptr_t,
-                        std::uintptr_t>();
+  const auto num_entries = reader.Read<std::size_t>();
 
-  auto src_ptr = reinterpret_cast<DevicePtr>(src_ptr_val);
-  auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_val);
-  return Copy(std::move(src_ref), src_offset_bytes, std::move(dst_ref),
-              dst_offset_bytes, count, dtype, src_ptr, dst_ptr);
+  std::vector<CopyEntry> entries;
+  entries.reserve(num_entries);
+  for (std::size_t i = 0; i < num_entries; ++i) {
+    auto [src_ref, src_offset_bytes, dst_ref, dst_offset_bytes, count, dtype,
+          src_ptr_val, dst_ptr_val] =
+        reader.ReadFields<BufferRef, std::size_t, BufferRef, std::size_t,
+                          std::size_t, torch::Dtype, std::uintptr_t,
+                          std::uintptr_t>();
+
+    entries.emplace_back(std::move(src_ref), src_offset_bytes,
+                         std::move(dst_ref), dst_offset_bytes, count, dtype,
+                         reinterpret_cast<DevicePtr>(src_ptr_val),
+                         reinterpret_cast<DevicePtr>(dst_ptr_val));
+  }
+
+  return Copy(std::move(entries));
 }
 
 void Copy::Embellish(
     const std::function<DevicePtr(const BufferRef&)>& resolver) {
-  src_ptr = resolver(src_ref);
-  dst_ptr = resolver(dst_ref);
+  for (auto& e : entries) {
+    e.src_ptr = resolver(e.src_ref);
+    e.dst_ptr = resolver(e.dst_ref);
+  }
 }
 
 ShardAccessMap Copy::GetShardAccess() const {
   ShardAccessMap access_map;
-  // Write on dst always wins; read on src only if not already written
-  if (dst_ref.IsShard()) {
-    access_map[dst_ref.AsShard().shard_id] = ShardAccessMode::kWrite;
-  }
-  if (src_ref.IsShard()) {
-    access_map.try_emplace(src_ref.AsShard().shard_id, ShardAccessMode::kRead);
+  for (const auto& e : entries) {
+    // Write on dst always wins; read on src only if not already written
+    if (e.dst_ref.IsShard()) {
+      access_map[e.dst_ref.AsShard().shard_id] = ShardAccessMode::kWrite;
+    }
+    if (e.src_ref.IsShard()) {
+      access_map.try_emplace(e.src_ref.AsShard().shard_id,
+                             ShardAccessMode::kRead);
+    }
   }
   return access_map;
 }
