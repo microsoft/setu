@@ -20,9 +20,12 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/Constants.h"
 #include "planner/passes/BandwidthAggregation.h"
+#include "planner/passes/InstructionScheduler.h"
 #include "planner/passes/PackUnpackCopies.h"
 #include "planner/passes/PassManager.h"
+#include "planner/passes/RegisterTiling.h"
 #include "planner/passes/ShortestPathRouting.h"
 //==============================================================================
 namespace setu::planner::passes {
@@ -56,6 +59,19 @@ void InitPassesPybind(py::module_& m) {
            py::arg("max_paths") = 4,
            "Create a BandwidthAggregation pass that splits cross-device "
            "copies across multiple edge-disjoint paths");
+
+  py::class_<RegisterTiling, Pass, std::shared_ptr<RegisterTiling>>(
+      m, "RegisterTiling")
+      .def(py::init<std::size_t>(),
+           py::arg("chunk_size_bytes") = setu::planner::kRegisterSize,
+           "Create a RegisterTiling pass that splits large AllocTmp buffers "
+           "into register-sized chunks");
+
+  py::class_<InstructionScheduler, Pass, std::shared_ptr<InstructionScheduler>>(
+      m, "InstructionScheduler")
+      .def(py::init<>(),
+           "Create an InstructionScheduler pass that reorders operations "
+           "to minimize AllocTmp register pressure");
 }
 //==============================================================================
 }  // namespace setu::planner::passes

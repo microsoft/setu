@@ -10,6 +10,8 @@ from setu._coordinator import Topology
 
 _PASS_REGISTRY = {
     "shortest_path_routing": lambda topo: _make_shortest_path_routing(topo),
+    "register_tiling": lambda topo: _make_register_tiling(),
+    "instruction_scheduler": lambda topo: _make_instruction_scheduler(),
 }
 
 AVAILABLE_PASSES: list = list(_PASS_REGISTRY.keys())
@@ -19,6 +21,18 @@ def _make_shortest_path_routing(topology: Optional[Topology]):
     from setu._coordinator import ShortestPathRouting
 
     return ShortestPathRouting(topology)
+
+
+def _make_register_tiling():
+    from setu._coordinator import RegisterTiling
+
+    return RegisterTiling()
+
+
+def _make_instruction_scheduler():
+    from setu._coordinator import InstructionScheduler
+
+    return InstructionScheduler()
 
 
 def resolve_passes(
