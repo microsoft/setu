@@ -29,17 +29,10 @@ namespace setu::test::native {
 //==============================================================================
 using setu::planner::Participant;
 using setu::planner::hints::HintStore;
-using setu::planner::ir::cir::AllocTmpOp;
-using setu::planner::ir::cir::CopyOp;
 using setu::planner::ir::cir::Device;
 using setu::planner::ir::cir::Linearity;
-using setu::planner::ir::cir::OpType;
-using setu::planner::ir::cir::PackOp;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
-using setu::planner::ir::cir::UnpackOp;
-using setu::planner::ir::cir::Value;
-using setu::planner::ir::cir::ValueInfo;
 using setu::planner::passes::PackUnpackCopies;
 //==============================================================================
 namespace {
@@ -65,44 +58,6 @@ class PackUnpackCopiesTest : public ::testing::Test {
   torch::Dtype dt = torch::kFloat16;
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
-
-  /// Count operations of a given type in a program.
-  [[nodiscard]] std::size_t CountOps(const Program& program,
-                                     OpType type) const {
-    std::size_t count = 0;
-    for (const auto& op : program.Operations()) {
-      if (op.Type() == type) {
-        ++count;
-      }
-    }
-    return count;
-  }
-
-  /// Find the first operation of a given type.
-  [[nodiscard]] const auto& FindFirstOp(const Program& program,
-                                        OpType type) const {
-    for (const auto& op : program.Operations()) {
-      if (op.Type() == type) {
-        return op;
-      }
-    }
-    EXPECT_TRUE(false) << "No op of requested type found";
-    return program.Operations().front();  // unreachable
-  }
-
-  /// Collect all operations of a given type.
-  [[nodiscard]] std::vector<
-      std::reference_wrapper<const setu::planner::ir::cir::Operation>>
-  FindAllOps(const Program& program, OpType type) const {
-    std::vector<std::reference_wrapper<const setu::planner::ir::cir::Operation>>
-        result;
-    for (const auto& op : program.Operations()) {
-      if (op.Type() == type) {
-        result.push_back(std::cref(op));
-      }
-    }
-    return result;
-  }
 };
 
 //==============================================================================
@@ -127,10 +82,10 @@ TEST_F(PackUnpackCopiesTest, ViewsOnly_NoCopies_PassedThrough) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kView), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kPack), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 0u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -151,10 +106,14 @@ TEST_F(PackUnpackCopiesTest, SameDeviceCopies_NeverGrouped) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kPack), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 0u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [160, 32], Half)
+  [4] %4 = copy(%0, %1)
+  [5] %5 = copy(%2, %3)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -171,10 +130,11 @@ TEST_F(PackUnpackCopiesTest, SingleCrossDeviceCopy_NotPacked) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kPack), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 0u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = copy(%0, %1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -194,11 +154,17 @@ TEST_F(PackUnpackCopiesTest, TwoCrossDeviceCopies_ConsolidatedIntoOne) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // Two individual copies replaced by: alloc_tmp, pack, alloc_tmp, copy, unpack
-  EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 2u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [5] %5 = pack((%0, %2), %4)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [7] %7 = copy(%5, %6)
+  [8] (%8, %9) = unpack(%7, (%1, %3))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -219,14 +185,17 @@ TEST_F(PackUnpackCopiesTest, TempBufferSize_EqualsSum) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  const std::size_t expected_total = 64 + 32;
-  auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
-  ASSERT_EQ(alloc_ops.size(), 2u);
-  for (const auto& op_ref : alloc_ops) {
-    const auto& alloc = std::get<AllocTmpOp>(op_ref.get().op);
-    EXPECT_EQ(alloc.size_elements, expected_total)
-        << "Temp buffer size should equal total source size";
-  }
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [5] %5 = pack((%0, %2), %4)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [7] %7 = copy(%5, %6)
+  [8] (%8, %9) = unpack(%7, (%1, %3))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -247,19 +216,17 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_AllocatedOnCorrectDevices) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
-  ASSERT_EQ(alloc_ops.size(), 2u);
-
-  std::set<Device> alloc_devices;
-  for (const auto& op_ref : alloc_ops) {
-    const auto& alloc = std::get<AllocTmpOp>(op_ref.get().op);
-    auto info = result.GetValueInfo(alloc.out);
-    alloc_devices.insert(info.device);
-  }
-  EXPECT_TRUE(alloc_devices.contains(dev0))
-      << "Should allocate a temp on the source device";
-  EXPECT_TRUE(alloc_devices.contains(dev1))
-      << "Should allocate a temp on the destination device";
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [5] %5 = pack((%0, %2), %4)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [7] %7 = copy(%5, %6)
+  [8] (%8, %9) = unpack(%7, (%1, %3))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -280,14 +247,17 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_MatchSourceDtype) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
-  ASSERT_EQ(alloc_ops.size(), 2u);
-  for (const auto& op_ref : alloc_ops) {
-    const auto& alloc = std::get<AllocTmpOp>(op_ref.get().op);
-    auto info = result.GetValueInfo(alloc.out);
-    EXPECT_EQ(info.dtype, dtype)
-        << "Temp buffer dtype should match source dtype";
-  }
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], BFloat16)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], BFloat16)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], BFloat16)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], BFloat16)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, BFloat16)
+  [5] %5 = pack((%0, %2), %4)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, BFloat16)
+  [7] %7 = copy(%5, %6)
+  [8] (%8, %9) = unpack(%7, (%1, %3))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -310,20 +280,19 @@ TEST_F(PackUnpackCopiesTest, PackSources_MatchNumberOfGroupedCopies) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
-
-  const auto& pack_op = std::get<PackOp>(FindFirstOp(result, OpType::kPack).op);
-  EXPECT_EQ(pack_op.srcs.size(), 3u)
-      << "Pack should have one source per grouped copy";
-
-  const auto& unpack_op =
-      std::get<UnpackOp>(FindFirstOp(result, OpType::kUnpack).op);
-  EXPECT_EQ(unpack_op.dst_ins.size(), 3u)
-      << "Unpack should have one destination per grouped copy";
-  EXPECT_EQ(unpack_op.dst_outs.size(), 3u)
-      << "Unpack should produce one output per grouped copy";
-
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [96, 16], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [96, 16], Half)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 112, Half)
+  [7] %7 = pack((%0, %2, %4), %6)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 112, Half)
+  [9] %9 = copy(%7, %8)
+  [10] (%10, %11, %12) = unpack(%9, (%1, %3, %5))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -352,11 +321,26 @@ TEST_F(PackUnpackCopiesTest, DifferentDevicePairs_SeparateGroups) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // Each device pair produces its own pack/copy/unpack
-  EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 4u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [9] %9 = pack((%0, %2), %8)
+  [10] %10 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [11] %11 = copy(%9, %10)
+  [12] (%12, %13) = unpack(%11, (%1, %3))
+  [13] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 64, Half)
+  [14] %15 = pack((%4, %6), %14)
+  [15] %16 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [16] %17 = copy(%15, %16)
+  [17] (%18, %19) = unpack(%17, (%5, %7))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -385,11 +369,26 @@ TEST_F(PackUnpackCopiesTest, BidirectionalCopies_SeparateGroups) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // dev0→dev1 and dev1→dev0 are distinct device pairs → 2 separate groups
-  EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 4u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [9] %9 = pack((%0, %2), %8)
+  [10] %10 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [11] %11 = copy(%9, %10)
+  [12] (%12, %13) = unpack(%11, (%1, %3))
+  [13] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 64, Half)
+  [14] %15 = pack((%4, %6), %14)
+  [15] %16 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 64, Half)
+  [16] %17 = copy(%15, %16)
+  [17] (%18, %19) = unpack(%17, (%5, %7))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -418,10 +417,26 @@ TEST_F(PackUnpackCopiesTest, DifferentDtypes_SeparateGroups) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // Two dtype groups → 2 packs, 2 copies, 2 unpacks
-  EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 2u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 8], Float)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 8], Float)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [9] %9 = pack((%0, %2), %8)
+  [10] %10 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [11] %11 = copy(%9, %10)
+  [12] (%12, %13) = unpack(%11, (%1, %3))
+  [13] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 24, Float)
+  [14] %15 = pack((%4, %6), %14)
+  [15] %16 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 24, Float)
+  [16] %17 = copy(%15, %16)
+  [17] (%18, %19) = unpack(%17, (%5, %7))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -443,11 +458,20 @@ TEST_F(PackUnpackCopiesTest, DifferentDtype_SingletonNotGroupedWithOthers) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // f16 group: 1 pack + 1 copy + 1 unpack
-  // f32 singleton: 1 plain copy
-  EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [7] %7 = pack((%0, %2), %6)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [9] %9 = copy(%7, %8)
+  [10] (%10, %11) = unpack(%9, (%1, %3))
+  [11] %12 = copy(%4, %5)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -476,10 +500,23 @@ TEST_F(PackUnpackCopiesTest, MixedSameAndCrossDevice_OnlyCrossDeviceGrouped) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // 2 same-device copies + 1 consolidated cross-device copy = 3 CopyOps
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 3u);
-  EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 16], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [4] %4 = copy(%0, %1)
+  [5] %5 = copy(%2, %3)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [8] %8 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [9] %9 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [10] %10 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [11] %11 = pack((%6, %8), %10)
+  [12] %12 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [13] %13 = copy(%11, %12)
+  [14] (%14, %15) = unpack(%13, (%7, %9))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -504,21 +541,33 @@ TEST_F(PackUnpackCopiesTest, ManyCopies_AllPackedIntoOneGroup) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
-
-  // Verify pack has correct number of sources
-  const auto& pack_op = std::get<PackOp>(FindFirstOp(result, OpType::kPack).op);
-  EXPECT_EQ(pack_op.srcs.size(), kNumCopies);
-
-  // Verify temp buffer size = sum of all source sizes
-  auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
-  for (const auto& op_ref : alloc_ops) {
-    const auto& alloc = std::get<AllocTmpOp>(op_ref.get().op);
-    EXPECT_EQ(alloc.size_elements, kNumCopies * kElemSize);
-  }
-
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [96, 32], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [96, 32], Half)
+  [8] %8 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 32], Half)
+  [9] %9 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 32], Half)
+  [10] %10 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [160, 32], Half)
+  [11] %11 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [160, 32], Half)
+  [12] %12 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [192, 32], Half)
+  [13] %13 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [192, 32], Half)
+  [14] %14 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [224, 32], Half)
+  [15] %15 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [224, 32], Half)
+  [16] %16 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 32], Half)
+  [17] %17 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 32], Half)
+  [18] %18 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [288, 32], Half)
+  [19] %19 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [288, 32], Half)
+  [20] %20 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 320, Half)
+  [21] %21 = pack((%0, %2, %4, %6, %8, %10, %12, %14, %16, %18), %20)
+  [22] %22 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 320, Half)
+  [23] %23 = copy(%21, %22)
+  [24] (%24, %25, %26, %27, %28, %29, %30, %31, %32, %33) = unpack(%23, (%1, %3, %5, %7, %9, %11, %13, %15, %17, %19))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -563,16 +612,43 @@ TEST_F(PackUnpackCopiesTest, Complex_AllGroupingRulesApplied) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // 3 groups packed (A, B, C)
-  EXPECT_EQ(CountOps(result, OpType::kPack), 3u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 3u);
-
-  // 3 consolidated copies + 1 singleton + 1 same-device = 5 copies
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 5u);
-
-  // 3 groups × 2 alloc_tmp each = 6
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 6u);
-
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 64], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 64], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [8] %8 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [9] %9 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [10] %10 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [11] %11 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Float)
+  [12] %12 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Float)
+  [13] %13 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Float)
+  [14] %14 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [15] %15 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [16] %16 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Half)
+  [17] %17 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Half)
+  [18] %18 = copy(%16, %17)
+  [19] %19 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 192, Half)
+  [20] %20 = pack((%0, %2, %4), %19)
+  [21] %21 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 192, Half)
+  [22] %22 = copy(%20, %21)
+  [23] (%23, %24, %25) = unpack(%22, (%1, %3, %5))
+  [24] %26 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 32, Float)
+  [25] %27 = pack((%10, %12), %26)
+  [26] %28 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 32, Float)
+  [27] %29 = copy(%27, %28)
+  [28] (%30, %31) = unpack(%29, (%11, %13))
+  [29] %32 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 64, Half)
+  [30] %33 = pack((%6, %8), %32)
+  [31] %34 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [32] %35 = copy(%33, %34)
+  [33] (%36, %37) = unpack(%35, (%7, %9))
+  [34] %38 = copy(%14, %15)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -592,18 +668,13 @@ TEST_F(PackUnpackCopiesTest, Idempotent_SecondRunNoChange) {
   PackUnpackCopies pass;
   auto first = pass.Run(std::move(program), hints);
 
-  // Capture counts before moving first into the second run.
-  auto first_pack_count = CountOps(first, OpType::kPack);
-  auto first_copy_count = CountOps(first, OpType::kCopy);
-  auto first_unpack_count = CountOps(first, OpType::kUnpack);
+  auto first_dump = first.Dump();
 
   auto second = pass.Run(std::move(first), hints);
 
   // After the first pass, there's only 1 cross-device copy (the consolidated
   // one). The second pass should leave it as a singleton — no further packing.
-  EXPECT_EQ(CountOps(second, OpType::kPack), first_pack_count);
-  EXPECT_EQ(CountOps(second, OpType::kCopy), first_copy_count);
-  EXPECT_EQ(CountOps(second, OpType::kUnpack), first_unpack_count);
+  EXPECT_EQ(second.Dump(), first_dump);
   EXPECT_NO_THROW(Linearity::Check(second));
 }
 
@@ -634,10 +705,26 @@ TEST_F(PackUnpackCopiesTest, InterleavedCopies_GroupedByDevicePair) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // Should produce 2 groups, each with 2 copies consolidated
-  EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 2u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 48], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [48, 16], Half)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [9] %9 = pack((%0, %4), %8)
+  [10] %10 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [11] %11 = copy(%9, %10)
+  [12] (%12, %13) = unpack(%11, (%1, %5))
+  [13] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 64, Half)
+  [14] %15 = pack((%2, %6), %14)
+  [15] %16 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [16] %17 = copy(%15, %16)
+  [17] (%18, %19) = unpack(%17, (%3, %7))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -661,14 +748,19 @@ TEST_F(PackUnpackCopiesTest, VaryingSourceSizes_TotalSizeCorrect) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  const std::size_t expected_total = 1 + 1000 + 7;
-  auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
-  ASSERT_EQ(alloc_ops.size(), 2u);
-  for (const auto& op_ref : alloc_ops) {
-    const auto& alloc = std::get<AllocTmpOp>(op_ref.get().op);
-    EXPECT_EQ(alloc.size_elements, expected_total);
-  }
-
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1, 1000], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1, 1000], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1001, 7], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1001, 7], Half)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 1008, Half)
+  [7] %7 = pack((%0, %2, %4), %6)
+  [8] %8 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 1008, Half)
+  [9] %9 = copy(%7, %8)
+  [10] (%10, %11, %12) = unpack(%9, (%1, %3, %5))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -707,11 +799,35 @@ TEST_F(PackUnpackCopiesTest, ThreeDevices_AllPairsCopied) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  // 3 device pairs → 3 groups, each consolidated
-  EXPECT_EQ(CountOps(result, OpType::kPack), 3u);
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 3u);
-  EXPECT_EQ(CountOps(result, OpType::kUnpack), 3u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 6u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [32, 32], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [16, 16], Half)
+  [8] %8 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [9] %9 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [10] %10 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [11] %11 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [12] %12 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 64, Half)
+  [13] %13 = pack((%0, %2), %12)
+  [14] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 64, Half)
+  [15] %15 = copy(%13, %14)
+  [16] (%16, %17) = unpack(%15, (%1, %3))
+  [17] %18 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 128, Half)
+  [18] %19 = pack((%8, %10), %18)
+  [19] %20 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 128, Half)
+  [20] %21 = copy(%19, %20)
+  [21] (%22, %23) = unpack(%21, (%9, %11))
+  [22] %24 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 32, Half)
+  [23] %25 = pack((%4, %6), %24)
+  [24] %26 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 32, Half)
+  [25] %27 = copy(%25, %26)
+  [26] (%28, %29) = unpack(%27, (%5, %7))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -731,8 +847,17 @@ TEST_F(PackUnpackCopiesTest, ViewOps_Preserved) {
   PackUnpackCopies pass;
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kView), 4u)
-      << "All original ViewOps should be preserved";
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 32], Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), 96, Half)
+  [5] %5 = pack((%0, %2), %4)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), 96, Half)
+  [7] %7 = copy(%5, %6)
+  [8] (%8, %9) = unpack(%7, (%1, %3))
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 

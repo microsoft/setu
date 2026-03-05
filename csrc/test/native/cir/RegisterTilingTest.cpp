@@ -27,11 +27,8 @@
 namespace setu::test::native {
 //==============================================================================
 using setu::planner::hints::HintStore;
-using setu::planner::ir::cir::AllocTmpOp;
-using setu::planner::ir::cir::CopyOp;
 using setu::planner::ir::cir::Device;
 using setu::planner::ir::cir::Linearity;
-using setu::planner::ir::cir::OpType;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
@@ -48,16 +45,6 @@ Device MakeTestDevice(std::int16_t gpu_index = 0) {
 
 setu::planner::ir::ref::ShardRef MakeTestShardRef() {
   return setu::planner::ir::ref::ShardRef(boost::uuids::nil_uuid());
-}
-
-std::size_t CountOps(const Program& program, OpType type) {
-  std::size_t count = 0;
-  for (const auto& op : program.Operations()) {
-    if (op.Type() == type) {
-      ++count;
-    }
-  }
-  return count;
 }
 
 //==============================================================================
@@ -95,10 +82,13 @@ TEST_F(RegisterTilingTest, NoAllocTmp_PassedThrough) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto num_ops = program.NumOperations();
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(result.NumOperations(), num_ops);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [2] %2 = copy(%0, %1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -111,10 +101,15 @@ TEST_F(RegisterTilingTest, SmallTmp_PassedThrough) {
   auto tmp_out = program.EmitCopy(src, tmp);
   (void)program.EmitCopy(tmp_out, dst);
 
-  auto num_ops = program.NumOperations();
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(result.NumOperations(), num_ops);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [3] %3 = copy(%0, %2)
+  [4] %4 = copy(%3, %1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -137,14 +132,31 @@ TEST_F(RegisterTilingTest, SingleTmp_LargeBuffer_SplitsIntoChunks) {
 
   auto result = pass.Run(std::move(program), hints);
 
-  // 1 large AllocTmp → 4 register-sized AllocTmps
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 4u);
-  // 4 write copies + 4 read copies
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 8u);
-  // 4 src slices + 4 dst slices
-  EXPECT_EQ(CountOps(result, OpType::kSlice), 8u);
-  // 1 consume for the dst
-  EXPECT_EQ(CountOps(result, OpType::kConsume), 1u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [3] %3 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [5] %5 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [6] %6 = slice(%0, [0, 64])
+  [7] %7 = copy(%6, %2)
+  [8] %8 = slice(%0, [64, 64])
+  [9] %9 = copy(%8, %3)
+  [10] %10 = slice(%0, [128, 64])
+  [11] %11 = copy(%10, %4)
+  [12] %12 = slice(%0, [192, 64])
+  [13] %13 = copy(%12, %5)
+  [14] %14 = slice(%1, [0, 64])
+  [15] %15 = copy(%7, %14)
+  [16] %16 = slice(%1, [64, 64])
+  [17] %17 = copy(%9, %16)
+  [18] %18 = slice(%1, [128, 64])
+  [19] %19 = copy(%11, %18)
+  [20] %20 = slice(%1, [192, 64])
+  [21] %21 = copy(%13, %20)
+  [22] %22 = consume(%1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -167,21 +179,26 @@ TEST_F(RegisterTilingTest, PartialLastChunk_CorrectSize) {
 
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 3u);
-
-  // Verify last AllocTmp has the partial size
-  std::size_t alloc_count = 0;
-  for (const auto& op : result.Operations()) {
-    if (op.Type() == OpType::kAllocTmp) {
-      const auto& alloc = std::get<AllocTmpOp>(op.op);
-      if (alloc_count < 2) {
-        EXPECT_EQ(alloc.size_elements, kChunkElements);
-      } else {
-        EXPECT_EQ(alloc.size_elements, kChunkElements / 2);
-      }
-      ++alloc_count;
-    }
-  }
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 160], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 160], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [3] %3 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 32, Half)
+  [5] %5 = slice(%0, [0, 64])
+  [6] %6 = copy(%5, %2)
+  [7] %7 = slice(%0, [64, 64])
+  [8] %8 = copy(%7, %3)
+  [9] %9 = slice(%0, [128, 32])
+  [10] %10 = copy(%9, %4)
+  [11] %11 = slice(%1, [0, 64])
+  [12] %12 = copy(%6, %11)
+  [13] %13 = slice(%1, [64, 64])
+  [14] %14 = copy(%8, %13)
+  [15] %15 = slice(%1, [128, 32])
+  [16] %16 = copy(%10, %15)
+  [17] %17 = consume(%1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -205,10 +222,32 @@ TEST_F(RegisterTilingTest, TwoIntermediates_BothChunked) {
 
   auto result = pass.Run(std::move(program), hints);
 
-  // 3 chunks × 2 intermediates = 6 AllocTmps
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 6u);
-  // 3 write-to-C + 3 relay C→D + 3 read-from-D = 9 copies
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 9u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [3] %3 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [5] %5 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [6] %6 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [7] %7 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [8] %8 = slice(%0, [0, 64])
+  [9] %9 = copy(%8, %2)
+  [10] %10 = slice(%0, [64, 64])
+  [11] %11 = copy(%10, %3)
+  [12] %12 = slice(%0, [128, 64])
+  [13] %13 = copy(%12, %4)
+  [14] %14 = copy(%9, %5)
+  [15] %15 = copy(%11, %6)
+  [16] %16 = copy(%13, %7)
+  [17] %17 = slice(%1, [0, 64])
+  [18] %18 = copy(%14, %17)
+  [19] %19 = slice(%1, [64, 64])
+  [20] %20 = copy(%15, %19)
+  [21] %21 = slice(%1, [128, 64])
+  [22] %22 = copy(%16, %21)
+  [23] %23 = consume(%1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -226,9 +265,11 @@ TEST_F(RegisterTilingTest, DirectCopy_Unchanged) {
 
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 0u);
-  EXPECT_EQ(CountOps(result, OpType::kSlice), 0u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [2] %2 = copy(%0, %1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -259,8 +300,35 @@ TEST_F(RegisterTilingTest, MultipleChains_IndependentlyTiled) {
 
   auto result = pass.Run(std::move(program), hints);
 
-  // 2 chains × 2 chunks = 4 AllocTmps
-  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 4u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 128], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = slice(%1, [0, 128])
+  [3] %3 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [4] %4 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [5] %5 = slice(%0, [0, 64])
+  [6] %6 = copy(%5, %3)
+  [7] %7 = slice(%0, [64, 64])
+  [8] %8 = copy(%7, %4)
+  [9] %9 = slice(%2, [0, 64])
+  [10] %10 = copy(%6, %9)
+  [11] %11 = slice(%2, [64, 64])
+  [12] %12 = copy(%8, %11)
+  [13] %13 = consume(%2)
+  [14] %14 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 128], Half)
+  [15] %15 = slice(%1, [128, 128])
+  [16] %16 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [17] %17 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [18] %18 = slice(%14, [0, 64])
+  [19] %19 = copy(%18, %16)
+  [20] %20 = slice(%14, [64, 64])
+  [21] %21 = copy(%20, %17)
+  [22] %22 = slice(%15, [0, 64])
+  [23] %23 = copy(%19, %22)
+  [24] %24 = slice(%15, [64, 64])
+  [25] %25 = copy(%21, %24)
+  [26] %26 = consume(%15)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 

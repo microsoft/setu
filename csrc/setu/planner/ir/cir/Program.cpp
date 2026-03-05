@@ -175,7 +175,7 @@ std::string Program::ToString() const {
 }
 
 std::string Program::Dump() const {
-  std::string result;
+  std::string result = "\n";
   for (std::size_t i = 0; i < ops_.size(); ++i) {
     result += std::format("  [{}] {}\n", i, ops_[i].ToString());
   }

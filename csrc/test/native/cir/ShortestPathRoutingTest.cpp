@@ -69,7 +69,7 @@ class CIRShortestPathRoutingTest : public testing::Test {
   torch::Dtype dt = torch::kFloat16;
 };
 
-TEST_F(CIRShortestPathRoutingTest, Scratch) {
+TEST_F(CIRShortestPathRoutingTest, MultiCopy_RoutesViaShortestPaths) {
   Program program;
   auto dev0 = MakeDevice(n0, 0);
   auto dev1 = MakeDevice(n0, 1);
@@ -90,17 +90,25 @@ TEST_F(CIRShortestPathRoutingTest, Scratch) {
   (void)program.EmitCopy(v0, v2);
   (void)program.EmitCopy(v1, v3);
 
-  std::cout << "BEFORE" << std::endl;
-  std::cout << program.Dump() << std::endl;
-
   ShortestPathRouting pass(topo);
   HintStore hints;
   auto program_t = pass.Run(std::move(program), hints);
 
-  std::cout << "AFTER" << std::endl;
-  std::cout << program_t.Dump() << std::endl;
-
-  EXPECT_EQ(true, false);
+  EXPECT_EQ(program_t.Dump(), R"(
+  [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 256], Half)
+  [2] %2 = view(Participant(node_id=00234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [3] %3 = view(Participant(node_id=00234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 256], Half)
+  [4] %4 = copy(%0, %2)
+  [5] %5 = alloc_tmp(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:1)), 524288, Half)
+  [6] %6 = slice(%1, [0, 256])
+  [7] %7 = slice(%3, [0, 256])
+  [8] %8 = slice(%5, [0, 256])
+  [9] %9 = copy(%6, %8)
+  [10] %10 = copy(%9, %7)
+  [11] %11 = consume(%3)
+)");
+  EXPECT_NO_THROW(Linearity::Check(program_t));
 }
 
 TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
@@ -136,16 +144,29 @@ TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
   // Without hints — should produce direct copy (2 hops, no intermediates)
   HintStore empty_hints;
   auto program_no_hint = pass.Run(make_program(), empty_hints);
-  std::cout << "WITHOUT HINT" << std::endl;
-  std::cout << program_no_hint.Dump() << std::endl;
+
+  EXPECT_EQ(program_no_hint.Dump(), R"(
+  [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=00234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = copy(%0, %1)
+)");
+  EXPECT_NO_THROW(Linearity::Check(program_no_hint));
 
   // With hints — should produce multi-hop copy (3 hops, 1 intermediate)
   auto program_with_hint = pass.Run(make_program(), hints);
-  std::cout << "WITH HINT" << std::endl;
-  std::cout << program_with_hint.Dump() << std::endl;
 
-  // The hinted program should have more operations due to intermediate hops
-  EXPECT_GT(program_with_hint.NumOperations(), program_no_hint.NumOperations());
+  EXPECT_EQ(program_with_hint.Dump(), R"(
+  [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=00234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:1)), 524288, Half)
+  [3] %3 = slice(%0, [0, 256])
+  [4] %4 = slice(%1, [0, 256])
+  [5] %5 = slice(%2, [0, 256])
+  [6] %6 = copy(%3, %5)
+  [7] %7 = copy(%6, %4)
+  [8] %8 = consume(%1)
+)");
+  EXPECT_NO_THROW(Linearity::Check(program_with_hint));
 }
 
 }  // namespace

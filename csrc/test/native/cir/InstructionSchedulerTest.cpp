@@ -28,7 +28,6 @@
 namespace setu::test::native {
 //==============================================================================
 using setu::planner::hints::HintStore;
-using setu::planner::ir::cir::AllocTmpOp;
 using setu::planner::ir::cir::Device;
 using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::LivenessInfo;
@@ -50,16 +49,6 @@ Device MakeTestDevice(std::int16_t gpu_index = 0) {
 
 setu::planner::ir::ref::ShardRef MakeTestShardRef() {
   return setu::planner::ir::ref::ShardRef(boost::uuids::nil_uuid());
-}
-
-std::size_t CountOps(const Program& program, OpType type) {
-  std::size_t count = 0;
-  for (const auto& op : program.Operations()) {
-    if (op.Type() == type) {
-      ++count;
-    }
-  }
-  return count;
 }
 
 /// Compute the maximum number of simultaneously live AllocTmp values at any
@@ -124,7 +113,9 @@ TEST_F(InstructionSchedulerTest, SingleOp_Unchanged) {
   Program program;
   (void)program.EmitView(dev0, shard, Slice{0, 1024}, dt);
   auto result = pass.Run(std::move(program), hints);
-  EXPECT_EQ(result.NumOperations(), 1u);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+)");
 }
 
 TEST_F(InstructionSchedulerTest, AlreadyOptimal_Unchanged) {
@@ -134,9 +125,12 @@ TEST_F(InstructionSchedulerTest, AlreadyOptimal_Unchanged) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto num_ops = program.NumOperations();
   auto result = pass.Run(std::move(program), hints);
-  EXPECT_EQ(result.NumOperations(), num_ops);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [2] %2 = copy(%0, %1)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -164,9 +158,32 @@ TEST_F(InstructionSchedulerTest, FlatTiledOutput_ReducesRegisterPressure) {
   InstructionScheduler scheduler;
   auto scheduled = scheduler.Run(std::move(tiled), hints);
 
+  EXPECT_EQ(scheduled.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = slice(%0, [0, 64])
+  [3] %3 = slice(%0, [64, 64])
+  [4] %4 = slice(%0, [128, 64])
+  [5] %5 = slice(%0, [192, 64])
+  [6] %6 = slice(%1, [0, 64])
+  [7] %7 = slice(%1, [64, 64])
+  [8] %8 = slice(%1, [128, 64])
+  [9] %9 = slice(%1, [192, 64])
+  [10] %10 = consume(%1)
+  [11] %11 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [12] %12 = copy(%2, %11)
+  [13] %13 = copy(%12, %6)
+  [14] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [15] %15 = copy(%3, %14)
+  [16] %16 = copy(%15, %7)
+  [17] %17 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [18] %18 = copy(%4, %17)
+  [19] %19 = copy(%18, %8)
+  [20] %20 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [21] %21 = copy(%5, %20)
+  [22] %22 = copy(%21, %9)
+)");
   EXPECT_NO_THROW(Linearity::Check(scheduled));
-  EXPECT_EQ(CountOps(scheduled, OpType::kAllocTmp), 4u);
-  EXPECT_EQ(CountOps(scheduled, OpType::kCopy), 8u);
 
   auto post_pressure = MaxLiveAllocTmps(scheduled);
   EXPECT_LE(post_pressure, 2u)
@@ -195,12 +212,35 @@ TEST_F(InstructionSchedulerTest, MultiHop_TiledAndScheduled_LowPressure) {
   InstructionScheduler scheduler;
   auto scheduled = scheduler.Run(std::move(tiled), hints);
 
+  EXPECT_EQ(scheduled.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
+  [2] %2 = slice(%0, [0, 64])
+  [3] %3 = slice(%0, [64, 64])
+  [4] %4 = slice(%0, [128, 64])
+  [5] %5 = slice(%1, [0, 64])
+  [6] %6 = slice(%1, [64, 64])
+  [7] %7 = slice(%1, [128, 64])
+  [8] %8 = consume(%1)
+  [9] %9 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [10] %10 = copy(%2, %9)
+  [11] %11 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [12] %12 = copy(%3, %11)
+  [13] %13 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [14] %14 = copy(%4, %13)
+  [15] %15 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [16] %16 = copy(%10, %15)
+  [17] %17 = copy(%16, %5)
+  [18] %18 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [19] %19 = copy(%12, %18)
+  [20] %20 = copy(%19, %6)
+  [21] %21 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:3)), 64, Half)
+  [22] %22 = copy(%14, %21)
+  [23] %23 = copy(%22, %7)
+)");
   EXPECT_NO_THROW(Linearity::Check(scheduled));
-  // 3 chunks × 2 intermediates = 6 AllocTmps
-  EXPECT_EQ(CountOps(scheduled, OpType::kAllocTmp), 6u);
 
   auto pressure = MaxLiveAllocTmps(scheduled);
-  // Should need at most ~2 per device (current + next), so ≤4 total
   EXPECT_LE(pressure, 4u) << "Multi-hop pressure should be bounded";
 }
 
@@ -223,10 +263,18 @@ TEST_F(InstructionSchedulerTest, MixedProgram_PreservesCorrectness) {
   auto tmp_out = program.EmitCopy(src2, tmp);
   (void)program.EmitCopy(tmp_out, dst2);
 
-  auto num_ops = program.NumOperations();
   auto result = pass.Run(std::move(program), hints);
 
-  EXPECT_EQ(result.NumOperations(), num_ops);
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
+  [2] %2 = copy(%0, %1)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1024, 512], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [1024, 512], Half)
+  [5] %5 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 512, Half)
+  [6] %6 = copy(%3, %5)
+  [7] %7 = copy(%6, %4)
+)");
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 
@@ -250,8 +298,52 @@ TEST_F(InstructionSchedulerTest, ComplexProgram_LinearityPreserved) {
   InstructionScheduler scheduler;
   auto scheduled = scheduler.Run(std::move(tiled), hints);
 
+  EXPECT_EQ(scheduled.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 512], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 512], Half)
+  [2] %2 = slice(%0, [0, 64])
+  [3] %3 = slice(%0, [64, 64])
+  [4] %4 = slice(%0, [128, 64])
+  [5] %5 = slice(%0, [192, 64])
+  [6] %6 = slice(%0, [256, 64])
+  [7] %7 = slice(%0, [320, 64])
+  [8] %8 = slice(%0, [384, 64])
+  [9] %9 = slice(%0, [448, 64])
+  [10] %10 = slice(%1, [0, 64])
+  [11] %11 = slice(%1, [64, 64])
+  [12] %12 = slice(%1, [128, 64])
+  [13] %13 = slice(%1, [192, 64])
+  [14] %14 = slice(%1, [256, 64])
+  [15] %15 = slice(%1, [320, 64])
+  [16] %16 = slice(%1, [384, 64])
+  [17] %17 = slice(%1, [448, 64])
+  [18] %18 = consume(%1)
+  [19] %19 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [20] %20 = copy(%2, %19)
+  [21] %21 = copy(%20, %10)
+  [22] %22 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [23] %23 = copy(%3, %22)
+  [24] %24 = copy(%23, %11)
+  [25] %25 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [26] %26 = copy(%4, %25)
+  [27] %27 = copy(%26, %12)
+  [28] %28 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [29] %29 = copy(%5, %28)
+  [30] %30 = copy(%29, %13)
+  [31] %31 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [32] %32 = copy(%6, %31)
+  [33] %33 = copy(%32, %14)
+  [34] %34 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [35] %35 = copy(%7, %34)
+  [36] %36 = copy(%35, %15)
+  [37] %37 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [38] %38 = copy(%8, %37)
+  [39] %39 = copy(%38, %16)
+  [40] %40 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [41] %41 = copy(%9, %40)
+  [42] %42 = copy(%41, %17)
+)");
   EXPECT_NO_THROW(Linearity::Check(scheduled));
-  EXPECT_EQ(CountOps(scheduled, OpType::kAllocTmp), 8u);
 }
 
 //==============================================================================
@@ -307,8 +399,32 @@ TEST_F(InstructionSchedulerTest, CopyChainValues_PressureBounded) {
   InstructionScheduler scheduler;
   auto scheduled = scheduler.Run(std::move(program), hints);
 
+  EXPECT_EQ(scheduled.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
+  [2] %2 = slice(%0, [0, 64])
+  [3] %3 = slice(%0, [64, 64])
+  [4] %4 = slice(%0, [128, 64])
+  [5] %5 = slice(%0, [192, 64])
+  [6] %6 = slice(%1, [0, 64])
+  [7] %7 = slice(%1, [64, 64])
+  [8] %8 = slice(%1, [128, 64])
+  [9] %9 = slice(%1, [192, 64])
+  [10] %10 = consume(%1)
+  [11] %11 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [12] %12 = copy(%2, %11)
+  [13] %13 = copy(%12, %6)
+  [14] %14 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [15] %15 = copy(%3, %14)
+  [16] %16 = copy(%15, %7)
+  [17] %17 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [18] %18 = copy(%4, %17)
+  [19] %19 = copy(%18, %8)
+  [20] %20 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [21] %21 = copy(%5, %20)
+  [22] %22 = copy(%21, %9)
+)");
   EXPECT_NO_THROW(Linearity::Check(scheduled));
-  EXPECT_EQ(CountOps(scheduled, OpType::kAllocTmp), 4u);
 
   auto pressure = MaxLiveAllocTmps(scheduled);
   EXPECT_LE(pressure, 2u)
@@ -337,12 +453,41 @@ TEST_F(InstructionSchedulerTest, ManyIndependentChains_PressureBounded) {
   InstructionScheduler scheduler;
   auto scheduled = scheduler.Run(std::move(program), hints);
 
+  EXPECT_EQ(scheduled.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [3] %3 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [64, 64], Half)
+  [4] %4 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 64], Half)
+  [5] %5 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [128, 64], Half)
+  [6] %6 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [192, 64], Half)
+  [7] %7 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [192, 64], Half)
+  [8] %8 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 64], Half)
+  [9] %9 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [256, 64], Half)
+  [10] %10 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [320, 64], Half)
+  [11] %11 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [320, 64], Half)
+  [12] %12 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [13] %13 = copy(%0, %12)
+  [14] %14 = copy(%13, %1)
+  [15] %15 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [16] %16 = copy(%2, %15)
+  [17] %17 = copy(%16, %3)
+  [18] %18 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [19] %19 = copy(%4, %18)
+  [20] %20 = copy(%19, %5)
+  [21] %21 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [22] %22 = copy(%6, %21)
+  [23] %23 = copy(%22, %7)
+  [24] %24 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [25] %25 = copy(%8, %24)
+  [26] %26 = copy(%25, %9)
+  [27] %27 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [28] %28 = copy(%10, %27)
+  [29] %29 = copy(%28, %11)
+)");
   EXPECT_NO_THROW(Linearity::Check(scheduled));
-  EXPECT_EQ(CountOps(scheduled, OpType::kAllocTmp), kNumChains);
 
   auto pressure = MaxLiveAllocTmps(scheduled);
-  // The scheduler should drain each chain before starting the next,
-  // keeping at most ~2 tmps live (current + one being set up).
   EXPECT_LE(pressure, 2u) << "Independent chains: expected pressure <= 2, got "
                           << pressure;
 }
