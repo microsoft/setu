@@ -108,6 +108,10 @@ struct Path {
 
 class Topology {
  public:
+  using AdjList = std::unordered_map<Participant,
+                                     std::vector<std::pair<Participant, Link>>>;
+  using Edge = std::tuple<Participant, Participant, Link>;
+
   void AddLink(const Participant& src, const Participant& dst, Link link);
 
   void AddBidirectionalLink(const Participant& src, const Participant& dst,
@@ -124,13 +128,43 @@ class Topology {
       const Participant& src, const Participant& dst,
       std::function<float(const Link&)> cost_fn) const;
 
-  using Edge = std::tuple<Participant, Participant, Link>;
+  /// Lazy iterator that yields edge-disjoint paths from src to dst.
+  /// Each call to Next() runs Dijkstra on the working graph and removes the
+  /// used edges, so each successive path avoids edges from all previous ones.
+  /// Returns std::nullopt when no more paths exist.
+  class DisjointPathIterator {
+   public:
+    DisjointPathIterator(AdjList working_adj, Participant src, Participant dst,
+                         std::function<float(const Link&)> cost_fn);
+
+    [[nodiscard]] std::optional<Path> Next();
+
+   private:
+    AdjList working_adj_;
+    Participant src_;
+    Participant dst_;
+    std::function<float(const Link&)> cost_fn_;
+  };
+
+  [[nodiscard]] DisjointPathIterator EdgeDisjointPaths(
+      const Participant& src, const Participant& dst,
+      std::function<float(const Link&)> cost_fn) const;
+
+  /// Convenience: find up to k edge-disjoint paths.
+  [[nodiscard]] std::vector<Path> KEdgeDisjointPaths(
+      const Participant& src, const Participant& dst, std::size_t k,
+      std::function<float(const Link&)> cost_fn) const;
 
   [[nodiscard]] std::vector<Edge> GetEdges() const;
 
  private:
-  std::unordered_map<Participant, std::vector<std::pair<Participant, Link>>>
-      adj_;
+  /// Dijkstra on an arbitrary adjacency list (used by both ShortestPath and
+  /// KEdgeDisjointPaths).
+  [[nodiscard]] static std::optional<Path> ShortestPathOnGraph(
+      const AdjList& adj, const Participant& src, const Participant& dst,
+      const std::function<float(const Link&)>& cost_fn);
+
+  AdjList adj_;
 };
 
 using TopologyPtr = std::shared_ptr<Topology>;

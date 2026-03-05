@@ -20,6 +20,7 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/passes/BandwidthAggregation.h"
 #include "planner/passes/PackUnpackCopies.h"
 #include "planner/passes/PassManager.h"
 #include "planner/passes/ShortestPathRouting.h"
@@ -48,6 +49,13 @@ void InitPassesPybind(py::module_& m) {
       .def(py::init<>(),
            "Create a PackUnpackCopies pass that consolidates cross-device "
            "copies into pack/copy/unpack sequences");
+
+  py::class_<BandwidthAggregation, Pass, std::shared_ptr<BandwidthAggregation>>(
+      m, "BandwidthAggregation")
+      .def(py::init<TopologyPtr, std::size_t>(), py::arg("topology"),
+           py::arg("max_paths") = 4,
+           "Create a BandwidthAggregation pass that splits cross-device "
+           "copies across multiple edge-disjoint paths");
 }
 //==============================================================================
 }  // namespace setu::planner::passes

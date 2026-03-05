@@ -112,7 +112,7 @@ class PackUnpackCopiesTest : public ::testing::Test {
 TEST_F(PackUnpackCopiesTest, EmptyProgram_ProducesEmptyProgram) {
   Program program;
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(result.NumOperations(), 0u);
   EXPECT_NO_THROW(Linearity::Check(result));
@@ -125,7 +125,7 @@ TEST_F(PackUnpackCopiesTest, ViewsOnly_NoCopies_PassedThrough) {
   (void)program.EmitView(dev1, shard, Slice{0, 32}, dt);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kView), 2u);
   EXPECT_EQ(CountOps(result, OpType::kCopy), 0u);
@@ -149,7 +149,7 @@ TEST_F(PackUnpackCopiesTest, SameDeviceCopies_NeverGrouped) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
   EXPECT_EQ(CountOps(result, OpType::kPack), 0u);
@@ -169,7 +169,7 @@ TEST_F(PackUnpackCopiesTest, SingleCrossDeviceCopy_NotPacked) {
   (void)program.EmitCopy(src, dst);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
   EXPECT_EQ(CountOps(result, OpType::kPack), 0u);
@@ -192,7 +192,7 @@ TEST_F(PackUnpackCopiesTest, TwoCrossDeviceCopies_ConsolidatedIntoOne) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // Two individual copies replaced by: alloc_tmp, pack, alloc_tmp, copy, unpack
   EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
@@ -217,7 +217,7 @@ TEST_F(PackUnpackCopiesTest, TempBufferSize_EqualsSum) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   const std::size_t expected_total = 64 + 32;
   auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
@@ -245,7 +245,7 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_AllocatedOnCorrectDevices) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
   ASSERT_EQ(alloc_ops.size(), 2u);
@@ -278,7 +278,7 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_MatchSourceDtype) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
   ASSERT_EQ(alloc_ops.size(), 2u);
@@ -308,7 +308,7 @@ TEST_F(PackUnpackCopiesTest, PackSources_MatchNumberOfGroupedCopies) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
   EXPECT_EQ(CountOps(result, OpType::kUnpack), 1u);
@@ -350,7 +350,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDevicePairs_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // Each device pair produces its own pack/copy/unpack
   EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
@@ -383,7 +383,7 @@ TEST_F(PackUnpackCopiesTest, BidirectionalCopies_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // dev0→dev1 and dev1→dev0 are distinct device pairs → 2 separate groups
   EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
@@ -416,7 +416,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDtypes_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // Two dtype groups → 2 packs, 2 copies, 2 unpacks
   EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
@@ -441,7 +441,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDtype_SingletonNotGroupedWithOthers) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // f16 group: 1 pack + 1 copy + 1 unpack
   // f32 singleton: 1 plain copy
@@ -474,7 +474,7 @@ TEST_F(PackUnpackCopiesTest, MixedSameAndCrossDevice_OnlyCrossDeviceGrouped) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // 2 same-device copies + 1 consolidated cross-device copy = 3 CopyOps
   EXPECT_EQ(CountOps(result, OpType::kCopy), 3u);
@@ -502,7 +502,7 @@ TEST_F(PackUnpackCopiesTest, ManyCopies_AllPackedIntoOneGroup) {
   }
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kPack), 1u);
   EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
@@ -561,7 +561,7 @@ TEST_F(PackUnpackCopiesTest, Complex_AllGroupingRulesApplied) {
   (void)program.EmitCopy(s_same, d_same);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // 3 groups packed (A, B, C)
   EXPECT_EQ(CountOps(result, OpType::kPack), 3u);
@@ -590,15 +590,20 @@ TEST_F(PackUnpackCopiesTest, Idempotent_SecondRunNoChange) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto first = pass.Run(program, hints);
-  auto second = pass.Run(first, hints);
+  auto first = pass.Run(std::move(program), hints);
+
+  // Capture counts before moving first into the second run.
+  auto first_pack_count = CountOps(first, OpType::kPack);
+  auto first_copy_count = CountOps(first, OpType::kCopy);
+  auto first_unpack_count = CountOps(first, OpType::kUnpack);
+
+  auto second = pass.Run(std::move(first), hints);
 
   // After the first pass, there's only 1 cross-device copy (the consolidated
   // one). The second pass should leave it as a singleton — no further packing.
-  EXPECT_EQ(CountOps(second, OpType::kPack), CountOps(first, OpType::kPack));
-  EXPECT_EQ(CountOps(second, OpType::kCopy), CountOps(first, OpType::kCopy));
-  EXPECT_EQ(CountOps(second, OpType::kUnpack),
-            CountOps(first, OpType::kUnpack));
+  EXPECT_EQ(CountOps(second, OpType::kPack), first_pack_count);
+  EXPECT_EQ(CountOps(second, OpType::kCopy), first_copy_count);
+  EXPECT_EQ(CountOps(second, OpType::kUnpack), first_unpack_count);
   EXPECT_NO_THROW(Linearity::Check(second));
 }
 
@@ -627,7 +632,7 @@ TEST_F(PackUnpackCopiesTest, InterleavedCopies_GroupedByDevicePair) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // Should produce 2 groups, each with 2 copies consolidated
   EXPECT_EQ(CountOps(result, OpType::kPack), 2u);
@@ -654,7 +659,7 @@ TEST_F(PackUnpackCopiesTest, VaryingSourceSizes_TotalSizeCorrect) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   const std::size_t expected_total = 1 + 1000 + 7;
   auto alloc_ops = FindAllOps(result, OpType::kAllocTmp);
@@ -700,7 +705,7 @@ TEST_F(PackUnpackCopiesTest, ThreeDevices_AllPairsCopied) {
   (void)program.EmitCopy(s02b, d02b);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   // 3 device pairs → 3 groups, each consolidated
   EXPECT_EQ(CountOps(result, OpType::kPack), 3u);
@@ -724,7 +729,7 @@ TEST_F(PackUnpackCopiesTest, ViewOps_Preserved) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(program, hints);
+  auto result = pass.Run(std::move(program), hints);
 
   EXPECT_EQ(CountOps(result, OpType::kView), 4u)
       << "All original ViewOps should be preserved";
