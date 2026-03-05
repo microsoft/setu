@@ -30,6 +30,7 @@
 namespace setu::test::native {
 //==============================================================================
 using setu::planner::Participant;
+using setu::planner::hints::BandwidthHint;
 using setu::planner::hints::HintStore;
 using setu::planner::hints::RoutingHint;
 using setu::planner::ir::cir::AllocTmpOp;
@@ -361,6 +362,155 @@ TEST_F(BandwidthAggregationTest, NoTopologyNoHints_ClonesUnchanged) {
   EXPECT_EQ(CountOps(result, OpType::kCopy), 1u);
   EXPECT_EQ(CountOps(result, OpType::kSlice), 0u);
   EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 0u);
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+//==============================================================================
+// BandwidthHint: explicit multi-path splitting
+//==============================================================================
+
+TEST_F(BandwidthAggregationTest, BandwidthHint_SinglePath_EmitsCopyChain) {
+  BandwidthAggregation pass(nullptr);
+
+  // Single multi-hop path via hint, weight [1.0].
+  Path path({dev0, dev2, dev1}, {Link(1.0f, 200.0f), Link(1.0f, 200.0f)});
+  hints.AddHint(BandwidthHint(dev0, dev1, {path}, {1.0f}));
+
+  const std::size_t num_elements = 1024 * 1024;
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, num_elements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
+  (void)program.EmitCopy(src, dst);
+
+  auto result = pass.Run(std::move(program), hints);
+
+  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 1u);
+  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
+  EXPECT_EQ(CountOps(result, OpType::kSlice), 0u);
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+TEST_F(BandwidthAggregationTest, BandwidthHint_TwoPaths_EqualWeights) {
+  BandwidthAggregation pass(nullptr);
+
+  Path path_a({dev0, dev2, dev1}, {Link(1.0f, 200.0f), Link(1.0f, 200.0f)});
+  Path path_b({dev0, dev3, dev1}, {Link(1.0f, 100.0f), Link(1.0f, 100.0f)});
+  hints.AddHint(BandwidthHint(dev0, dev1, {path_a, path_b}, {0.5f, 0.5f}));
+
+  const std::size_t num_elements = 1000;
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, num_elements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
+  (void)program.EmitCopy(src, dst);
+
+  auto result = pass.Run(std::move(program), hints);
+
+  // 2 paths × 1 intermediate each = 2 AllocTmps
+  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 2u);
+  // 2 paths × 2 slices (src + dst) = 4 slices
+  EXPECT_EQ(CountOps(result, OpType::kSlice), 4u);
+  // 2 paths × 2 copies each = 4 copies
+  EXPECT_EQ(CountOps(result, OpType::kCopy), 4u);
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // Verify equal split: both src slices should have 500 elements.
+  for (const auto& op : result.Operations()) {
+    if (op.Type() == OpType::kSlice) {
+      const auto& slice_op = std::get<SliceOp>(op.op);
+      EXPECT_EQ(slice_op.slice.size, 500u);
+    }
+  }
+}
+
+TEST_F(BandwidthAggregationTest, BandwidthHint_ThreePaths_UnequalWeights) {
+  BandwidthAggregation pass(nullptr);
+
+  Path path_a({dev0, dev1}, {Link(1.0f, 200.0f)});  // direct
+  Path path_b({dev0, dev2, dev1}, {Link(1.0f, 100.0f), Link(1.0f, 100.0f)});
+  Path path_c({dev0, dev3, dev1}, {Link(1.0f, 100.0f), Link(1.0f, 100.0f)});
+  hints.AddHint(
+      BandwidthHint(dev0, dev1, {path_a, path_b, path_c}, {0.5f, 0.3f, 0.2f}));
+
+  const std::size_t num_elements = 10000;
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, num_elements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
+  (void)program.EmitCopy(src, dst);
+
+  auto result = pass.Run(std::move(program), hints);
+
+  // 2 relay paths need temps (dev2, dev3). Direct path has none.
+  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 2u);
+  // 3 paths × 2 slices each = 6 slices
+  EXPECT_EQ(CountOps(result, OpType::kSlice), 6u);
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // Verify split sizes: 5000, 3000, 2000.
+  std::vector<std::size_t> src_slice_sizes;
+  std::size_t slice_idx = 0;
+  for (const auto& op : result.Operations()) {
+    if (op.Type() == OpType::kSlice) {
+      if (slice_idx % 2 == 0) {
+        const auto& slice_op = std::get<SliceOp>(op.op);
+        src_slice_sizes.push_back(slice_op.slice.size);
+      }
+      ++slice_idx;
+    }
+  }
+  ASSERT_EQ(src_slice_sizes.size(), 3u);
+  EXPECT_EQ(src_slice_sizes[0], 5000u);
+  EXPECT_EQ(src_slice_sizes[1], 3000u);
+  EXPECT_EQ(src_slice_sizes[2], 2000u);
+}
+
+TEST_F(BandwidthAggregationTest, BandwidthHint_OverridesTopology) {
+  // Topology would discover diamond paths, but hint forces a single path.
+  auto topo = MakeDiamondTopology();
+  BandwidthAggregation pass(topo);
+
+  Path forced_path({dev0, dev2, dev1},
+                   {Link(1.0f, 200.0f), Link(1.0f, 200.0f)});
+  hints.AddHint(BandwidthHint(dev0, dev1, {forced_path}, {1.0f}));
+
+  const std::size_t num_elements = 1024 * 1024;
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, num_elements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
+  (void)program.EmitCopy(src, dst);
+
+  auto result = pass.Run(std::move(program), hints);
+
+  // Hint forces single path → no slicing, 1 tmp, 2 copies.
+  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 1u);
+  EXPECT_EQ(CountOps(result, OpType::kCopy), 2u);
+  EXPECT_EQ(CountOps(result, OpType::kSlice), 0u);
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+TEST_F(BandwidthAggregationTest, BandwidthHint_OverridesRoutingHint) {
+  BandwidthAggregation pass(nullptr);
+
+  // RoutingHint: single path through dev2.
+  Path routing_path({dev0, dev2, dev1},
+                    {Link(1.0f, 200.0f), Link(1.0f, 200.0f)});
+  hints.AddHint(RoutingHint(dev0, dev1, routing_path));
+
+  // BandwidthHint: two paths (should win).
+  Path path_a({dev0, dev2, dev1}, {Link(1.0f, 200.0f), Link(1.0f, 200.0f)});
+  Path path_b({dev0, dev3, dev1}, {Link(1.0f, 100.0f), Link(1.0f, 100.0f)});
+  hints.AddHint(BandwidthHint(dev0, dev1, {path_a, path_b}, {0.5f, 0.5f}));
+
+  const std::size_t num_elements = 1000;
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, num_elements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
+  (void)program.EmitCopy(src, dst);
+
+  auto result = pass.Run(std::move(program), hints);
+
+  // BandwidthHint wins: 2 paths → slicing.
+  EXPECT_EQ(CountOps(result, OpType::kAllocTmp), 2u);
+  EXPECT_EQ(CountOps(result, OpType::kSlice), 4u);
   EXPECT_NO_THROW(Linearity::Check(result));
 }
 

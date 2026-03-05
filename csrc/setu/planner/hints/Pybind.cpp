@@ -45,6 +45,32 @@ void InitHintsPybind(py::module_& m) {
             return RoutingHint(t[0].cast<Participant>(),
                                t[1].cast<Participant>(), t[2].cast<Path>());
           }));
+
+  py::class_<BandwidthHint>(m, "BandwidthHint")
+      .def(py::init<Participant, Participant, std::vector<Path>,
+                    std::vector<float>>(),
+           py::arg("src"), py::arg("dst"), py::arg("paths"), py::arg("weights"),
+           "Create a bandwidth hint to override path splitting between src "
+           "and dst")
+      .def_readonly("src", &BandwidthHint::src, "Source participant")
+      .def_readonly("dst", &BandwidthHint::dst, "Destination participant")
+      .def_readonly("paths", &BandwidthHint::paths, "Paths to split across")
+      .def_readonly("weights", &BandwidthHint::weights,
+                    "Fractional weights per path")
+      .def("__repr__", &BandwidthHint::ToString)
+      .def(py::pickle(
+          [](const BandwidthHint& bh) {  // __getstate__
+            return py::make_tuple(bh.src, bh.dst, bh.paths, bh.weights);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 4) {
+              throw std::runtime_error("Invalid state for BandwidthHint");
+            }
+            return BandwidthHint(t[0].cast<Participant>(),
+                                 t[1].cast<Participant>(),
+                                 t[2].cast<std::vector<Path>>(),
+                                 t[3].cast<std::vector<float>>());
+          }));
 }
 //==============================================================================
 }  // namespace setu::planner::hints

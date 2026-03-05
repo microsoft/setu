@@ -56,7 +56,49 @@ struct RoutingHint {
   }
 };
 
-using CompilerHint = std::variant<RoutingHint>;
+struct BandwidthHint {
+  Participant src;
+  Participant dst;
+  std::vector<Path> paths;
+  std::vector<float> weights;  // fractional, must sum to ~1.0
+
+  BandwidthHint() = default;
+
+  BandwidthHint(Participant src_param, Participant dst_param,
+                std::vector<Path> paths_param, std::vector<float> weights_param)
+      : src(std::move(src_param)),
+        dst(std::move(dst_param)),
+        paths(std::move(paths_param)),
+        weights(std::move(weights_param)) {
+    ASSERT_VALID_ARGUMENTS(
+        paths.size() == weights.size(),
+        "BandwidthHint: paths.size()={} != weights.size()={}", paths.size(),
+        weights.size());
+    ASSERT_VALID_ARGUMENTS(!paths.empty(),
+                           "BandwidthHint: must have at least one path");
+  }
+
+  [[nodiscard]] std::string ToString() const {
+    return std::format("BandwidthHint(src={}, dst={}, num_paths={})", src, dst,
+                       paths.size());
+  }
+
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    writer.WriteFields(src, dst, paths, weights);
+  }
+
+  static BandwidthHint Deserialize(const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    auto [s, d, p, w] =
+        reader.ReadFields<Participant, Participant, std::vector<Path>,
+                          std::vector<float>>();
+    return BandwidthHint(std::move(s), std::move(d), std::move(p),
+                         std::move(w));
+  }
+};
+
+using CompilerHint = std::variant<RoutingHint, BandwidthHint>;
 
 /// @brief Compute an FNV-1a fingerprint of a hints vector for SPMD
 /// consistency verification. Cheap (~nanoseconds for typical hint lists).

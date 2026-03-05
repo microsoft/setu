@@ -6,6 +6,7 @@
 namespace setu::planner::passes {
 
 using setu::planner::Participant;
+using setu::planner::hints::BandwidthHint;
 using setu::planner::hints::RoutingHint;
 using setu::planner::topo::Link;
 using setu::planner::topo::Path;
@@ -74,6 +75,35 @@ static float EstimateTransferTime(const std::vector<Path>& paths,
   return max_time;
 }
 
+/// Compute per-path element counts from explicit fractional weights.
+///
+/// Same rounding strategy as ComputeSplits: floor(weight_i * total),
+/// remainder assigned to the largest-weight path.
+static std::vector<std::size_t> ComputeSplitsFromWeights(
+    const std::vector<float>& weights, std::size_t total_elements) {
+  ASSERT_VALID_ARGUMENTS(!weights.empty(),
+                         "ComputeSplitsFromWeights requires >= 1 weight");
+
+  std::vector<std::size_t> splits(weights.size());
+  std::size_t assigned = 0;
+  std::size_t best_idx = 0;
+  float best_weight = 0.0f;
+
+  for (std::size_t i = 0; i < weights.size(); ++i) {
+    splits[i] = static_cast<std::size_t>(static_cast<double>(weights[i]) *
+                                         static_cast<double>(total_elements));
+    assigned += splits[i];
+    if (weights[i] > best_weight) {
+      best_weight = weights[i];
+      best_idx = i;
+    }
+  }
+
+  splits[best_idx] += total_elements - assigned;
+
+  return splits;
+}
+
 /// Emit a multi-hop copy chain for a single path and buffer chunk.
 ///
 /// For a direct path (2 hops, e.g. dev0 → dev1), emits a single CopyOp.
@@ -111,16 +141,22 @@ static cir::Value EmitCopyChain(cir::ProgramRewriter& rw, const Path& path,
 
 cir::Program BandwidthAggregation::Run(cir::Program program,
                                        const HintStore& hints) {
-  if (!topo_ && hints.GetHints<RoutingHint>().empty()) {
+  if (!topo_ && hints.GetHints<RoutingHint>().empty() &&
+      hints.GetHints<BandwidthHint>().empty()) {
     return program;
   }
 
-  std::map<std::pair<Participant, Participant>,
-           std::reference_wrapper<const Path>>
-      overrides;
-  for (const auto& hint_ref : hints.GetHints<RoutingHint>()) {
-    const auto& hint = hint_ref.get();
-    overrides.emplace(std::pair{hint.src, hint.dst}, std::cref(hint.path));
+  // Build unified override map.  RoutingHints are normalized to single-path
+  // BandwidthHints; actual BandwidthHints overwrite (higher precedence).
+  std::map<std::pair<Participant, Participant>, BandwidthHint> overrides;
+  for (const auto& ref : hints.GetHints<RoutingHint>()) {
+    const auto& h = ref.get();
+    overrides.insert_or_assign(std::pair{h.src, h.dst},
+                               BandwidthHint(h.src, h.dst, {h.path}, {1.0f}));
+  }
+  for (const auto& ref : hints.GetHints<BandwidthHint>()) {
+    const auto& h = ref.get();
+    overrides.insert_or_assign(std::pair{h.src, h.dst}, h);
   }
 
   auto rw = cir::ProgramRewriter(program);
@@ -142,73 +178,65 @@ cir::Program BandwidthAggregation::Run(cir::Program program,
               return;
             }
 
+            // --- Resolve paths and splits ---
+            std::vector<Path> paths;
+            std::vector<std::size_t> splits;
+
             auto override_it =
                 overrides.find({src_val_info.device, dst_val_info.device});
             if (override_it != overrides.end()) {
-              const auto& path = override_it->second.get();
-              if (path.hops.size() <= 2) {
-                rw.CloneOp(i);
-                return;
-              }
-              auto src = rw.Lookup(concrete.src);
-              auto dst_in = rw.Lookup(concrete.dst_in);
-              auto new_dst_out =
-                  EmitCopyChain(rw, path, src, dst_in, num_elements, dt);
-              rw.MapValue(concrete.dst_out, new_dst_out);
-              return;
-            }
+              const auto& hint = override_it->second;
+              paths = hint.paths;
+              splits = ComputeSplitsFromWeights(hint.weights, num_elements);
+            } else if (topo_) {
+              // Find edge-disjoint paths incrementally, stopping as soon as
+              // adding another path no longer improves estimated transfer time.
+              auto path_iter = topo_->EdgeDisjointPaths(
+                  src_val_info.device, dst_val_info.device,
+                  [bytes](const Link& l) -> float {
+                    return l.TransferTimeUs(bytes);
+                  });
 
-            if (!topo_) {
+              float prev_time = std::numeric_limits<float>::max();
+              for (std::size_t p = 0; p < max_paths_; ++p) {
+                auto next = path_iter.Next();
+                if (!next.has_value()) {
+                  break;
+                }
+                paths.push_back(std::move(*next));
+                splits = ComputeSplits(paths, num_elements);
+                float time = EstimateTransferTime(paths, splits, element_size);
+                if (time > prev_time) {
+                  paths.pop_back();
+                  splits = ComputeSplits(paths, num_elements);
+                  break;
+                }
+                prev_time = time;
+              }
+
+              ASSERT_VALID_RUNTIME(!paths.empty(),
+                                   "No path exists between {} and {}",
+                                   src_val_info.device, dst_val_info.device);
+            } else {
               rw.CloneOp(i);
               return;
             }
 
-            // Find edge-disjoint paths incrementally, stopping as soon as
-            // adding another path no longer improves estimated transfer time.
-            auto path_iter = topo_->EdgeDisjointPaths(
-                src_val_info.device, dst_val_info.device,
-                [bytes](const Link& l) -> float {
-                  return l.TransferTimeUs(bytes);
-                });
-
-            std::vector<Path> paths;
-            float prev_time = std::numeric_limits<float>::max();
-            for (std::size_t p = 0; p < max_paths_; ++p) {
-              auto next = path_iter.Next();
-              if (!next.has_value()) {
-                break;
-              }
-              paths.push_back(std::move(*next));
-              auto splits = ComputeSplits(paths, num_elements);
-              float time = EstimateTransferTime(paths, splits, element_size);
-              if (time > prev_time) {
-                paths.pop_back();
-                break;
-              }
-              prev_time = time;
-            }
-
-            ASSERT_VALID_RUNTIME(!paths.empty(),
-                                 "No path exists between {} and {}",
-                                 src_val_info.device, dst_val_info.device);
-
+            // --- Emit copies along resolved paths ---
             if (paths.size() == 1 && paths[0].hops.size() <= 2) {
               rw.CloneOp(i);
               return;
             }
 
+            auto src = rw.Lookup(concrete.src);
+            auto dst_in = rw.Lookup(concrete.dst_in);
+
             if (paths.size() == 1) {
-              auto src = rw.Lookup(concrete.src);
-              auto dst_in = rw.Lookup(concrete.dst_in);
               auto new_dst_out =
                   EmitCopyChain(rw, paths[0], src, dst_in, num_elements, dt);
               rw.MapValue(concrete.dst_out, new_dst_out);
               return;
             }
-
-            auto splits = ComputeSplits(paths, num_elements);
-            auto src = rw.Lookup(concrete.src);
-            auto dst_in = rw.Lookup(concrete.dst_in);
 
             std::size_t offset = 0;
             for (std::size_t p = 0; p < paths.size(); ++p) {
