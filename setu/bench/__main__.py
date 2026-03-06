@@ -166,8 +166,9 @@ def parse_args():
     parser.add_argument(
         "--blocking",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Block after each copy round (default: True). "
+        default=False,
+        help="Block after each copy round (default: False). "
+        "--blocking waits after each round, "
         "--no-blocking queues all rounds then syncs once, "
         "amortising control-plane overhead like nccl-test -C 0.",
     )

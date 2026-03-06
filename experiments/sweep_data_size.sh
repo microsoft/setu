@@ -28,6 +28,7 @@ DST_SPECS=("0:1")
 BEGIN_SIZE="4M"
 END_SIZE="4G"
 FACTOR=2
+BLOCKING=""
 NCCL_SOCKET_IFNAME=""
 ENV_ARGS=()
 
@@ -51,6 +52,8 @@ while [[ $# -gt 0 ]]; do
     -b)  BEGIN_SIZE="$2"; shift 2 ;;
     -e)  END_SIZE="$2";   shift 2 ;;
     -f)  FACTOR="$2";     shift 2 ;;
+    --blocking)    BLOCKING="--blocking"; shift ;;
+    --no-blocking) BLOCKING="--no-blocking"; shift ;;
     --nccl-socket-ifname) NCCL_SOCKET_IFNAME="$2"; shift 2 ;;
     --env) ENV_ARGS+=("--env" "$2"); shift 2 ;;
     -h|--help)
@@ -68,6 +71,8 @@ Options:
   -e SIZE   End size   (default: 8G).  Suffixes: K, M, G.
   -f N      Step multiplier (default: 2)
   --nccl-socket-ifname NAME  NCCL socket interface name (e.g. enp1s0f0)
+  --blocking                 Block after each copy round
+  --no-blocking              Queue all rounds then sync once (default)
   --env KEY=VALUE            Extra env vars for actors (repeatable)
   -h        Show this help
 EOF
@@ -206,14 +211,19 @@ for SIZE_BYTES in "${SIZES[@]}"; do
 
   echo "--- $LABEL ($SIZE_BYTES bytes) ---"
 
-  if python -m setu.bench \
-      --cluster-info "$CLUSTER_INFO" \
-      --size "$SIZE_BYTES" \
-      --src "${SRC_SPECS[@]}" \
-      --dst "${DST_SPECS[@]}" \
-      --enable-metrics \
-      --output-dir "$POINT_DIR" \
-      > "$POINT_DIR/bench.log" 2>&1; then
+  BENCH_CMD=(python -m setu.bench
+      --cluster-info "$CLUSTER_INFO"
+      --size "$SIZE_BYTES"
+      --src "${SRC_SPECS[@]}"
+      --dst "${DST_SPECS[@]}"
+      --enable-metrics
+      --output-dir "$POINT_DIR"
+  )
+  if [[ -n "$BLOCKING" ]]; then
+    BENCH_CMD+=("$BLOCKING")
+  fi
+
+  if "${BENCH_CMD[@]}" > "$POINT_DIR/bench.log" 2>&1; then
     echo "  PASS"
   else
     echo "  FAIL (see $POINT_DIR/bench.log)"

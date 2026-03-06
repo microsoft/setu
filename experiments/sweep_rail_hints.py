@@ -94,6 +94,14 @@ def parse_args():
         help="Timeout in seconds per experiment (default: 600).",
     )
     parser.add_argument(
+        "--blocking",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Block after each copy round (default: False). "
+        "--blocking waits after each round, "
+        "--no-blocking queues all rounds then syncs once.",
+    )
+    parser.add_argument(
         "--nccl-socket-ifname",
         type=str,
         default=None,
@@ -188,7 +196,8 @@ def main():
     print(f"Register sizes:  {[_human_label(r) for r in register_sizes]}")
     print(f"Data sizes:      {_human_label(sizes[0])} .. {_human_label(sizes[-1])} ({len(sizes)} points)")
     print(f"Mode:            {copy_mode.value}")
-    print(f"Rounds:          {args.rounds} + {args.warmup_rounds} warmup")
+    blocking_str = "blocking" if args.blocking else "non-blocking"
+    print(f"Rounds:          {args.rounds} + {args.warmup_rounds} warmup, {blocking_str}")
     print()
 
     for register_size in register_sizes:
@@ -250,6 +259,7 @@ def main():
                             timeout=args.timeout,
                             n_copy_rounds=args.rounds,
                             n_warmup_rounds=args.warmup_rounds,
+                            blocking=args.blocking,
                             hints=variant_hints,
                         )
 
