@@ -27,6 +27,7 @@
 #include "node_manager/worker/RegisterFile.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
+#include "planner/ir/llc/CommId.h"
 #include "planner/ir/llc/Instruction.h"
 #include "telemetry/NCCLWorkerMetrics.h"
 //==============================================================================
@@ -41,13 +42,14 @@ using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
 using setu::planner::ir::llc::Barrier;
+using setu::planner::ir::llc::CommId;
+using setu::planner::ir::llc::CommIdHash;
 using setu::planner::ir::llc::Copy;
 using setu::planner::ir::llc::InitComm;
 using setu::planner::ir::llc::Instruction;
 using setu::planner::ir::llc::Program;
 using setu::planner::ir::llc::Receive;
 using setu::planner::ir::llc::Send;
-using setu::planner::ir::llc::UseComm;
 //==============================================================================
 
 class NCCLWorker : public Worker {
@@ -65,12 +67,10 @@ class NCCLWorker : public Worker {
 
  private:
   void ExecuteInitComm(const InitComm& inst);
-  void ExecuteUseComm(const UseComm& inst);
   void ExecuteCopy(const Copy& inst);
   void ExecuteSend(const Send& inst);
   void ExecuteReceive(const Receive& inst);
 
-  [[nodiscard]] static std::string CommIdToString(const ncclUniqueId& id);
   [[nodiscard]] static ncclDataType_t ToNcclDataType(torch::Dtype dtype);
   [[nodiscard]] static std::size_t GetDTypeSizeBytes(torch::Dtype dtype);
 
@@ -85,10 +85,9 @@ class NCCLWorker : public Worker {
     std::size_t ops_in_group;
   };
 
-  std::unordered_map<std::string, CommCacheEntry> comm_cache_;
-  std::string active_comm_key_;
-  cudaStream_t stream_;
+  std::unordered_map<CommId, CommCacheEntry, CommIdHash> comm_cache_;
 
+  cudaStream_t stream_;
   RegisterFile register_file_;
 };
 

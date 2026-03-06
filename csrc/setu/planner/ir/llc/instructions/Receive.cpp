@@ -23,27 +23,28 @@ namespace setu::planner::ir::llc {
 
 std::string Receive::ToString() const {
   return std::format(
-      "Receive(peer_rank={}, dst_ref={}, offset_bytes={}, count={}, dtype={}, "
-      "dst_device_ptr={})",
-      peer_rank, dst_ref.ToString(), offset_bytes, count,
+      "Receive(comm_id={}, peer_rank={}, dst_ref={}, offset_bytes={}, "
+      "count={}, dtype={}, dst_device_ptr={})",
+      comm_id.ToString(), peer_rank, dst_ref.ToString(), offset_bytes, count,
       static_cast<int>(dtype), dst_ptr);
 }
 
 void Receive::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   const auto dst_ptr_value = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  writer.WriteFields(peer_rank, dst_ref, offset_bytes, count, dtype,
+  writer.WriteFields(comm_id, peer_rank, dst_ref, offset_bytes, count, dtype,
                      dst_ptr_value);
 }
 
 Receive Receive::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [peer_rank, dst_ref, offset_bytes, count, dtype, dst_ptr_value] =
-      reader.ReadFields<DeviceRank, BufferRef, std::size_t, std::size_t,
+  auto [comm_id, peer_rank, dst_ref, offset_bytes, count, dtype,
+        dst_ptr_value] =
+      reader.ReadFields<CommId, DeviceRank, BufferRef, std::size_t, std::size_t,
                         torch::Dtype, std::uintptr_t>();
   const auto dst_ptr = reinterpret_cast<DevicePtr>(dst_ptr_value);
-  return Receive(std::move(dst_ref), offset_bytes, count, dtype, peer_rank,
-                 dst_ptr);
+  return Receive(comm_id, std::move(dst_ref), offset_bytes, count, dtype,
+                 peer_rank, dst_ptr);
 }
 
 void Receive::Embellish(

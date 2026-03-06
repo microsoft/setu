@@ -21,6 +21,7 @@
 #include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
+#include "planner/ir/llc/CommId.h"
 #include "planner/ir/llc/ShardAccessTypes.h"
 #include "planner/ir/ref/BufferRef.h"
 #include "planner/ir/ref/ShardRef.h"
@@ -37,16 +38,19 @@ using setu::planner::ir::ref::BufferRef;
 using setu::planner::ir::ref::ShardRef;
 //==============================================================================
 
-/// NCCL point-to-point send to a peer rank within the active communicator.
+/// Point-to-point send to a peer rank within the specified communicator.
 ///
 /// Sends `count` elements of type `dtype` starting at `offset_bytes` in
 /// `src_ref` to the device identified by `peer_rank`.  The communicator
-/// must have been established by a preceding InitComm/UseComm instruction.
+/// must have been established by a preceding InitComm instruction with
+/// the matching `comm_id`.
 struct Send {
-  Send(BufferRef src_ref_param, std::size_t offset_bytes_param,
-       std::size_t count_param, torch::Dtype dtype_param,
-       DeviceRank peer_rank_param, DevicePtr src_ptr_param = nullptr)
-      : src_ref(std::move(src_ref_param)),
+  Send(CommId comm_id_param, BufferRef src_ref_param,
+       std::size_t offset_bytes_param, std::size_t count_param,
+       torch::Dtype dtype_param, DeviceRank peer_rank_param,
+       DevicePtr src_ptr_param = nullptr)
+      : comm_id(comm_id_param),
+        src_ref(std::move(src_ref_param)),
         offset_bytes(offset_bytes_param),
         count(count_param),
         dtype(dtype_param),
@@ -73,6 +77,7 @@ struct Send {
   /// @brief Extract shard access requirements for this instruction.
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
+  CommId comm_id;
   BufferRef src_ref;
   std::size_t offset_bytes;
   std::size_t count;

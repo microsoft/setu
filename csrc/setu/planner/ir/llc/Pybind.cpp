@@ -94,11 +94,12 @@ void InitCopyInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitSendInstructionPybind(py::module_& m) {
   py::class_<Send>(m, "Send")
-      .def(py::init<BufferRef, std::size_t, std::size_t, torch::Dtype,
+      .def(py::init<CommId, BufferRef, std::size_t, std::size_t, torch::Dtype,
                     DeviceRank>(),
-           py::arg("src_ref"), py::arg("offset"), py::arg("count"),
-           py::arg("dtype"), py::arg("peer_rank"),
-           "Create a send instruction for NCCL point-to-point communication")
+           py::arg("comm_id"), py::arg("src_ref"), py::arg("offset"),
+           py::arg("count"), py::arg("dtype"), py::arg("peer_rank"),
+           "Create a send instruction for point-to-point communication")
+      .def_readonly("comm_id", &Send::comm_id, "Communicator identifier")
       .def_readonly("peer_rank", &Send::peer_rank,
                     "Destination device rank in the communicator")
       .def_readonly("src_ref", &Send::src_ref, "Source buffer reference")
@@ -112,11 +113,12 @@ void InitSendInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitReceiveInstructionPybind(py::module_& m) {
   py::class_<Receive>(m, "Receive")
-      .def(py::init<BufferRef, std::size_t, std::size_t, torch::Dtype,
+      .def(py::init<CommId, BufferRef, std::size_t, std::size_t, torch::Dtype,
                     DeviceRank>(),
-           py::arg("dst_ref"), py::arg("offset_bytes"), py::arg("count"),
-           py::arg("dtype"), py::arg("peer_rank"),
-           "Create a receive instruction for NCCL point-to-point communication")
+           py::arg("comm_id"), py::arg("dst_ref"), py::arg("offset_bytes"),
+           py::arg("count"), py::arg("dtype"), py::arg("peer_rank"),
+           "Create a receive instruction for point-to-point communication")
+      .def_readonly("comm_id", &Receive::comm_id, "Communicator identifier")
       .def_readonly("peer_rank", &Receive::peer_rank,
                     "Source device rank in the communicator")
       .def_readonly("dst_ref", &Receive::dst_ref,
@@ -131,26 +133,14 @@ void InitReceiveInstructionPybind(py::module_& m) {
 //==============================================================================
 void InitInitCommInstructionPybind(py::module_& m) {
   py::class_<InitComm>(m, "InitComm")
-      .def(
-          py::init<ncclUniqueId, std::unordered_map<Participant, DeviceRank>>(),
-          py::arg("comm_id"), py::arg("participant_to_rank"),
-          "Create an instruction to initialize an NCCL communicator")
-      .def_readonly("comm_id", &InitComm::comm_id,
-                    "NCCL unique communicator ID")
+      .def(py::init<CommId, std::unordered_map<Participant, DeviceRank>>(),
+           py::arg("comm_id"), py::arg("participant_to_rank"),
+           "Create an instruction to initialize a communicator")
+      .def_readonly("comm_id", &InitComm::comm_id, "Communicator identifier")
       .def_readonly("participant_to_rank", &InitComm::participant_to_rank,
-                    "Mapping from participant to NCCL rank")
+                    "Mapping from participant to rank")
       .def("__str__", &InitComm::ToString)
       .def("__repr__", &InitComm::ToString);
-}
-//==============================================================================
-void InitUseCommInstructionPybind(py::module_& m) {
-  py::class_<UseComm>(m, "UseComm")
-      .def(py::init<ncclUniqueId>(), py::arg("comm_id"),
-           "Create an instruction to switch to an existing NCCL communicator")
-      .def_readonly("comm_id", &UseComm::comm_id,
-                    "NCCL unique communicator ID to use")
-      .def("__str__", &UseComm::ToString)
-      .def("__repr__", &UseComm::ToString);
 }
 //==============================================================================
 void InitBarrierInstructionPybind(py::module_& m) {
@@ -168,8 +158,6 @@ void InitInstructionPybind(py::module_& m) {
            "Create instruction from Receive")
       .def(py::init<InitComm>(), py::arg("init_comm"),
            "Create instruction from InitComm")
-      .def(py::init<UseComm>(), py::arg("use_comm"),
-           "Create instruction from UseComm")
       .def(py::init<Barrier>(), py::arg("barrier"),
            "Create instruction from Barrier")
       .def(
@@ -193,37 +181,30 @@ void InitInstructionPybind(py::module_& m) {
       .def("__repr__", &Instruction::ToString);
 }
 //==============================================================================
-ncclUniqueId GenerateNcclUniqueId() {
+CommId GenerateCommId() {
   ncclUniqueId id;
   ncclGetUniqueId(&id);
-  return id;
+  return CommId::From(id);
 }
 //==============================================================================
-void InitNcclUniqueIdPybind(py::module_& m) {
-  // Register ncclUniqueId as an opaque type that can be passed around
-  py::class_<ncclUniqueId>(m, "NcclUniqueId")
+void InitCommIdPybind(py::module_& m) {
+  py::class_<CommId>(m, "CommId")
       .def(py::init<>())
-      .def("__repr__", [](const ncclUniqueId& id) {
-        // Show first few bytes as hex for debugging
-        std::string hex;
-        for (std::size_t i = 0; i < 8 && i < NCCL_UNIQUE_ID_BYTES; ++i) {
-          hex +=
-              std::format("{:02x}", static_cast<unsigned char>(id.internal[i]));
-        }
-        return std::format("NcclUniqueId({}...)", hex);
-      });
+      .def("__str__", &CommId::ToString)
+      .def("__repr__", &CommId::ToString)
+      .def("__eq__", &CommId::operator==);
 }
 //==============================================================================
 void InitLLCPybind(py::module_& m) {
-  // Register ncclUniqueId type first (needed by InitCommInstruction)
-  InitNcclUniqueIdPybind(m);
+  // Register CommId type first (needed by instruction types)
+  InitCommIdPybind(m);
 
   // Register ShardRef type (needed by instruction types)
   InitShardRefPybind(m);
 
-  // Utility function to generate NCCL unique IDs
-  m.def("generate_nccl_id", &GenerateNcclUniqueId,
-        "Generate a new NCCL unique ID for communicator initialization");
+  // Utility function to generate communicator IDs (backed by NCCL)
+  m.def("generate_comm_id", &GenerateCommId,
+        "Generate a new communicator ID for communicator initialization");
 
   // Instruction types (must be registered before Instruction itself)
   InitCopyEntryPybind(m);
@@ -231,7 +212,6 @@ void InitLLCPybind(py::module_& m) {
   InitSendInstructionPybind(m);
   InitReceiveInstructionPybind(m);
   InitInitCommInstructionPybind(m);
-  InitUseCommInstructionPybind(m);
   InitBarrierInstructionPybind(m);
   InitInstructionPybind(m);
 }

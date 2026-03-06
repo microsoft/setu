@@ -32,8 +32,6 @@ void Instruction::Serialize(BinaryBuffer& buffer) const {
         InstructionType type = InstructionType::kInitComm;
         if constexpr (std::is_same_v<T, InitComm>) {
           type = InstructionType::kInitComm;
-        } else if constexpr (std::is_same_v<T, UseComm>) {
-          type = InstructionType::kUseComm;
         } else if constexpr (std::is_same_v<T, Copy>) {
           type = InstructionType::kCopy;
         } else if constexpr (std::is_same_v<T, Send>) {
@@ -57,8 +55,6 @@ Instruction Instruction::Deserialize(const BinaryRange& range) {
   switch (static_cast<InstructionType>(type_id)) {
     case InstructionType::kInitComm:
       return Instruction(reader.Read<InitComm>());
-    case InstructionType::kUseComm:
-      return Instruction(reader.Read<UseComm>());
     case InstructionType::kCopy:
       return Instruction(reader.Read<Copy>());
     case InstructionType::kSend:

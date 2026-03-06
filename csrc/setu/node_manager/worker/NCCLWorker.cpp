@@ -80,8 +80,6 @@ void NCCLWorker::Execute(const Program& program) {
 
           if constexpr (std::is_same_v<T, InitComm>) {
             ExecuteInitComm(inst);
-          } else if constexpr (std::is_same_v<T, UseComm>) {
-            ExecuteUseComm(inst);
           } else if constexpr (std::is_same_v<T, Copy> ||
                                std::is_same_v<T, Send> ||
                                std::is_same_v<T, Receive>) {
@@ -172,30 +170,24 @@ void NCCLWorker::Execute(const Program& program) {
 //==============================================================================
 
 void NCCLWorker::ExecuteInitComm(const InitComm& inst) {
-  std::string key = CommIdToString(inst.comm_id);
-
   const std::int32_t num_ranks =
       static_cast<std::int32_t>(inst.participant_to_rank.size());
   auto part = Participant(node_id_, device_);
   const std::int32_t rank = inst.participant_to_rank.at(part);
 
+  auto nccl_id = inst.comm_id.As<ncclUniqueId>();
+
   auto t0 = std::chrono::steady_clock::now();
   ncclComm_t comm;
-  NCCL_CHECK(ncclCommInitRank(&comm, num_ranks, inst.comm_id, rank));
+  NCCL_CHECK(ncclCommInitRank(&comm, num_ranks, nccl_id, rank));
   auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - t0)
                 .count();
 
-  comm_cache_[key] = CommCacheEntry{.nccl_comm = comm};
+  comm_cache_[inst.comm_id] = CommCacheEntry{.nccl_comm = comm};
 
-  active_comm_key_ = key;
   LOG_INFO("InitComm[{}]: ncclCommInitRank took {}ms, {} ranks, this rank={}",
            device_, dt, num_ranks, rank);
-}
-
-void NCCLWorker::ExecuteUseComm(const UseComm& inst) {
-  active_comm_key_ = CommIdToString(inst.comm_id);
-  LOG_DEBUG("UseComm: switched to communicator");
 }
 
 void NCCLWorker::ExecuteCopy(const Copy& inst) {
@@ -227,7 +219,7 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
 }
 
 void NCCLWorker::ExecuteSend(const Send& inst) {
-  auto& entry = comm_cache_.at(active_comm_key_);
+  auto& entry = comm_cache_.at(inst.comm_id);
 
   NCCL_CHECK(ncclSend(static_cast<char*>(inst.src_ptr) + inst.offset_bytes,
                       inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
@@ -238,7 +230,7 @@ void NCCLWorker::ExecuteSend(const Send& inst) {
 }
 
 void NCCLWorker::ExecuteReceive(const Receive& inst) {
-  auto& entry = comm_cache_.at(active_comm_key_);
+  auto& entry = comm_cache_.at(inst.comm_id);
 
   NCCL_CHECK(ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.offset_bytes,
                       inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
@@ -255,10 +247,6 @@ DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {
 //==============================================================================
 // Helper Functions
 //==============================================================================
-
-std::string NCCLWorker::CommIdToString(const ncclUniqueId& id) {
-  return std::string(id.internal, id.internal + NCCL_UNIQUE_ID_BYTES);
-}
 
 ncclDataType_t NCCLWorker::ToNcclDataType(torch::Dtype dtype) {
   switch (dtype) {

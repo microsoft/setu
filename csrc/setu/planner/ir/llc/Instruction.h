@@ -24,7 +24,6 @@
 #include "planner/ir/llc/instructions/InitComm.h"
 #include "planner/ir/llc/instructions/Receive.h"
 #include "planner/ir/llc/instructions/Send.h"
-#include "planner/ir/llc/instructions/UseComm.h"
 #include "planner/ir/ref/ShardRef.h"
 //==============================================================================
 /// Low-Level Copy (LLC) IR — the target IR for backend code generation.
@@ -36,11 +35,11 @@
 /// device pointers and issue the corresponding runtime calls.
 ///
 /// Instruction set:
-///   InitComm  — initialize a new NCCL communicator among a set of devices
-///   UseComm   — switch to an already-initialised communicator
+///   InitComm  — initialize a new communicator among a set of devices
 ///   Copy      — local (same-device) memcpy between shard regions
-///   Send      — NCCL point-to-point send to a peer rank
-///   Receive   — NCCL point-to-point receive from a peer rank
+///   Send      — point-to-point send to a peer rank
+///   Receive   — point-to-point receive from a peer rank
+///   Barrier   — synchronize all in-flight operations before continuing
 namespace setu::planner::ir::llc {
 //==============================================================================
 using setu::commons::DevicePtr;
@@ -53,15 +52,13 @@ using setu::planner::ir::ref::ShardRef;
 
 enum class InstructionType : std::uint8_t {
   kInitComm = 1,
-  kUseComm = 2,
   kCopy = 3,
   kSend = 4,
   kReceive = 5,
   kBarrier = 6,
 };
 
-using InstructionVariant =
-    std::variant<InitComm, UseComm, Copy, Send, Receive, Barrier>;
+using InstructionVariant = std::variant<InitComm, Copy, Send, Receive, Barrier>;
 
 /// A single LLC instruction.  Wraps one of the five concrete instruction
 /// types in a variant.  Supports serialization for wire transfer and
@@ -87,7 +84,7 @@ struct Instruction {
   void Embellish(const std::function<DevicePtr(const BufferRef&)>& resolver);
 
   /// @brief Extract shard access requirements for this instruction.
-  /// @return Map of shard IDs to access modes (empty for InitComm/UseComm)
+  /// @return Map of shard IDs to access modes (empty for InitComm/Barrier)
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
   InstructionVariant instr;

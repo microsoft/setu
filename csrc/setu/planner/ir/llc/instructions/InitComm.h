@@ -16,14 +16,14 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include <nccl.h>
+#include "commons/StdCommon.h"
+#include "commons/Types.h"
+#include "commons/datatypes/Device.h"
+#include "commons/utils/Serialization.h"
 //==============================================================================
+#include "planner/Participant.h"
+#include "planner/ir/llc/CommId.h"
 #include "planner/ir/llc/ShardAccessTypes.h"
-#include "setu/commons/StdCommon.h"
-#include "setu/commons/Types.h"
-#include "setu/commons/datatypes/Device.h"
-#include "setu/commons/utils/Serialization.h"
-#include "setu/planner/Participant.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
@@ -37,13 +37,13 @@ using setu::commons::utils::BinaryWriter;
 using setu::planner::Participant;
 //==============================================================================
 
-/// Initialize a new NCCL communicator for a group of participant devices.
+/// Initialize a new communicator for a group of participant devices.
 ///
 /// Maps each Participant to a DeviceRank within the communicator.  The
-/// `comm_id` is a globally unique NCCL identifier shared by all participants
-/// so they can collectively call ncclCommInitRank.
+/// `comm_id` is an opaque identifier shared by all participants so they
+/// can collectively initialize the communicator.
 struct InitComm {
-  InitComm(ncclUniqueId comm_id,
+  InitComm(CommId comm_id,
            std::unordered_map<Participant, DeviceRank> participant_to_rank)
       : comm_id(comm_id), participant_to_rank(std::move(participant_to_rank)) {}
 
@@ -62,7 +62,7 @@ struct InitComm {
   /// @brief Extract shard access requirements for this instruction.
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
-  ncclUniqueId comm_id;
+  CommId comm_id;
   std::unordered_map<Participant, DeviceRank> participant_to_rank;
 };
 

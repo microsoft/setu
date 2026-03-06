@@ -25,7 +25,7 @@ def _get_extensions():
             Receive,
             Send,
             ShardRef,
-            generate_nccl_id,
+            generate_comm_id,
         )
         from setu._node_manager import NCCLWorker
         from setu._planner import Participant
@@ -39,7 +39,7 @@ def _get_extensions():
             "Receive": Receive,
             "InitComm": InitComm,
             "ShardRef": ShardRef,
-            "generate_nccl_id": generate_nccl_id,
+            "generate_comm_id": generate_comm_id,
             "Participant": Participant,
         }
     except ImportError as e:
@@ -193,7 +193,7 @@ def test_nccl_worker_send_receive():
     Receive = ext["Receive"]
     InitComm = ext["InitComm"]
     ShardRef = ext["ShardRef"]
-    generate_nccl_id = ext["generate_nccl_id"]
+    generate_comm_id = ext["generate_comm_id"]
     Participant = ext["Participant"]
 
     # Generate node IDs for the two workers
@@ -205,10 +205,10 @@ def test_nccl_worker_send_receive():
     torch_device_1 = torch.device("cuda:1")
     device_1 = Device(torch_device_1)
 
-    # Generate a shared NCCL unique ID for the communicator
-    nccl_id = generate_nccl_id()
+    # Generate a shared communicator ID
+    comm_id = generate_comm_id()
 
-    # Participant to NCCL rank mapping (both participants)
+    # Participant to rank mapping (both participants)
     participant_0 = Participant(node_id_0, device_0)
     participant_1 = Participant(node_id_1, device_1)
     participant_to_rank = {participant_0: 0, participant_1: 1}
@@ -223,8 +223,9 @@ def test_nccl_worker_send_receive():
     dst_shard = ShardRef("00000000-0000-0000-0000-000000000002", "dst")
 
     # Program for worker 0: InitComm, then Send to device 1
-    init_comm_0 = InitComm(nccl_id, participant_to_rank)
+    init_comm_0 = InitComm(comm_id, participant_to_rank)
     send_instr = Send(
+        comm_id,
         src_shard,
         0,  # offset
         num_elements,
@@ -235,8 +236,9 @@ def test_nccl_worker_send_receive():
     program_0 = [Instruction(init_comm_0), Instruction(send_instr)]
 
     # Program for worker 1: InitComm, then Receive from device 0
-    init_comm_1 = InitComm(nccl_id, participant_to_rank)
+    init_comm_1 = InitComm(comm_id, participant_to_rank)
     recv_instr = Receive(
+        comm_id,
         dst_shard,
         0,  # offset
         num_elements,

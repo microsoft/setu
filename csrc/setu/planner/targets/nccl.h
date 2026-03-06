@@ -16,11 +16,10 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include <nccl.h>
-//==============================================================================
 #include "planner/Planner.h"
 #include "planner/RegisterSet.h"
 #include "planner/ir/cir/Program.h"
+#include "planner/ir/llc/CommId.h"
 #include "planner/targets/backend.h"
 //==============================================================================
 namespace setu::planner::targets {
@@ -34,8 +33,8 @@ namespace cir = setu::planner::ir::cir;
 ///
 /// Walks a CIR Program and produces a Plan containing per-device LLC programs.
 /// Maintains a communicator cache across invocations so that repeated calls
-/// with the same participant set reuse the existing communicator (UseComm)
-/// instead of creating a new one (InitComm).
+/// with the same participant set reuse the existing communicator instead of
+/// creating a new one (InitComm).
 ///
 /// Supported CIR operations:
 ///   view      — records shard/offset metadata for later use by copy
@@ -59,8 +58,10 @@ struct NCCL : public Backend {
  private:
   std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets_;
 
+  using CommId = setu::planner::ir::llc::CommId;
+
   struct CommCacheEntry {
-    ncclUniqueId id;
+    CommId id;
     std::unordered_map<Participant, DeviceRank> ranks;
   };
   std::map<Participants, CommCacheEntry> comm_cache_;

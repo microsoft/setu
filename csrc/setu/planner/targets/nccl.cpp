@@ -16,6 +16,8 @@
 //==============================================================================
 #include "planner/targets/nccl.h"
 //==============================================================================
+#include <nccl.h>
+//==============================================================================
 #include "commons/Logging.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Operation.h"
@@ -278,30 +280,45 @@ Plan NCCL::Run(const cir::Program& program) {
 
   ASSERT_VALID_RUNTIME(!parts.empty(), "No participants found in CIR program");
 
-  // === Step 2: Set up communicator, read from cache if available ===
-
-  bool new_comm = false;
-  if (!comm_cache_.contains(parts)) {
-    ncclUniqueId comm_id;
-    ncclGetUniqueId(&comm_id);
-
-    DeviceRank rank = 0;
-    std::unordered_map<Participant, DeviceRank> ranks;
-    for (const auto& part : parts) {
-      ranks[part] = rank++;
-    }
-    comm_cache_[parts] = CommCacheEntry{.id = comm_id, .ranks = ranks};
-    new_comm = true;
-  }
-
-  const auto& entry = comm_cache_.at(parts);
+  // === Step 2: Set up per-pair communicators ===
+  //
+  // Create a separate 2-GPU communicator for each unique (src, dst)
+  // participant pair.  This prevents NCCL proxy thread serialization that
+  // occurs when multiple independent Send/Recv ops share one communicator.
 
   auto& programs = plan.program;
-  for (const auto& part : parts) {
-    if (new_comm) {
-      programs[part].emplace_back(llc::InitComm(entry.id, entry.ranks));
-    } else {
-      programs[part].emplace_back(llc::UseComm(entry.id));
+
+  // Collect unique cross-device participant pairs
+  std::set<Participants> unique_pair_parts;
+  for (const auto& c : pending_copies) {
+    if (c.src_part != c.dst_part) {
+      Participants pair_parts;
+      pair_parts.insert(c.src_part);
+      pair_parts.insert(c.dst_part);
+      unique_pair_parts.insert(pair_parts);
+    }
+  }
+
+  // Create and emit InitComm for each pair in deterministic order.
+  // ncclCommInitRank is collective, so both sides must call it.  The
+  // deterministic ordering of unique_pair_parts (std::set) plus the fact
+  // that each device only sees its own InitComms prevents deadlock.
+  for (const auto& pair_parts : unique_pair_parts) {
+    if (!comm_cache_.contains(pair_parts)) {
+      ncclUniqueId nccl_id;
+      ncclGetUniqueId(&nccl_id);
+      auto comm_id = CommId::From(nccl_id);
+
+      DeviceRank rank = 0;
+      std::unordered_map<Participant, DeviceRank> ranks;
+      for (const auto& p : pair_parts) {
+        ranks[p] = rank++;
+      }
+      comm_cache_[pair_parts] = CommCacheEntry{.id = comm_id, .ranks = ranks};
+
+      for (const auto& p : pair_parts) {
+        programs[p].emplace_back(llc::InitComm(comm_id, ranks));
+      }
     }
   }
 
@@ -347,12 +364,18 @@ Plan NCCL::Run(const cir::Program& program) {
                                             c.dst_ref, c.dst_offset_bytes,
                                             c.count, c.dtype);
     } else {
-      programs[c.src_part].emplace_back(llc::Send(c.src_ref, c.src_offset_bytes,
-                                                  c.count, c.dtype,
-                                                  entry.ranks.at(c.dst_part)));
+      // Look up the per-pair communicator
+      Participants pair_parts;
+      pair_parts.insert(c.src_part);
+      pair_parts.insert(c.dst_part);
+      const auto& pair_entry = comm_cache_.at(pair_parts);
+
+      programs[c.src_part].emplace_back(
+          llc::Send(pair_entry.id, c.src_ref, c.src_offset_bytes, c.count,
+                    c.dtype, pair_entry.ranks.at(c.dst_part)));
       programs[c.dst_part].emplace_back(
-          llc::Receive(c.dst_ref, c.dst_offset_bytes, c.count, c.dtype,
-                       entry.ranks.at(c.src_part)));
+          llc::Receive(pair_entry.id, c.dst_ref, c.dst_offset_bytes, c.count,
+                       c.dtype, pair_entry.ranks.at(c.src_part)));
     }
   }
 

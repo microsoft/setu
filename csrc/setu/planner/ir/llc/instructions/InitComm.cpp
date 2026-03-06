@@ -22,20 +22,13 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string InitComm::ToString() const {
-  // Show only the first 8 bytes of the comm_id as a short identifier
-  std::string short_hex;
-  for (std::size_t i = 0; i < 8; ++i) {
-    short_hex +=
-        std::format("{:02x}", static_cast<std::uint8_t>(comm_id.internal[i]));
-  }
-
   std::string ranks_str;
   for (const auto& [participant, rank] : participant_to_rank) {
     if (!ranks_str.empty()) ranks_str += ", ";
     ranks_str += std::format("{}={}", participant.ToString(), rank);
   }
 
-  return std::format("InitComm(comm_id={}..., ranks={{{}}})", short_hex,
+  return std::format("InitComm(comm_id={}, ranks={{{}}})", comm_id.ToString(),
                      ranks_str);
 }
 
@@ -47,9 +40,8 @@ void InitComm::Serialize(BinaryBuffer& buffer) const {
 InitComm InitComm::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [comm_id, participant_to_rank] =
-      reader.ReadFields<ncclUniqueId,
-                        std::unordered_map<Participant, DeviceRank>>();
-  return InitComm(comm_id, participant_to_rank);
+      reader.ReadFields<CommId, std::unordered_map<Participant, DeviceRank>>();
+  return InitComm(std::move(comm_id), std::move(participant_to_rank));
 }
 
 ShardAccessMap InitComm::GetShardAccess() const { return {}; }
