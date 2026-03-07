@@ -54,12 +54,13 @@ class CoordinatorActor:
         self._ip_address: str = ""
         self._metrics_endpoint = metrics_endpoint
 
-    def start(self, passes=None) -> dict:
+    def start(self, passes=None, topology=None) -> dict:
         """Start the Coordinator on an OS-assigned port.
 
         Args:
             passes: Optional list of pass name strings. ``None`` means
                 default, ``[]`` means no passes.
+            topology: Optional Topology for passes that need it.
 
         Returns:
             Dict with coordinator_endpoint and ip_address.
@@ -72,7 +73,7 @@ class CoordinatorActor:
         self._port = _find_free_port()
 
         pass_manager = PassManager()
-        for p in resolve_passes(passes):
+        for p in resolve_passes(passes, topology=topology):
             pass_manager.add_pass(p)
 
         # Register sets are provided by NodeAgents during onboarding,

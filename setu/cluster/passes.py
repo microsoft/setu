@@ -10,6 +10,7 @@ from setu._coordinator import Topology
 
 _PASS_REGISTRY = {
     "shortest_path_routing": lambda topo: _make_shortest_path_routing(topo),
+    "bandwidth_aggregation": lambda topo: _make_bandwidth_aggregation(topo),
     "register_tiling": lambda topo: _make_register_tiling(),
     "instruction_scheduler": lambda topo: _make_instruction_scheduler(),
 }
@@ -21,6 +22,12 @@ def _make_shortest_path_routing(topology: Optional[Topology]):
     from setu._coordinator import ShortestPathRouting
 
     return ShortestPathRouting(topology)
+
+
+def _make_bandwidth_aggregation(topology: Optional[Topology]):
+    from setu._coordinator import BandwidthAggregation
+
+    return BandwidthAggregation(topology)
 
 
 def _make_register_tiling():

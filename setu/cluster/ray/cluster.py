@@ -164,6 +164,7 @@ class Cluster(ClusterProto):
         passes: Optional[List[str]] = None,
         metrics_endpoint: str = "",
         register_size: int = 0,
+        topology=None,
     ) -> None:
         self._coordinator_actor: Optional[ray.actor.ActorHandle] = None
         self._node_agent_actors: List[ray.actor.ActorHandle] = []
@@ -174,6 +175,7 @@ class Cluster(ClusterProto):
         self._metrics_endpoint = metrics_endpoint
         self._metrics_server: Optional[MetricsServer] = None
         self._register_size = register_size
+        self._topology = topology
 
     @property
     def cluster_info(self) -> Optional[ClusterInfo]:
@@ -246,7 +248,9 @@ class Cluster(ClusterProto):
         )
 
         coordinator_result = ray.get(
-            self._coordinator_actor.start.remote(passes=self._passes)
+            self._coordinator_actor.start.remote(
+                passes=self._passes, topology=self._topology
+            )
         )
         coordinator_endpoint = coordinator_result["coordinator_endpoint"]
         logger.info("Coordinator started at %s", coordinator_endpoint)
