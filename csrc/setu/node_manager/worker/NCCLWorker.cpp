@@ -38,13 +38,11 @@ using setu::planner::Participant;
 //==============================================================================
 
 NCCLWorker::NCCLWorker(NodeId node_id, Device device, RegisterSet register_set)
-    : Worker(node_id, device),
-      stream_(nullptr),
-      register_file_(std::move(register_set)) {}
+    : Worker(node_id, device), register_file_(std::move(register_set)) {}
 
 NCCLWorker::~NCCLWorker() {
-  if (stream_) {
-    cudaStreamDestroy(stream_);
+  for (auto s : streams_) {
+    cudaStreamDestroy(s);
   }
   for (auto& [key, entry] : comm_cache_) {
     ncclCommDestroy(entry.nccl_comm);
@@ -53,7 +51,11 @@ NCCLWorker::~NCCLWorker() {
 
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
-  CUDA_CHECK(cudaStreamCreate(&stream_));
+  streams_.resize(kNumStreams);
+  for (auto& s : streams_) {
+    CUDA_CHECK(cudaStreamCreate(&s));
+  }
+  active_stream_ = streams_[0];
 
   if (!register_file_.Empty()) {
     register_file_.Allocate();
@@ -67,9 +69,7 @@ void NCCLWorker::Setup() {
 void NCCLWorker::Execute(const Program& program) {
   auto t_start = std::chrono::high_resolution_clock::now();
 
-  bool group_started = false;
   std::uint32_t group_index = 0;
-  std::size_t ops_in_group = 0;
   std::vector<GroupTimingState> event_states;
   std::vector<setu::telemetry::NCCLGroupTiming> timings;
 
@@ -83,18 +83,11 @@ void NCCLWorker::Execute(const Program& program) {
           } else if constexpr (std::is_same_v<T, Copy> ||
                                std::is_same_v<T, Send> ||
                                std::is_same_v<T, Receive>) {
-            if (!group_started) {
-              NCCL_CHECK(ncclGroupStart());
-              group_started = true;
-              ops_in_group = 0;
+            active_stream_ = streams_[group_index % kNumStreams];
 
-              // Record start event on GPU timeline
-              cudaEvent_t start_event;
-              CUDA_CHECK(cudaEventCreate(&start_event));
-              CUDA_CHECK(cudaEventRecord(start_event, stream_));
-              event_states.push_back({start_event, nullptr, 0});
-            }
-            ops_in_group++;
+            cudaEvent_t start_event;
+            CUDA_CHECK(cudaEventCreate(&start_event));
+            CUDA_CHECK(cudaEventRecord(start_event, active_stream_));
 
             if constexpr (std::is_same_v<T, Copy>) {
               ExecuteCopy(inst);
@@ -103,40 +96,41 @@ void NCCLWorker::Execute(const Program& program) {
             } else {
               ExecuteReceive(inst);
             }
+
+            cudaEvent_t end_event;
+            CUDA_CHECK(cudaEventCreate(&end_event));
+            CUDA_CHECK(cudaEventRecord(end_event, active_stream_));
+            event_states.push_back({start_event, end_event, 1});
+            timings.push_back({group_index, 0.0, 1});
+            group_index++;
           } else if constexpr (std::is_same_v<T, Fence>) {
-            if (group_started) {
-              NCCL_CHECK(ncclGroupEnd());
-
-              // Record end event before sync
-              cudaEvent_t end_event;
-              CUDA_CHECK(cudaEventCreate(&end_event));
-              CUDA_CHECK(cudaEventRecord(end_event, stream_));
-              event_states.back().end_event = end_event;
-              event_states.back().ops_in_group = ops_in_group;
-
-              CUDA_CHECK(cudaStreamSynchronize(stream_));
-
-              timings.push_back({group_index, 0.0, ops_in_group});
-              group_started = false;
-              group_index++;
+            // Full cross-stream synchronization: every stream waits on
+            // every other stream's pre-fence work, so post-fence ops on
+            // any stream observe all prior results.
+            std::vector<cudaEvent_t> fence_events(kNumStreams);
+            for (std::size_t i = 0; i < kNumStreams; ++i) {
+              CUDA_CHECK(cudaEventCreate(&fence_events[i]));
+              CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
             }
+            for (std::size_t i = 0; i < kNumStreams; ++i) {
+              for (std::size_t j = 0; j < kNumStreams; ++j) {
+                if (i != j) {
+                  CUDA_CHECK(cudaStreamWaitEvent(streams_[i], fence_events[j]));
+                }
+              }
+            }
+            for (auto& e : fence_events) {
+              CUDA_CHECK(cudaEventDestroy(e));
+            }
+            group_index = 0;
           }
         },
         instruction.instr);
   }
 
-  // Handle trailing group (no final Fence)
-  if (group_started) {
-    NCCL_CHECK(ncclGroupEnd());
-
-    cudaEvent_t end_event;
-    CUDA_CHECK(cudaEventCreate(&end_event));
-    CUDA_CHECK(cudaEventRecord(end_event, stream_));
-    event_states.back().end_event = end_event;
-    event_states.back().ops_in_group = ops_in_group;
-
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
-    timings.push_back({group_index, 0.0, ops_in_group});
+  // Sync all streams to ensure completion before returning.
+  for (auto s : streams_) {
+    CUDA_CHECK(cudaStreamSynchronize(s));
   }
 
   // Compute elapsed times from CUDA event pairs
@@ -207,15 +201,12 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
     sizes[i] = e.count * GetDTypeSizeBytes(e.dtype);
   }
 
-  // All entries are device-to-device with stream-ordered source access.
-  cudaMemcpyAttributes attrs = {};
-  attrs.srcAccessOrder = cudaMemcpySrcAccessOrderStream;
+  for (std::size_t i = 0; i < count; ++i) {
+    CUDA_CHECK(cudaMemcpyAsync(dsts[i], srcs[i], sizes[i],
+                               cudaMemcpyDeviceToDevice, active_stream_));
+  }
 
-  std::size_t fail_idx = 0;
-  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
-                                  attrs, &fail_idx, stream_));
-
-  LOG_DEBUG("Copy: {} entries batched via cudaMemcpyBatchAsync", count);
+  LOG_DEBUG("Copy: {} entries via cudaMemcpyAsync", count);
 }
 
 void NCCLWorker::ExecuteSend(const Send& inst) {
@@ -223,7 +214,7 @@ void NCCLWorker::ExecuteSend(const Send& inst) {
 
   NCCL_CHECK(ncclSend(static_cast<char*>(inst.src_ptr) + inst.offset_bytes,
                       inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
-                      entry.nccl_comm, stream_));
+                      entry.nccl_comm, active_stream_));
 
   LOG_DEBUG("Send: {} elements from {} to device rank: {}", inst.count,
             inst.src_ref.ToString(), inst.peer_rank);
@@ -234,7 +225,7 @@ void NCCLWorker::ExecuteReceive(const Receive& inst) {
 
   NCCL_CHECK(ncclRecv(static_cast<char*>(inst.dst_ptr) + inst.offset_bytes,
                       inst.count, ToNcclDataType(inst.dtype), inst.peer_rank,
-                      entry.nccl_comm, stream_));
+                      entry.nccl_comm, active_stream_));
 
   LOG_DEBUG("Receive: {} elements to {} from device rank: {}", inst.count,
             inst.dst_ref.ToString(), inst.peer_rank);
