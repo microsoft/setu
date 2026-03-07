@@ -143,11 +143,11 @@ void InitInitCommInstructionPybind(py::module_& m) {
       .def("__repr__", &InitComm::ToString);
 }
 //==============================================================================
-void InitBarrierInstructionPybind(py::module_& m) {
-  py::class_<Barrier>(m, "Barrier")
-      .def(py::init<>(), "Create a synchronization barrier instruction")
-      .def("__str__", &Barrier::ToString)
-      .def("__repr__", &Barrier::ToString);
+void InitFenceInstructionPybind(py::module_& m) {
+  py::class_<Fence>(m, "Fence")
+      .def(py::init<>(), "Create a synchronization fence instruction")
+      .def("__str__", &Fence::ToString)
+      .def("__repr__", &Fence::ToString);
 }
 //==============================================================================
 void InitInstructionPybind(py::module_& m) {
@@ -158,8 +158,7 @@ void InitInstructionPybind(py::module_& m) {
            "Create instruction from Receive")
       .def(py::init<InitComm>(), py::arg("init_comm"),
            "Create instruction from InitComm")
-      .def(py::init<Barrier>(), py::arg("barrier"),
-           "Create instruction from Barrier")
+      .def(py::init<Fence>(), py::arg("fence"), "Create instruction from Fence")
       .def(
           "embellish",
           [](Instruction& self, py::function py_resolver) {
@@ -212,7 +211,7 @@ void InitLLCPybind(py::module_& m) {
   InitSendInstructionPybind(m);
   InitReceiveInstructionPybind(m);
   InitInitCommInstructionPybind(m);
-  InitBarrierInstructionPybind(m);
+  InitFenceInstructionPybind(m);
   InitInstructionPybind(m);
 }
 //==============================================================================

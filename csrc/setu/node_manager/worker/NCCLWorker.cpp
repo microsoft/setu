@@ -103,7 +103,7 @@ void NCCLWorker::Execute(const Program& program) {
             } else {
               ExecuteReceive(inst);
             }
-          } else if constexpr (std::is_same_v<T, Barrier>) {
+          } else if constexpr (std::is_same_v<T, Fence>) {
             if (group_started) {
               NCCL_CHECK(ncclGroupEnd());
 
@@ -125,7 +125,7 @@ void NCCLWorker::Execute(const Program& program) {
         instruction.instr);
   }
 
-  // Handle trailing group (no final Barrier)
+  // Handle trailing group (no final Fence)
   if (group_started) {
     NCCL_CHECK(ncclGroupEnd());
 

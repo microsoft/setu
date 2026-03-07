@@ -27,26 +27,26 @@ using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 //==============================================================================
 
-/// Synchronization barrier between communication stages.
+/// Synchronization fence between communication stages.
 ///
 /// Instructs the backend to complete all in-flight communication operations
 /// before proceeding.  This ensures all receives from a prior stage are
 /// visible before subsequent sends read the received data (multi-hop relay
 /// correctness).  The concrete synchronization mechanism is backend-defined.
-struct Barrier {
-  Barrier() = default;
+struct Fence {
+  Fence() = default;
 
-  ~Barrier() = default;
-  Barrier(const Barrier&) = default;
-  Barrier& operator=(const Barrier&) = default;
-  Barrier(Barrier&&) = default;
-  Barrier& operator=(Barrier&&) = default;
+  ~Fence() = default;
+  Fence(const Fence&) = default;
+  Fence& operator=(const Fence&) = default;
+  Fence(Fence&&) = default;
+  Fence& operator=(Fence&&) = default;
 
   [[nodiscard]] std::string ToString() const;
 
   void Serialize(BinaryBuffer& buffer) const;
 
-  static Barrier Deserialize(const BinaryRange& range);
+  static Fence Deserialize(const BinaryRange& range);
 
   /// @brief Extract shard access requirements for this instruction.
   [[nodiscard]] ShardAccessMap GetShardAccess() const;

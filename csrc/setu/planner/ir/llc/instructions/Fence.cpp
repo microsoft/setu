@@ -14,20 +14,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //==============================================================================
-#include "planner/ir/llc/instructions/Barrier.h"
+#include "planner/ir/llc/instructions/Fence.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
 //==============================================================================
 
-std::string Barrier::ToString() const { return "Barrier()"; }
+std::string Fence::ToString() const { return "Fence()"; }
 
-void Barrier::Serialize(BinaryBuffer& /*buffer*/) const {
+void Fence::Serialize(BinaryBuffer& /*buffer*/) const {
   // No fields to serialize — the type tag is written by Instruction::Serialize
 }
 
-Barrier Barrier::Deserialize(const BinaryRange& /*range*/) { return Barrier(); }
+Fence Fence::Deserialize(const BinaryRange& /*range*/) { return Fence(); }
 
-ShardAccessMap Barrier::GetShardAccess() const { return {}; }
+ShardAccessMap Fence::GetShardAccess() const { return {}; }
 
 //==============================================================================
 }  // namespace setu::planner::ir::llc

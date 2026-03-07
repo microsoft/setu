@@ -322,11 +322,11 @@ Plan NCCL::Run(const cir::Program& program) {
     }
   }
 
-  // === Step 3: Staged emission — emit Barrier between depth stages ===
+  // === Step 3: Staged emission — emit Fence between depth stages ===
 
   auto copy_depth = cir::CopyDepthAnalysis::Build(program);
 
-  // Sort pending copies by depth so we can iterate once and insert barriers
+  // Sort pending copies by depth so we can iterate once and insert fences
   // at stage boundaries. Order within a stage is irrelevant — all copies at
   // the same depth are independent.
   std::ranges::sort(pending_copies, [&](const PendingCopy& a,
@@ -354,7 +354,7 @@ Plan NCCL::Run(const cir::Program& program) {
     if (stage != prev_stage) {
       flush_copy_batches();
       for (const auto& part : parts) {
-        programs[part].emplace_back(llc::Barrier());
+        programs[part].emplace_back(llc::Fence());
       }
       prev_stage = stage;
     }

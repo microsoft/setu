@@ -38,8 +38,8 @@ void Instruction::Serialize(BinaryBuffer& buffer) const {
           type = InstructionType::kSend;
         } else if constexpr (std::is_same_v<T, Receive>) {
           type = InstructionType::kReceive;
-        } else if constexpr (std::is_same_v<T, Barrier>) {
-          type = InstructionType::kBarrier;
+        } else if constexpr (std::is_same_v<T, Fence>) {
+          type = InstructionType::kFence;
         }
 
         writer.Write<std::uint8_t>(static_cast<std::uint8_t>(type));
@@ -61,8 +61,8 @@ Instruction Instruction::Deserialize(const BinaryRange& range) {
       return Instruction(reader.Read<Send>());
     case InstructionType::kReceive:
       return Instruction(reader.Read<Receive>());
-    case InstructionType::kBarrier:
-      return Instruction(Barrier::Deserialize(range));
+    case InstructionType::kFence:
+      return Instruction(Fence::Deserialize(range));
     default:
       RAISE_RUNTIME_ERROR("Unknown instruction type id {}", type_id);
   }

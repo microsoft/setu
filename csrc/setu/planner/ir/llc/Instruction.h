@@ -19,8 +19,8 @@
 #include "commons/StdCommon.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
-#include "planner/ir/llc/instructions/Barrier.h"
 #include "planner/ir/llc/instructions/Copy.h"
+#include "planner/ir/llc/instructions/Fence.h"
 #include "planner/ir/llc/instructions/InitComm.h"
 #include "planner/ir/llc/instructions/Receive.h"
 #include "planner/ir/llc/instructions/Send.h"
@@ -39,7 +39,7 @@
 ///   Copy      — local (same-device) memcpy between shard regions
 ///   Send      — point-to-point send to a peer rank
 ///   Receive   — point-to-point receive from a peer rank
-///   Barrier   — synchronize all in-flight operations before continuing
+///   Fence     — synchronize all in-flight operations before continuing
 namespace setu::planner::ir::llc {
 //==============================================================================
 using setu::commons::DevicePtr;
@@ -55,10 +55,10 @@ enum class InstructionType : std::uint8_t {
   kCopy = 3,
   kSend = 4,
   kReceive = 5,
-  kBarrier = 6,
+  kFence = 6,
 };
 
-using InstructionVariant = std::variant<InitComm, Copy, Send, Receive, Barrier>;
+using InstructionVariant = std::variant<InitComm, Copy, Send, Receive, Fence>;
 
 /// A single LLC instruction.  Wraps one of the five concrete instruction
 /// types in a variant.  Supports serialization for wire transfer and
@@ -84,7 +84,7 @@ struct Instruction {
   void Embellish(const std::function<DevicePtr(const BufferRef&)>& resolver);
 
   /// @brief Extract shard access requirements for this instruction.
-  /// @return Map of shard IDs to access modes (empty for InitComm/Barrier)
+  /// @return Map of shard IDs to access modes (empty for InitComm/Fence)
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
   InstructionVariant instr;
