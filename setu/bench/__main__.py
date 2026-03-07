@@ -42,6 +42,7 @@ from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
 from setu.cluster.info import ClusterInfo
 from setu.cluster.mesh import Mesh, P
+from setu.utils.parsing import parse_num_bytes
 
 # ---------------------------------------------------------------------------
 # Setup logging so Python logs are visible on stdout
@@ -185,19 +186,6 @@ def parse_args():
         help="Directory to write CSV result files (rounds, clients, telemetry).",
     )
     return parser.parse_args()
-
-
-def _parse_size(s: str) -> int:
-    """Parse a human-readable size string into bytes.
-
-    Examples: '256M' → 268435456, '1G' → 1073741824, '512K' → 524288.
-    Plain integers are treated as bytes.
-    """
-    s = s.strip().upper()
-    multipliers = {"K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
-    if s[-1] in multipliers:
-        return int(float(s[:-1]) * multipliers[s[-1]])
-    return int(s)
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +338,7 @@ def main():
 
     setup_logging()
 
-    tensor_bytes = _parse_size(args.size)
+    tensor_bytes = parse_num_bytes(args.size)
     copy_mode = CopyMode(args.mode)
 
     # Generate metrics endpoint if metrics are enabled.

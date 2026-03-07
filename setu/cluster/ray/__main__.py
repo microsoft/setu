@@ -21,6 +21,7 @@ from rich.table import Table
 from setu.cluster.info import ClusterInfo
 from setu.cluster.ray.cluster import Cluster
 from setu.logger import init_logger
+from setu.utils.parsing import parse_num_bytes
 
 logger = init_logger(__name__)
 
@@ -75,6 +76,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Enable telemetry metrics collection (starts MetricsServer).",
+    )
+    parser.add_argument(
+        "--register-size",
+        type=str,
+        default="1M",
+        metavar="SIZE",
+        help="Size of each register (temporary buffer) per GPU (default: 1M). "
+        "Accepts human-readable formats: '1M', '256K', '1G'. "
+        "Plain integers are treated as bytes.",
     )
     return parser.parse_args()
 
@@ -143,11 +153,14 @@ def main() -> None:
 
         metrics_endpoint = f"tcp://*:{_find_free_port()}"
 
+    register_size = parse_num_bytes(args.register_size)
+
     env_vars = _build_env_vars(args)
     cluster = Cluster(
         env_vars=env_vars,
         passes=args.passes,
         metrics_endpoint=metrics_endpoint,
+        register_size=register_size,
     )
     try:
         info = cluster.start()
