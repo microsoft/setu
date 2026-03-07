@@ -20,11 +20,13 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/hints/Hint.h"
 #include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/passes/BandwidthAggregation.h"
+#include "planner/passes/PassContext.h"
 #include "planner/topo/Topology.h"
 //==============================================================================
 namespace setu::test::native {
@@ -38,6 +40,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::passes::BandwidthAggregation;
+using setu::planner::passes::PassContext;
 using setu::planner::topo::Link;
 using setu::planner::topo::Path;
 using setu::planner::topo::Topology;
@@ -67,6 +70,11 @@ class BandwidthAggregationTest : public ::testing::Test {
   torch::Dtype dt = torch::kFloat16;
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
+  std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+
+  PassContext DefaultCtx() {
+    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+  }
 
   /// Build a diamond topology:
   ///        dev0
@@ -111,7 +119,7 @@ TEST_F(BandwidthAggregationTest, EmptyProgram_ProducesEmptyProgram) {
   auto topo = MakeDiamondTopology();
   BandwidthAggregation pass(topo);
   Program program;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.NumOperations(), 0u);
   EXPECT_NO_THROW(Linearity::Check(result));
@@ -130,7 +138,7 @@ TEST_F(BandwidthAggregationTest, SameDeviceCopy_PassedThrough) {
   auto dst = program.EmitView(dev0, shard, Slice{1024, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -155,7 +163,7 @@ TEST_F(BandwidthAggregationTest, DirectTransfer_SinglePath_PassedThrough) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -180,7 +188,7 @@ TEST_F(BandwidthAggregationTest, DiamondTopology_LargeBuffer_SplitsInto2Paths) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1048576], Half)
@@ -216,7 +224,7 @@ TEST_F(BandwidthAggregationTest, DiamondTopology_SmallBuffer_HighLatency) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -259,7 +267,7 @@ TEST_F(BandwidthAggregationTest, ThreeDisjointPaths_LargeBuffer_3WaySplit) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1048576], Half)
@@ -299,7 +307,7 @@ TEST_F(BandwidthAggregationTest, SplitSizes_ProportionalToBandwidth) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 300000], Half)
@@ -336,7 +344,7 @@ TEST_F(BandwidthAggregationTest, RoutingHintOverride_UsesHintPath) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1048576], Half)
@@ -360,7 +368,7 @@ TEST_F(BandwidthAggregationTest, NoTopologyNoHints_ClonesUnchanged) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -387,7 +395,7 @@ TEST_F(BandwidthAggregationTest, BandwidthHint_SinglePath_EmitsCopyChain) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1048576], Half)
@@ -412,7 +420,7 @@ TEST_F(BandwidthAggregationTest, BandwidthHint_TwoPaths_EqualWeights) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1000], Half)
@@ -447,7 +455,7 @@ TEST_F(BandwidthAggregationTest, BandwidthHint_ThreePaths_UnequalWeights) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 10000], Half)
@@ -485,7 +493,7 @@ TEST_F(BandwidthAggregationTest, BandwidthHint_OverridesTopology) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1048576], Half)
@@ -516,7 +524,7 @@ TEST_F(BandwidthAggregationTest, BandwidthHint_OverridesRoutingHint) {
   auto dst = program.EmitView(dev1, shard, Slice{0, num_elements}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1000], Half)

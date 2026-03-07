@@ -18,38 +18,22 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 //==============================================================================
-#include "planner/passes/Pass.h"
-#include "planner/topo/Topology.h"
+#include "planner/RegisterSet.h"
+#include "planner/hints/HintStore.h"
+#include "planner/ir/cir/Value.h"
 //==============================================================================
 namespace setu::planner::passes {
 //==============================================================================
-using setu::planner::topo::TopologyPtr;
-//==============================================================================
 
-/// Bandwidth aggregation pass that splits cross-device copies across multiple
-/// edge-disjoint paths to aggregate link bandwidth.
+/// Immutable context passed to every pass at run time.
 ///
-/// For each CopyOp between different devices:
-///   1. Find up to max_paths edge-disjoint paths via the topology.
-///   2. Prune paths using a greedy cost model: drop paths whose added latency
-///      outweighs the bandwidth benefit (handles small buffers naturally).
-///   3. Split the buffer proportional to each path's bottleneck bandwidth.
-///   4. Emit a multi-hop copy chain per path (allocating temp buffers at
-///      intermediate hops).
-class BandwidthAggregation : public Pass {
- public:
-  explicit BandwidthAggregation(TopologyPtr topo, std::size_t max_paths = 4)
-      : topo_(std::move(topo)), max_paths_(max_paths) {}
-
-  [[nodiscard]] cir::Program Run(cir::Program program,
-                                 const PassContext& ctx) override;
-  [[nodiscard]] std::string Name() const override {
-    return "BandwidthAggregation";
-  }
-
- private:
-  TopologyPtr topo_;
-  std::size_t max_paths_;
+/// Contains per-operation hints (routing, bandwidth) and global compiler
+/// configuration (register pool sizes).  Passes read what they need and
+/// ignore the rest.
+struct PassContext {
+  const setu::planner::hints::HintStore& hints;
+  const std::unordered_map<setu::planner::ir::cir::Device,
+                           setu::planner::RegisterSet>& register_sets;
 };
 
 //==============================================================================

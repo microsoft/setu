@@ -20,13 +20,16 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/passes/InstructionScheduler.h"
+#include "planner/passes/PassContext.h"
 #include "planner/passes/RegisterTiling.h"
 //==============================================================================
 namespace setu::test::native {
 //==============================================================================
+using setu::planner::RegisterSet;
 using setu::planner::hints::HintStore;
 using setu::planner::ir::cir::Device;
 using setu::planner::ir::cir::Linearity;
@@ -36,6 +39,7 @@ using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
 using setu::planner::passes::InstructionScheduler;
+using setu::planner::passes::PassContext;
 using setu::planner::passes::RegisterTiling;
 //==============================================================================
 namespace {
@@ -92,6 +96,11 @@ class InstructionSchedulerTest : public ::testing::Test {
   torch::Dtype dt = torch::kFloat16;
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
+  std::unordered_map<Device, RegisterSet> empty_register_sets;
+
+  PassContext DefaultCtx() {
+    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+  }
 
   static constexpr std::size_t kChunkBytes = 128;
   static constexpr std::size_t kChunkElements = 64;
@@ -104,7 +113,7 @@ class InstructionSchedulerTest : public ::testing::Test {
 TEST_F(InstructionSchedulerTest, EmptyProgram_ReturnsEmpty) {
   InstructionScheduler pass;
   Program program;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
   EXPECT_EQ(result.NumOperations(), 0u);
 }
 
@@ -112,7 +121,7 @@ TEST_F(InstructionSchedulerTest, SingleOp_Unchanged) {
   InstructionScheduler pass;
   Program program;
   (void)program.EmitView(dev0, shard, Slice{0, 1024}, dt);
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
 )");
@@ -125,7 +134,7 @@ TEST_F(InstructionSchedulerTest, AlreadyOptimal_Unchanged) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
   [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -151,12 +160,12 @@ TEST_F(InstructionSchedulerTest, FlatTiledOutput_ReducesRegisterPressure) {
 
   // Tile it first.
   RegisterTiling tiling(kChunkBytes);
-  auto tiled = tiling.Run(std::move(program), hints);
+  auto tiled = tiling.Run(std::move(program), DefaultCtx());
   auto pre_pressure = MaxLiveAllocTmps(tiled);
 
   // Schedule it.
   InstructionScheduler scheduler;
-  auto scheduled = scheduler.Run(std::move(tiled), hints);
+  auto scheduled = scheduler.Run(std::move(tiled), DefaultCtx());
 
   EXPECT_EQ(scheduled.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
@@ -207,10 +216,10 @@ TEST_F(InstructionSchedulerTest, MultiHop_TiledAndScheduled_LowPressure) {
   (void)program.EmitCopy(tmp_d_out, dst);
 
   RegisterTiling tiling(kChunkBytes);
-  auto tiled = tiling.Run(std::move(program), hints);
+  auto tiled = tiling.Run(std::move(program), DefaultCtx());
 
   InstructionScheduler scheduler;
-  auto scheduled = scheduler.Run(std::move(tiled), hints);
+  auto scheduled = scheduler.Run(std::move(tiled), DefaultCtx());
 
   EXPECT_EQ(scheduled.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
@@ -263,7 +272,7 @@ TEST_F(InstructionSchedulerTest, MixedProgram_PreservesCorrectness) {
   auto tmp_out = program.EmitCopy(src2, tmp);
   (void)program.EmitCopy(tmp_out, dst2);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -293,10 +302,10 @@ TEST_F(InstructionSchedulerTest, ComplexProgram_LinearityPreserved) {
   (void)program.EmitCopy(tmp_out, dst);
 
   RegisterTiling tiling(kChunkBytes);
-  auto tiled = tiling.Run(std::move(program), hints);
+  auto tiled = tiling.Run(std::move(program), DefaultCtx());
 
   InstructionScheduler scheduler;
-  auto scheduled = scheduler.Run(std::move(tiled), hints);
+  auto scheduled = scheduler.Run(std::move(tiled), DefaultCtx());
 
   EXPECT_EQ(scheduled.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 512], Half)
@@ -397,7 +406,7 @@ TEST_F(InstructionSchedulerTest, CopyChainValues_PressureBounded) {
   (void)program.EmitConsume(dst);
 
   InstructionScheduler scheduler;
-  auto scheduled = scheduler.Run(std::move(program), hints);
+  auto scheduled = scheduler.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(scheduled.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
@@ -451,7 +460,7 @@ TEST_F(InstructionSchedulerTest, ManyIndependentChains_PressureBounded) {
   }
 
   InstructionScheduler scheduler;
-  auto scheduled = scheduler.Run(std::move(program), hints);
+  auto scheduled = scheduler.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(scheduled.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -490,6 +499,94 @@ TEST_F(InstructionSchedulerTest, ManyIndependentChains_PressureBounded) {
   auto pressure = MaxLiveAllocTmps(scheduled);
   EXPECT_LE(pressure, 2u) << "Independent chains: expected pressure <= 2, got "
                           << pressure;
+}
+
+//==============================================================================
+// Pressure guard: respects register limit
+//==============================================================================
+
+TEST_F(InstructionSchedulerTest, PressureGuard_RespectsRegisterLimit) {
+  // 4 independent AllocTmpOps on the same device, but only 2 registers.
+  // The pressure guard must defer AllocTmpOps so that at most 2 are live
+  // at any point.
+  const std::size_t n = kChunkElements;
+
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, n * 4}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, n * 4}, dt);
+
+  auto t0 = program.EmitAllocTmp(dev2, n, dt);
+  auto t1 = program.EmitAllocTmp(dev2, n, dt);
+  auto t2 = program.EmitAllocTmp(dev2, n, dt);
+  auto t3 = program.EmitAllocTmp(dev2, n, dt);
+
+  auto s0 = program.EmitSlice(src, Slice{0 * n, n});
+  auto t0_out = program.EmitCopy(s0, t0);
+  auto s1 = program.EmitSlice(src, Slice{1 * n, n});
+  auto t1_out = program.EmitCopy(s1, t1);
+  auto s2 = program.EmitSlice(src, Slice{2 * n, n});
+  auto t2_out = program.EmitCopy(s2, t2);
+  auto s3 = program.EmitSlice(src, Slice{3 * n, n});
+  auto t3_out = program.EmitCopy(s3, t3);
+
+  auto d0 = program.EmitSlice(dst, Slice{0 * n, n});
+  (void)program.EmitCopy(t0_out, d0);
+  auto d1 = program.EmitSlice(dst, Slice{1 * n, n});
+  (void)program.EmitCopy(t1_out, d1);
+  auto d2 = program.EmitSlice(dst, Slice{2 * n, n});
+  (void)program.EmitCopy(t2_out, d2);
+  auto d3 = program.EmitSlice(dst, Slice{3 * n, n});
+  (void)program.EmitCopy(t3_out, d3);
+
+  (void)program.EmitConsume(dst);
+
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev2, RegisterSet::Uniform(2, 1024)}};
+  PassContext ctx{.hints = hints, .register_sets = register_sets};
+  InstructionScheduler scheduler;
+  auto scheduled = scheduler.Run(std::move(program), ctx);
+
+  EXPECT_NO_THROW(Linearity::Check(scheduled));
+
+  auto pressure = MaxLiveAllocTmps(scheduled);
+  EXPECT_LE(pressure, 2u)
+      << "Pressure guard should limit live AllocTmps to 2, got " << pressure;
+}
+
+//==============================================================================
+// Pressure guard: multi-hop relay bounded by pool
+//==============================================================================
+
+TEST_F(InstructionSchedulerTest, PressureGuard_MultiHop_BoundedByPool) {
+  // Multi-hop relay A → C → D → B, tiled into 3 chunks.
+  // Each relay device (C, D) has only 2 registers.
+  const std::size_t total = kChunkElements * 3;
+
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, total}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, total}, dt);
+  auto tmp_c = program.EmitAllocTmp(dev2, total, dt);
+  auto tmp_d = program.EmitAllocTmp(dev3, total, dt);
+  auto tmp_c_out = program.EmitCopy(src, tmp_c);
+  auto tmp_d_out = program.EmitCopy(tmp_c_out, tmp_d);
+  (void)program.EmitCopy(tmp_d_out, dst);
+
+  RegisterTiling tiling(kChunkBytes);
+  auto tiled = tiling.Run(std::move(program), DefaultCtx());
+
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev2, RegisterSet::Uniform(2, 1024)},
+      {dev3, RegisterSet::Uniform(2, 1024)}};
+  PassContext ctx{.hints = hints, .register_sets = register_sets};
+  InstructionScheduler scheduler;
+  auto scheduled = scheduler.Run(std::move(tiled), ctx);
+
+  EXPECT_NO_THROW(Linearity::Check(scheduled));
+
+  auto pressure = MaxLiveAllocTmps(scheduled);
+  EXPECT_LE(pressure, 4u)
+      << "Multi-hop pressure should be bounded by register pools, got "
+      << pressure;
 }
 
 //==============================================================================

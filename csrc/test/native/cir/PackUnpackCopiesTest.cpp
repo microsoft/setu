@@ -20,10 +20,12 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/passes/PackUnpackCopies.h"
+#include "planner/passes/PassContext.h"
 //==============================================================================
 namespace setu::test::native {
 //==============================================================================
@@ -34,6 +36,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::passes::PackUnpackCopies;
+using setu::planner::passes::PassContext;
 //==============================================================================
 namespace {
 //==============================================================================
@@ -58,6 +61,11 @@ class PackUnpackCopiesTest : public ::testing::Test {
   torch::Dtype dt = torch::kFloat16;
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
+  std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+
+  PassContext DefaultCtx() {
+    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+  }
 };
 
 //==============================================================================
@@ -67,7 +75,7 @@ class PackUnpackCopiesTest : public ::testing::Test {
 TEST_F(PackUnpackCopiesTest, EmptyProgram_ProducesEmptyProgram) {
   Program program;
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.NumOperations(), 0u);
   EXPECT_NO_THROW(Linearity::Check(result));
@@ -80,7 +88,7 @@ TEST_F(PackUnpackCopiesTest, ViewsOnly_NoCopies_PassedThrough) {
   (void)program.EmitView(dev1, shard, Slice{0, 32}, dt);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -104,7 +112,7 @@ TEST_F(PackUnpackCopiesTest, SameDeviceCopies_NeverGrouped) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -128,7 +136,7 @@ TEST_F(PackUnpackCopiesTest, SingleCrossDeviceCopy_NotPacked) {
   (void)program.EmitCopy(src, dst);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -152,7 +160,7 @@ TEST_F(PackUnpackCopiesTest, TwoCrossDeviceCopies_ConsolidatedIntoOne) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -183,7 +191,7 @@ TEST_F(PackUnpackCopiesTest, TempBufferSize_EqualsSum) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -214,7 +222,7 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_AllocatedOnCorrectDevices) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -245,7 +253,7 @@ TEST_F(PackUnpackCopiesTest, TempBuffers_MatchSourceDtype) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], BFloat16)
@@ -278,7 +286,7 @@ TEST_F(PackUnpackCopiesTest, PackSources_MatchNumberOfGroupedCopies) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -319,7 +327,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDevicePairs_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -367,7 +375,7 @@ TEST_F(PackUnpackCopiesTest, BidirectionalCopies_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -415,7 +423,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDtypes_SeparateGroups) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -456,7 +464,7 @@ TEST_F(PackUnpackCopiesTest, DifferentDtype_SingletonNotGroupedWithOthers) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -498,7 +506,7 @@ TEST_F(PackUnpackCopiesTest, MixedSameAndCrossDevice_OnlyCrossDeviceGrouped) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 16], Half)
@@ -539,7 +547,7 @@ TEST_F(PackUnpackCopiesTest, ManyCopies_AllPackedIntoOneGroup) {
   }
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
@@ -610,7 +618,7 @@ TEST_F(PackUnpackCopiesTest, Complex_AllGroupingRulesApplied) {
   (void)program.EmitCopy(s_same, d_same);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -666,11 +674,11 @@ TEST_F(PackUnpackCopiesTest, Idempotent_SecondRunNoChange) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto first = pass.Run(std::move(program), hints);
+  auto first = pass.Run(std::move(program), DefaultCtx());
 
   auto first_dump = first.Dump();
 
-  auto second = pass.Run(std::move(first), hints);
+  auto second = pass.Run(std::move(first), DefaultCtx());
 
   // After the first pass, there's only 1 cross-device copy (the consolidated
   // one). The second pass should leave it as a singleton — no further packing.
@@ -703,7 +711,7 @@ TEST_F(PackUnpackCopiesTest, InterleavedCopies_GroupedByDevicePair) {
   (void)program.EmitCopy(s3, d3);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -746,7 +754,7 @@ TEST_F(PackUnpackCopiesTest, VaryingSourceSizes_TotalSizeCorrect) {
   (void)program.EmitCopy(s2, d2);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1], Half)
@@ -797,7 +805,7 @@ TEST_F(PackUnpackCopiesTest, ThreeDevices_AllPairsCopied) {
   (void)program.EmitCopy(s02b, d02b);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 32], Half)
@@ -845,7 +853,7 @@ TEST_F(PackUnpackCopiesTest, ViewOps_Preserved) {
   (void)program.EmitCopy(s1, d1);
 
   PackUnpackCopies pass;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)

@@ -140,7 +140,8 @@ static cir::Value EmitCopyChain(cir::ProgramRewriter& rw, const Path& path,
 //==============================================================================
 
 cir::Program BandwidthAggregation::Run(cir::Program program,
-                                       const HintStore& hints) {
+                                       const PassContext& ctx) {
+  const auto& hints = ctx.hints;
   if (!topo_ && hints.GetHints<RoutingHint>().empty() &&
       hints.GetHints<BandwidthHint>().empty()) {
     return program;

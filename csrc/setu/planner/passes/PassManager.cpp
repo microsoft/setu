@@ -26,21 +26,21 @@ void PassManager::AddPass(PassPtr pass) {
 }
 //==============================================================================
 cir::Program PassManager::Run(cir::Program program,
-                              const HintStore& hints) const {
+                              const PassContext& ctx) const {
   for (const auto& pass : passes_) {
-    program = pass->Run(std::move(program), hints);
+    program = pass->Run(std::move(program), ctx);
     LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
   }
   return program;
 }
 //==============================================================================
 std::pair<cir::Program, std::vector<setu::telemetry::PassTiming>>
-PassManager::RunTimed(cir::Program program, const HintStore& hints) const {
+PassManager::RunTimed(cir::Program program, const PassContext& ctx) const {
   std::vector<setu::telemetry::PassTiming> timings;
   timings.reserve(passes_.size());
   for (const auto& pass : passes_) {
     auto t0 = std::chrono::high_resolution_clock::now();
-    program = pass->Run(std::move(program), hints);
+    program = pass->Run(std::move(program), ctx);
     double elapsed_ms = std::chrono::duration<double, std::milli>(
                             std::chrono::high_resolution_clock::now() - t0)
                             .count();

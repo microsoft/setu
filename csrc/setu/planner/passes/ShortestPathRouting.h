@@ -30,7 +30,7 @@ class ShortestPathRouting : public Pass {
  public:
   explicit ShortestPathRouting(TopologyPtr topo) : topo_(std::move(topo)) {}
   [[nodiscard]] cir::Program Run(cir::Program program,
-                                 const HintStore& hints) override;
+                                 const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override {
     return "ShortestPathRouting";
   }

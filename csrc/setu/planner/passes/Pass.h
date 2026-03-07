@@ -19,20 +19,19 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "commons/ClassTraits.h"
-#include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Program.h"
+#include "planner/passes/PassContext.h"
 //==============================================================================
 namespace setu::planner::passes {
 //==============================================================================
 namespace cir = setu::planner::ir::cir;
-using setu::planner::hints::HintStore;
 //==============================================================================
 
 class Pass : public setu::commons::NonCopyableNonMovable {
  public:
   virtual ~Pass() = default;
   [[nodiscard]] virtual cir::Program Run(cir::Program program,
-                                         const HintStore& hints) = 0;
+                                         const PassContext& ctx) = 0;
   [[nodiscard]] virtual std::string Name() const = 0;
 };
 

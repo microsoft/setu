@@ -17,7 +17,7 @@ inline std::size_t NumElementsInChunk(std::size_t chunk_size_bytes,
 }
 
 cir::Program RegisterTiling::Run(cir::Program program,
-                                 const HintStore& /*hints*/) {
+                                 const PassContext& /*ctx*/) {
   bool has_large_tmp = false;
   for (const auto& op : program.Operations()) {
     if (op.Type() == cir::OpType::kAllocTmp) {

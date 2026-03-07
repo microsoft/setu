@@ -9,7 +9,7 @@ using CopyOpIndices = std::vector<OpIndex>;
 using DevicePair = std::pair<Participant, Participant>;
 
 cir::Program PackUnpackCopies::Run(cir::Program program,
-                                   const HintStore& /*hints*/) {
+                                   const PassContext& /*ctx*/) {
   // Phase 1: Group cross-device CopyOps by (src_device, dst_device) pair.
   // Within each device pair, copies are further sub-grouped by dtype.
   std::map<DevicePair, std::map<torch::Dtype, CopyOpIndices>> groups;

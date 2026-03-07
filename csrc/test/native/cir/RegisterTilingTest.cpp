@@ -20,8 +20,10 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 //==============================================================================
+#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
+#include "planner/passes/PassContext.h"
 #include "planner/passes/RegisterTiling.h"
 //==============================================================================
 namespace setu::test::native {
@@ -32,6 +34,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
+using setu::planner::passes::PassContext;
 using setu::planner::passes::RegisterTiling;
 //==============================================================================
 namespace {
@@ -58,6 +61,11 @@ class RegisterTilingTest : public ::testing::Test {
   torch::Dtype dt = torch::kFloat16;
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
+  std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+
+  PassContext DefaultCtx() {
+    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+  }
 
   // 128 bytes chunk → 64 float16 elements
   static constexpr std::size_t kChunkBytes = 128;
@@ -71,7 +79,7 @@ class RegisterTilingTest : public ::testing::Test {
 TEST_F(RegisterTilingTest, EmptyProgram_ReturnsEmpty) {
   RegisterTiling pass(kChunkBytes);
   Program program;
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
   EXPECT_EQ(result.NumOperations(), 0u);
 }
 
@@ -82,7 +90,7 @@ TEST_F(RegisterTilingTest, NoAllocTmp_PassedThrough) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -101,7 +109,7 @@ TEST_F(RegisterTilingTest, SmallTmp_PassedThrough) {
   auto tmp_out = program.EmitCopy(src, tmp);
   (void)program.EmitCopy(tmp_out, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
@@ -130,7 +138,7 @@ TEST_F(RegisterTilingTest, SingleTmp_LargeBuffer_SplitsIntoChunks) {
   auto tmp_out = program.EmitCopy(src, tmp);
   (void)program.EmitCopy(tmp_out, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
@@ -177,7 +185,7 @@ TEST_F(RegisterTilingTest, PartialLastChunk_CorrectSize) {
   auto tmp_out = program.EmitCopy(src, tmp);
   (void)program.EmitCopy(tmp_out, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 160], Half)
@@ -220,7 +228,7 @@ TEST_F(RegisterTilingTest, TwoIntermediates_BothChunked) {
   auto tmp_d_out = program.EmitCopy(tmp_c_out, tmp_d);
   (void)program.EmitCopy(tmp_d_out, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 192], Half)
@@ -263,7 +271,7 @@ TEST_F(RegisterTilingTest, DirectCopy_Unchanged) {
   auto dst = program.EmitView(dev1, shard, Slice{0, 1024}, dt);
   (void)program.EmitCopy(src, dst);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 1024], Half)
@@ -298,7 +306,7 @@ TEST_F(RegisterTilingTest, MultipleChains_IndependentlyTiled) {
   auto tmp2_out = program.EmitCopy(src2, tmp2);
   (void)program.EmitCopy(tmp2_out, dst2_slice);
 
-  auto result = pass.Run(std::move(program), hints);
+  auto result = pass.Run(std::move(program), DefaultCtx());
 
   EXPECT_EQ(result.Dump(), R"(
   [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 128], Half)

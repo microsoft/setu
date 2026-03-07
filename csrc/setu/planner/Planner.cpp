@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "planner/passes/CopySpecToCIR.h"
+#include "planner/passes/PassContext.h"
 //==============================================================================
 namespace setu::planner {
 //==============================================================================
@@ -44,8 +45,9 @@ CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
   cm.pass_timings.push_back({"CopySpecToCIR", stage1_ms});
 
   // Stage 2: Optimization passes (timed individually)
+  passes::PassContext ctx{.hints = hints, .register_sets = register_sets_};
   auto [optimized_cir, pass_timings] =
-      pass_manager_->RunTimed(std::move(cir), hints);
+      pass_manager_->RunTimed(std::move(cir), ctx);
   cm.pass_timings.insert(cm.pass_timings.end(), pass_timings.begin(),
                          pass_timings.end());
 
@@ -73,6 +75,9 @@ CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
 void Planner::AddBackendRegisterSets(
     const std::unordered_map<ir::cir::Device, RegisterSet>& register_sets) {
   backend_->AddRegisterSets(register_sets);
+  for (const auto& [device, reg_set] : register_sets) {
+    register_sets_.insert_or_assign(device, reg_set);
+  }
 }
 //==============================================================================
 }  // namespace setu::planner

@@ -21,9 +21,11 @@
 #include "commons/TorchCommon.h"
 //==============================================================================
 #include "commons/Types.h"
+#include "planner/RegisterSet.h"
 #include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
+#include "planner/passes/PassContext.h"
 #include "planner/passes/ShortestPathRouting.h"
 #include "planner/topo/Topology.h"
 //==============================================================================
@@ -38,6 +40,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
+using setu::planner::passes::PassContext;
 using setu::planner::passes::ShortestPathRouting;
 using setu::planner::topo::Link;
 using setu::planner::topo::Path;
@@ -67,6 +70,11 @@ class CIRShortestPathRoutingTest : public testing::Test {
   NodeId n0 = MakeNodeId("01234567-89ab-cdef-0123-456789abcdef");
   NodeId n1 = MakeNodeId("00234567-89ab-cdef-0123-456789abcdef");
   torch::Dtype dt = torch::kFloat16;
+  std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+
+  PassContext MakeCtx(const HintStore& hints) {
+    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+  }
 };
 
 TEST_F(CIRShortestPathRoutingTest, MultiCopy_RoutesViaShortestPaths) {
@@ -92,7 +100,7 @@ TEST_F(CIRShortestPathRoutingTest, MultiCopy_RoutesViaShortestPaths) {
 
   ShortestPathRouting pass(topo);
   HintStore hints;
-  auto program_t = pass.Run(std::move(program), hints);
+  auto program_t = pass.Run(std::move(program), MakeCtx(hints));
 
   EXPECT_EQ(program_t.Dump(), R"(
   [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
@@ -143,7 +151,7 @@ TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
 
   // Without hints — should produce direct copy (2 hops, no intermediates)
   HintStore empty_hints;
-  auto program_no_hint = pass.Run(make_program(), empty_hints);
+  auto program_no_hint = pass.Run(make_program(), MakeCtx(empty_hints));
 
   EXPECT_EQ(program_no_hint.Dump(), R"(
   [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)
@@ -153,7 +161,7 @@ TEST_F(CIRShortestPathRoutingTest, RoutingHintOverridesPath) {
   EXPECT_NO_THROW(Linearity::Check(program_no_hint));
 
   // With hints — should produce multi-hop copy (3 hops, 1 intermediate)
-  auto program_with_hint = pass.Run(make_program(), hints);
+  auto program_with_hint = pass.Run(make_program(), MakeCtx(hints));
 
   EXPECT_EQ(program_with_hint.Dump(), R"(
   [0] %0 = view(Participant(node_id=01234567-89ab-cdef-0123-456789abcdef, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 256], Half)

@@ -30,13 +30,13 @@ class PassManager : public setu::commons::NonCopyable {
   PassManager() = default;
   void AddPass(PassPtr pass);
   [[nodiscard]] cir::Program Run(cir::Program program,
-                                 const HintStore& hints) const;
+                                 const PassContext& ctx) const;
 
   /// @brief Run all passes with per-pass timing.
   /// Returns the transformed program and a vector of PassTiming records.
   [[nodiscard]] std::pair<cir::Program,
                           std::vector<setu::telemetry::PassTiming>>
-  RunTimed(cir::Program program, const HintStore& hints) const;
+  RunTimed(cir::Program program, const PassContext& ctx) const;
 
   [[nodiscard]] std::size_t NumPasses() const;
 

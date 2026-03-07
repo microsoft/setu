@@ -308,6 +308,200 @@ TEST(CIRRegisterAllocatorTest, EmptyProgram_ProducesEmptyAllocation) {
 }
 
 //==============================================================================
+// Alias chain: liveness extended through CopyOp alias
+//==============================================================================
+
+TEST(CIRRegisterAllocatorTest, AliasChain_ExtendedLiveness_DistinctRegisters) {
+  // A→B→C relay where B has two AllocTmpOps. The first tmp's alias chain
+  // (through CopyOp's dst_out and SliceOp) overlaps with the second tmp's
+  // live range. Without alias-aware liveness, r0 and r1 would share a
+  // register, corrupting memory.
+  //
+  //   [0] %v0 = view(A)
+  //   [1] %r0 = alloc_tmp(B)
+  //   [2] %r0' = copy(%v0, %r0)     -- alias: r0' shares r0's physical memory
+  //   [3] %s0 = slice(%r0')          -- alias: s0 shares r0's physical memory
+  //   [4] %r1 = alloc_tmp(B)
+  //   [5] %r1' = copy(%s0, %r1)     -- reads from r0's memory → r0 still live
+  //
+  // r0 and r1 must get distinct registers.
+  auto node_a =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000001");
+  auto node_b =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000002");
+  auto dev_a = MakeDevice(node_a, 0);
+  auto dev_b = MakeDevice(node_b, 0);
+
+  Program program;
+  auto v0 =
+      program.EmitView(dev_a, MakeShardRef(), Slice{0, 128}, torch::kFloat16);
+  auto r0 = program.EmitAllocTmp(dev_b, 128, torch::kFloat16);
+  auto r0_out = program.EmitCopy(v0, r0);
+  auto s0 = program.EmitSlice(r0_out, Slice{0, 64});
+  auto r1 = program.EmitAllocTmp(dev_b, 64, torch::kFloat16);
+  (void)program.EmitCopy(s0, r1);
+
+  auto liveness = LivenessInfo::Build(program);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev_b, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
+
+  ASSERT_TRUE(alloc.allocation[r0.id].has_value());
+  ASSERT_TRUE(alloc.allocation[r1.id].has_value());
+  EXPECT_NE(alloc.allocation[r0.id]->register_index,
+            alloc.allocation[r1.id]->register_index)
+      << "Alias chain should extend r0's liveness, forcing distinct registers";
+}
+
+//==============================================================================
+// Alias chain: ConsumeOp extends liveness
+//==============================================================================
+
+TEST(CIRRegisterAllocatorTest, AliasChain_ConsumeOp_ExtendsLiveness) {
+  // ConsumeOp creates an alias: out shares src's physical memory.
+  //   [0] %r0 = alloc_tmp(dev)
+  //   [1] %c0 = consume(%r0)           -- alias: c0 shares r0's memory
+  //   [2] %r1 = alloc_tmp(dev)
+  //   [3] %r1' = copy(%c0, %r1)        -- reads r0's memory
+  //
+  // r0's liveness must extend through c0's last use (op 3).
+  auto dev = MakeDevice();
+
+  Program program;
+  auto r0 = program.EmitAllocTmp(dev, 64, torch::kFloat16);
+  auto c0 = program.EmitConsume(r0);
+  auto r1 = program.EmitAllocTmp(dev, 64, torch::kFloat16);
+  (void)program.EmitCopy(c0, r1);
+
+  auto liveness = LivenessInfo::Build(program);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
+
+  ASSERT_TRUE(alloc.allocation[r0.id].has_value());
+  ASSERT_TRUE(alloc.allocation[r1.id].has_value());
+  EXPECT_NE(alloc.allocation[r0.id]->register_index,
+            alloc.allocation[r1.id]->register_index)
+      << "ConsumeOp alias should extend r0's liveness";
+}
+
+//==============================================================================
+// Alias chain: deep relay with distinct registers
+//==============================================================================
+
+TEST(CIRRegisterAllocatorTest, AliasChain_DeepRelay_DistinctRegisters) {
+  // 4-hop relay A→B→C→D→E with AllocTmpOps on B, C, D.
+  // Each hop: copy into tmp, slice, copy to next tmp.
+  // Alias chains extend through slices, ensuring overlapping tmps on the
+  // same device get distinct registers.
+  auto node_a =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000001");
+  auto node_b =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000002");
+  auto node_c =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000003");
+  auto node_d =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000004");
+  auto node_e =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000005");
+  auto dev_a = MakeDevice(node_a, 0);
+  auto dev_b = MakeDevice(node_b, 0);
+  auto dev_c = MakeDevice(node_c, 0);
+  auto dev_d = MakeDevice(node_d, 0);
+  auto dev_e = MakeDevice(node_e, 0);
+
+  Program program;
+  auto src =
+      program.EmitView(dev_a, MakeShardRef(), Slice{0, 64}, torch::kFloat16);
+  auto dst =
+      program.EmitView(dev_e, MakeShardRef(), Slice{0, 64}, torch::kFloat16);
+
+  auto tb = program.EmitAllocTmp(dev_b, 64, torch::kFloat16);
+  auto tb_out = program.EmitCopy(src, tb);
+
+  auto tc = program.EmitAllocTmp(dev_c, 64, torch::kFloat16);
+  auto tc_out = program.EmitCopy(tb_out, tc);
+
+  auto td = program.EmitAllocTmp(dev_d, 64, torch::kFloat16);
+  auto td_out = program.EmitCopy(tc_out, td);
+
+  (void)program.EmitCopy(td_out, dst);
+
+  auto liveness = LivenessInfo::Build(program);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev_b, RegisterSet::Uniform(4, 1024)},
+      {dev_c, RegisterSet::Uniform(4, 1024)},
+      {dev_d, RegisterSet::Uniform(4, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
+
+  ASSERT_TRUE(alloc.allocation[tb.id].has_value());
+  ASSERT_TRUE(alloc.allocation[tc.id].has_value());
+  ASSERT_TRUE(alloc.allocation[td.id].has_value());
+
+  // Each device only has one tmp, so each should get register 0
+  EXPECT_EQ(alloc.allocation[tb.id]->register_index, 0u);
+  EXPECT_EQ(alloc.allocation[tc.id]->register_index, 0u);
+  EXPECT_EQ(alloc.allocation[td.id]->register_index, 0u);
+}
+
+//==============================================================================
+// Alias chain: non-overlapping chains still reuse registers
+//==============================================================================
+
+TEST(CIRRegisterAllocatorTest, AliasChain_NonOverlapping_StillReuses) {
+  // Two sequential relay chains through the same device. The first chain's
+  // alias is fully consumed before the second starts.
+  //
+  //   [0] %src0 = view(A)
+  //   [1] %dst0 = view(C)
+  //   [2] %r0 = alloc_tmp(B)
+  //   [3] %r0' = copy(%src0, %r0)
+  //   [4] %_ = copy(%r0', %dst0)       -- r0's alias chain fully consumed
+  //   [5] %src1 = view(A)
+  //   [6] %dst1 = view(C)
+  //   [7] %r1 = alloc_tmp(B)           -- r0's register should be reusable
+  //   [8] %r1' = copy(%src1, %r1)
+  //   [9] %_ = copy(%r1', %dst1)
+  auto node_a =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000001");
+  auto node_b =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000002");
+  auto node_c =
+      boost::uuids::string_generator()("00000000-0000-0000-0000-000000000003");
+  auto dev_a = MakeDevice(node_a, 0);
+  auto dev_b = MakeDevice(node_b, 0);
+  auto dev_c = MakeDevice(node_c, 0);
+
+  Program program;
+  auto src0 =
+      program.EmitView(dev_a, MakeShardRef(), Slice{0, 64}, torch::kFloat16);
+  auto dst0 =
+      program.EmitView(dev_c, MakeShardRef(), Slice{0, 64}, torch::kFloat16);
+  auto r0 = program.EmitAllocTmp(dev_b, 64, torch::kFloat16);
+  auto r0_out = program.EmitCopy(src0, r0);
+  (void)program.EmitCopy(r0_out, dst0);
+
+  auto src1 =
+      program.EmitView(dev_a, MakeShardRef(), Slice{64, 64}, torch::kFloat16);
+  auto dst1 =
+      program.EmitView(dev_c, MakeShardRef(), Slice{64, 64}, torch::kFloat16);
+  auto r1 = program.EmitAllocTmp(dev_b, 64, torch::kFloat16);
+  auto r1_out = program.EmitCopy(src1, r1);
+  (void)program.EmitCopy(r1_out, dst1);
+
+  auto liveness = LivenessInfo::Build(program);
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev_b, RegisterSet::Uniform(1, 1024)}};
+  auto alloc = RegisterAllocation::Build(program, liveness, register_sets);
+
+  ASSERT_TRUE(alloc.allocation[r0.id].has_value());
+  ASSERT_TRUE(alloc.allocation[r1.id].has_value());
+  EXPECT_EQ(alloc.allocation[r0.id]->register_index,
+            alloc.allocation[r1.id]->register_index)
+      << "Non-overlapping alias chains should reuse the same register";
+}
+
+//==============================================================================
 }  // namespace
 //==============================================================================
 }  // namespace setu::test::native

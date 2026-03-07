@@ -11,7 +11,8 @@ using setu::planner::topo::Link;
 using setu::planner::topo::Path;
 
 cir::Program ShortestPathRouting::Run(cir::Program program,
-                                      const HintStore& hints) {
+                                      const PassContext& ctx) {
+  const auto& hints = ctx.hints;
   // No topology and no routing hints — every copy would resolve to a direct
   // 2-hop path and be cloned unchanged, so skip the rewrite entirely.
   if (!topo_ && hints.GetHints<RoutingHint>().empty()) {

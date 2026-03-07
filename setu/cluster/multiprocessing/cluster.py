@@ -93,16 +93,16 @@ def _run_coordinator_process(
     )
     from setu.cluster.passes import resolve_passes
 
-    pass_manager = PassManager()
-    for p in resolve_passes(spec.passes, topology=spec.topology):
-        pass_manager.add_pass(p)
-
     register_sets = {}
     for node_id, (_, device_specs) in spec.nodes.items():
         for ds in device_specs:
             if ds.register_set is not None:
                 p = Participant(node_id, ds.device)
                 register_sets[p] = ds.register_set
+
+    pass_manager = PassManager()
+    for p in resolve_passes(spec.passes, topology=spec.topology):
+        pass_manager.add_pass(p)
 
     backend = NCCLBackend(register_sets)
 

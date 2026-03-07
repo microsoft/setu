@@ -39,7 +39,7 @@ class PackUnpackCopies : public Pass {
  public:
   PackUnpackCopies() = default;
   [[nodiscard]] cir::Program Run(cir::Program program,
-                                 const HintStore& hints) override;
+                                 const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override { return "PackUnpackCopies"; }
 };
 

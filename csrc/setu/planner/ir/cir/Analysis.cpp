@@ -77,6 +77,18 @@ LivenessInfo LivenessInfo::Build(const Program& program) {
     }
   }
 
+  // Extend AllocTmpOp roots' last_use through alias chains.
+  // Values in an alias chain share physical memory with their root, so the
+  // root's register must stay live until all aliases are dead.
+  auto alias = AliasChains::Build(program);
+  for (std::uint32_t v = 0; v < program.NumValues(); ++v) {
+    if (alias.root[v].has_value()) {
+      auto root_id = alias.root[v]->id;
+      info.ranges[root_id].last_use =
+          std::max(info.ranges[root_id].last_use, info.ranges[v].last_use);
+    }
+  }
+
   return info;
 }
 
@@ -178,6 +190,46 @@ RegisterAllocation RegisterAllocation::Build(
 
     // Return slot to pool after this value's last use
     queue.emplace(live_range.last_use + 1, *assigned_slot);
+  }
+
+  return result;
+}
+
+// ========================= AliasChains ======================================
+
+AliasChains AliasChains::Build(const Program& program) {
+  AliasChains result;
+  result.root.resize(program.NumValues());
+
+  auto propagate = [&](Value from, Value to) {
+    if (result.root[from.id].has_value()) {
+      result.root[to.id] = result.root[from.id];
+    }
+  };
+
+  for (std::uint32_t op_idx = 0; op_idx < program.NumOperations(); ++op_idx) {
+    const auto& op = program.Operations()[op_idx];
+    std::visit(
+        [&](const auto& concrete) {
+          using T = std::decay_t<decltype(concrete)>;
+
+          if constexpr (std::is_same_v<T, AllocTmpOp>) {
+            result.root[concrete.out.id] = concrete.out;
+          } else if constexpr (std::is_same_v<T, CopyOp>) {
+            propagate(concrete.dst_in, concrete.dst_out);
+          } else if constexpr (std::is_same_v<T, ConsumeOp>) {
+            propagate(concrete.src, concrete.out);
+          } else if constexpr (std::is_same_v<T, SliceOp>) {
+            propagate(concrete.src, concrete.out);
+          } else if constexpr (std::is_same_v<T, PackOp>) {
+            propagate(concrete.dst_in, concrete.dst_out);
+          } else if constexpr (std::is_same_v<T, UnpackOp>) {
+            for (std::size_t i = 0; i < concrete.dst_ins.size(); ++i) {
+              propagate(concrete.dst_ins[i], concrete.dst_outs[i]);
+            }
+          }
+        },
+        op.op);
   }
 
   return result;

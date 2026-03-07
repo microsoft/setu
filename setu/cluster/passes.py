@@ -9,10 +9,10 @@ from typing import List, Optional
 from setu._coordinator import Topology
 
 _PASS_REGISTRY = {
-    "shortest_path_routing": lambda topo: _make_shortest_path_routing(topo),
-    "bandwidth_aggregation": lambda topo: _make_bandwidth_aggregation(topo),
-    "register_tiling": lambda topo: _make_register_tiling(),
-    "instruction_scheduler": lambda topo: _make_instruction_scheduler(),
+    "shortest_path_routing": lambda topo, **_: _make_shortest_path_routing(topo),
+    "bandwidth_aggregation": lambda topo, **_: _make_bandwidth_aggregation(topo),
+    "register_tiling": lambda topo, **_: _make_register_tiling(),
+    "instruction_scheduler": lambda topo, **_: _make_instruction_scheduler(),
 }
 
 AVAILABLE_PASSES: list = list(_PASS_REGISTRY.keys())

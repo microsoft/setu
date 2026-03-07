@@ -59,6 +59,7 @@ class Planner {
  private:
   targets::BackendPtr backend_;
   passes::PassManagerPtr pass_manager_;
+  std::unordered_map<ir::cir::Device, RegisterSet> register_sets_;
 };
 
 using PlannerPtr = std::shared_ptr<Planner>;

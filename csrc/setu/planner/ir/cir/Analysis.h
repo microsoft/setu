@@ -105,6 +105,21 @@ struct RegisterAllocation {
 
 //==============================================================================
 
+/// Alias chain analysis: maps any Value in a chain rooted at an AllocTmpOp
+/// back to its root AllocTmpOp Value.  CopyOp, ConsumeOp, SliceOp, PackOp,
+/// and UnpackOp can propagate aliases (their output shares physical memory
+/// with a consumed/read input).  Used to extend liveness of AllocTmpOp
+/// roots through their alias chains.
+struct AliasChains {
+  /// Indexed by Value::id. For values in an alias chain rooted at an
+  /// AllocTmpOp, maps to the root Value. Empty optional for non-chain values.
+  std::vector<std::optional<Value>> root;
+
+  [[nodiscard]] static AliasChains Build(const Program& program /*[in]*/);
+};
+
+//==============================================================================
+
 /// Copy-depth analysis: for each data-moving op (CopyOp, PackOp, UnpackOp),
 /// the number of data-moving ancestors along the src chain.  Used to stage
 /// multi-hop relay copies so that NCCL sends at depth N only execute after
