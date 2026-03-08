@@ -25,6 +25,7 @@
 #include "planner/passes/InstructionScheduler.h"
 #include "planner/passes/PackUnpackCopies.h"
 #include "planner/passes/PassManager.h"
+#include "planner/passes/Pipelining.h"
 #include "planner/passes/RegisterTiling.h"
 #include "planner/passes/ShortestPathRouting.h"
 //==============================================================================
@@ -66,6 +67,11 @@ void InitPassesPybind(py::module_& m) {
            py::arg("chunk_size_bytes") = setu::planner::kRegisterSize,
            "Create a RegisterTiling pass that splits large AllocTmp buffers "
            "into register-sized chunks");
+
+  py::class_<Pipelining, Pass, std::shared_ptr<Pipelining>>(m, "Pipelining")
+      .def(py::init<std::size_t>(), py::arg("chunk_size_elements"),
+           "Create a Pipelining pass that splits multi-hop relay chains "
+           "into chunks and emits them in wavefront order");
 
   py::class_<InstructionScheduler, Pass, std::shared_ptr<InstructionScheduler>>(
       m, "InstructionScheduler")

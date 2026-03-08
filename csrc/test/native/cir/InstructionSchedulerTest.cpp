@@ -25,6 +25,7 @@
 #include "planner/ir/cir/Program.h"
 #include "planner/passes/InstructionScheduler.h"
 #include "planner/passes/PassContext.h"
+#include "planner/passes/Pipelining.h"
 #include "planner/passes/RegisterTiling.h"
 //==============================================================================
 namespace setu::test::native {
@@ -40,6 +41,7 @@ using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
 using setu::planner::passes::InstructionScheduler;
 using setu::planner::passes::PassContext;
+using setu::planner::passes::Pipelining;
 using setu::planner::passes::RegisterTiling;
 //==============================================================================
 namespace {
@@ -587,6 +589,44 @@ TEST_F(InstructionSchedulerTest, PressureGuard_MultiHop_BoundedByPool) {
   EXPECT_LE(pressure, 4u)
       << "Multi-hop pressure should be bounded by register pools, got "
       << pressure;
+}
+
+//==============================================================================
+// Wavefront preservation: Pipelining → InstructionScheduler should not
+// reorder when pressure already fits.
+//==============================================================================
+
+TEST_F(InstructionSchedulerTest, PipelinedProgram_PreservesWavefrontOrder) {
+  // 2-hop relay: A(dev0) → C(dev2) → B(dev1), payload = 128 elements,
+  // pipeline chunk = 64 elements → 2 pipeline chunks.
+  const std::size_t total = kChunkElements * 2;
+
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, total}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, total}, dt);
+  auto tmp = program.EmitAllocTmp(dev2, total, dt);
+  auto tmp_out = program.EmitCopy(src, tmp);
+  (void)program.EmitCopy(tmp_out, dst);
+
+  // Run Pipelining with chunk_size = 64 elements.
+  Pipelining pipelining(kChunkElements);
+  auto pipelined = pipelining.Run(std::move(program), DefaultCtx());
+  auto pipelined_dump = pipelined.Dump();
+
+  // Run InstructionScheduler with enough registers (budget fits).
+  std::unordered_map<Device, RegisterSet> register_sets = {
+      {dev2, RegisterSet::Uniform(2, 1024)}};
+  PassContext ctx{.hints = hints, .register_sets = register_sets};
+  InstructionScheduler scheduler;
+  auto scheduled = scheduler.Run(std::move(pipelined), ctx);
+
+  EXPECT_NO_THROW(Linearity::Check(scheduled));
+
+  // The scheduler should NOT have reordered — output should match
+  // Pipelining's wavefront order exactly.
+  EXPECT_EQ(scheduled.Dump(), pipelined_dump)
+      << "InstructionScheduler should preserve wavefront order when "
+         "pressure fits within register budget";
 }
 
 //==============================================================================

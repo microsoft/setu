@@ -322,23 +322,54 @@ Plan NCCL::Run(const cir::Program& program) {
     }
   }
 
-  // === Step 3: Staged emission — emit Fence between depth stages ===
+  // === Step 3: Data-dependency-driven emission ===
+  //
+  // Emit copies in CIR program order (no sorting by depth).  Insert Fence
+  // instructions only where a participant would read from a buffer region
+  // that a prior instruction wrote to on the same device — i.e., where a
+  // cross-stream data dependency exists.
+  //
+  // TODO(future): Fence is a full cross-stream sync (coarser than necessary).
+  // The ideal solution is event-based partial sync via new LLC instructions
+  // (SyncPoint/WaitSync) mapping to cudaEventRecord/cudaStreamWaitEvent,
+  // giving per-dependency sync without global barriers.
 
-  auto copy_depth = cir::CopyDepthAnalysis::Build(program);
+  struct WriteRegion {
+    ref::BufferRef buffer;
+    std::size_t offset;
+    std::size_t size;
+  };
 
-  // Sort pending copies by depth so we can iterate once and insert fences
-  // at stage boundaries. Order within a stage is irrelevant — all copies at
-  // the same depth are independent.
-  std::ranges::sort(pending_copies, [&](const PendingCopy& a,
-                                        const PendingCopy& b) {
-    return copy_depth.depth[a.cir_op_index] < copy_depth.depth[b.cir_op_index];
-  });
+  // Per-participant: buffer regions written by Receive/Copy that haven't
+  // been fenced yet.
+  std::unordered_map<Participant, std::vector<WriteRegion>> pending_writes;
 
-  // Flush accumulated same-device copies as batched Copy instructions, one per
-  // participant.  Called at stage boundaries and at the end of the loop.
+  // Check if a read region overlaps any pending write on a participant.
+  auto has_conflict = [&](const Participant& part, const ref::BufferRef& buf,
+                          std::size_t offset, std::size_t size) -> bool {
+    auto it = pending_writes.find(part);
+    if (it == pending_writes.end()) return false;
+    for (const auto& w : it->second) {
+      if (w.buffer == buf && w.offset < offset + size &&
+          offset < w.offset + w.size) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Flush accumulated same-device copies for a single participant.
   std::unordered_map<Participant, std::vector<llc::CopyEntry>> copy_batches;
 
-  auto flush_copy_batches = [&]() {
+  auto flush_copy_batches_for = [&](const Participant& part) {
+    auto it = copy_batches.find(part);
+    if (it != copy_batches.end() && !it->second.empty()) {
+      programs[part].emplace_back(llc::Copy(std::move(it->second)));
+      it->second.clear();
+    }
+  };
+
+  auto flush_all_copy_batches = [&]() {
     for (auto& [part, batch] : copy_batches) {
       if (!batch.empty()) {
         programs[part].emplace_back(llc::Copy(std::move(batch)));
@@ -347,28 +378,46 @@ Plan NCCL::Run(const cir::Program& program) {
     copy_batches.clear();
   };
 
-  std::uint32_t prev_stage = 0;
+  // Emit a Fence for a participant and clear its pending writes.
+  auto fence_participant = [&](const Participant& part) {
+    flush_copy_batches_for(part);
+    programs[part].emplace_back(llc::Fence());
+    pending_writes[part].clear();
+  };
+
   for (const auto& c : pending_copies) {
-    auto stage = copy_depth.depth[c.cir_op_index].value();
-
-    if (stage != prev_stage) {
-      flush_copy_batches();
-      for (const auto& part : parts) {
-        programs[part].emplace_back(llc::Fence());
-      }
-      prev_stage = stage;
-    }
-
     if (c.src_part == c.dst_part) {
+      // Local copy: reads src, writes dst — check src for conflicts
+      auto read_size = c.count * torch::elementSize(c.dtype);
+      if (has_conflict(c.src_part, c.src_ref, c.src_offset_bytes, read_size)) {
+        fence_participant(c.src_part);
+      }
       copy_batches[c.src_part].emplace_back(c.src_ref, c.src_offset_bytes,
                                             c.dst_ref, c.dst_offset_bytes,
                                             c.count, c.dtype);
+      // Record dst as written
+      auto write_size = c.count * torch::elementSize(c.dtype);
+      pending_writes[c.dst_part].push_back(
+          {c.dst_ref, c.dst_offset_bytes, write_size});
     } else {
+      // Cross-device: Send reads src on src_part, Receive writes dst on
+      // dst_part.
+
+      // Check if the Send's read conflicts with a prior write on src_part
+      auto read_size = c.count * torch::elementSize(c.dtype);
+      if (has_conflict(c.src_part, c.src_ref, c.src_offset_bytes, read_size)) {
+        fence_participant(c.src_part);
+      }
+
       // Look up the per-pair communicator
       Participants pair_parts;
       pair_parts.insert(c.src_part);
       pair_parts.insert(c.dst_part);
       const auto& pair_entry = comm_cache_.at(pair_parts);
+
+      // Flush any batched local copies before emitting Send/Receive
+      flush_copy_batches_for(c.src_part);
+      flush_copy_batches_for(c.dst_part);
 
       programs[c.src_part].emplace_back(
           llc::Send(pair_entry.id, c.src_ref, c.src_offset_bytes, c.count,
@@ -376,11 +425,15 @@ Plan NCCL::Run(const cir::Program& program) {
       programs[c.dst_part].emplace_back(
           llc::Receive(pair_entry.id, c.dst_ref, c.dst_offset_bytes, c.count,
                        c.dtype, pair_entry.ranks.at(c.src_part)));
+
+      // Record the Receive's write on dst_part
+      auto write_size = c.count * torch::elementSize(c.dtype);
+      pending_writes[c.dst_part].push_back(
+          {c.dst_ref, c.dst_offset_bytes, write_size});
     }
   }
 
-  // Flush remaining copies from the last stage.
-  flush_copy_batches();
+  flush_all_copy_batches();
 
   return plan;
 }

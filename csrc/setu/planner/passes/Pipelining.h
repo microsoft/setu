@@ -23,28 +23,29 @@
 namespace setu::planner::passes {
 //==============================================================================
 
-/// Instruction scheduler that reorders CIR operations only when necessary
-/// to keep register pressure within budget.
+/// Pipelining pass that splits multi-hop relay copy chains into chunks and
+/// emits them in wavefront order for overlapped execution.
 ///
-/// If the program's original order already fits within the register pool
-/// (checked via pressure simulation), the program is returned unchanged.
-/// This preserves upstream ordering such as wavefront order from the
-/// Pipelining pass.
+/// A relay chain is a sequence of CopyOps where each copy's dst_out feeds
+/// into the next copy's src (possibly through Slice/Consume).  The pass:
+///   1. Detects all maximal linear relay chains (asserts no branching).
+///   2. For chains with payload > chunk_size_elements, splits into
+///      ceil(payload / chunk_size) chunks.
+///   3. Emits chunks in wavefront order: micro_stage = chunk_idx + hop_idx.
+///      This lets chunk N's later hops overlap with chunk N+1's earlier hops.
 ///
-/// When reordering IS needed, uses a priority-based topological sort:
-///   - score = -1 for AllocTmpOp (defer new allocations), 0 otherwise.
-///   - Tie-break: original program order.
-///   - Pressure guard (when register_sets provided): defers AllocTmpOps
-///     that would exceed the device's register pool.
-class InstructionScheduler : public Pass {
+/// Single-hop copies and small payloads are passed through unchanged.
+class Pipelining : public Pass {
  public:
-  InstructionScheduler() = default;
+  explicit Pipelining(std::size_t chunk_size_elements)
+      : chunk_size_elements_(chunk_size_elements) {}
 
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
-  [[nodiscard]] std::string Name() const override {
-    return "InstructionScheduler";
-  }
+  [[nodiscard]] std::string Name() const override { return "Pipelining"; }
+
+ private:
+  std::size_t chunk_size_elements_;
 };
 
 //==============================================================================

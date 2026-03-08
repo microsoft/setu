@@ -24,6 +24,7 @@
 #include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/passes/PassContext.h"
+#include "planner/passes/Pipelining.h"
 #include "planner/passes/RegisterTiling.h"
 //==============================================================================
 namespace setu::test::native {
@@ -35,6 +36,7 @@ using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
 using setu::planner::passes::PassContext;
+using setu::planner::passes::Pipelining;
 using setu::planner::passes::RegisterTiling;
 //==============================================================================
 namespace {
@@ -338,6 +340,181 @@ TEST_F(RegisterTilingTest, MultipleChains_IndependentlyTiled) {
   [26] %26 = consume(%15)
 )");
   EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+//==============================================================================
+// SliceOp on chunked AllocTmpOp
+//==============================================================================
+
+TEST_F(RegisterTilingTest, SliceOnChunkedAllocTmp_Aligned) {
+  RegisterTiling pass(kChunkBytes);
+
+  // alloc_tmp with 128 elements (2 register chunks of 64)
+  // slice first chunk [0, 64], copy through it
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, kChunkElements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, kChunkElements}, dt);
+  auto tmp = program.EmitAllocTmp(dev2, kChunkElements * 2, dt);
+  auto tmp_slice = program.EmitSlice(tmp, Slice{0, kChunkElements});
+  auto tmp_out = program.EmitCopy(src, tmp_slice);
+  (void)program.EmitCopy(tmp_out, dst);
+
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  EXPECT_EQ(result.Dump(), R"(
+  [0] %0 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:0)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [1] %1 = view(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:1)), &ShardRef(shard_id=00000000-0000-0000-0000-000000000000, tensor_name=<none>, node_id=<none>), [0, 64], Half)
+  [2] %2 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [3] %3 = alloc_tmp(Participant(node_id=00000000-0000-0000-0000-000000000000, device=Device(torch_device=cuda:2)), 64, Half)
+  [4] %4 = slice(%0, [0, 64])
+  [5] %5 = copy(%4, %2)
+  [6] %6 = slice(%1, [0, 64])
+  [7] %7 = copy(%5, %6)
+  [8] %8 = consume(%1)
+)");
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+TEST_F(RegisterTilingTest, SliceOnChunkedAllocTmp_Unaligned) {
+  RegisterTiling pass(kChunkBytes);
+
+  // alloc_tmp with 192 elements (3 register chunks of 64)
+  // slice [32, 64] straddles chunks 0 and 1
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, kChunkElements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, kChunkElements}, dt);
+  auto tmp = program.EmitAllocTmp(dev2, kChunkElements * 3, dt);
+  auto tmp_slice = program.EmitSlice(tmp, Slice{32, kChunkElements});
+  auto tmp_out = program.EmitCopy(src, tmp_slice);
+  (void)program.EmitCopy(tmp_out, dst);
+
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  // The slice [32, 64] overlaps:
+  //   chunk 0 [0,64): local [32,64) → 32 elements
+  //   chunk 1 [64,128): local [0,32) → 32 elements
+  // So 2 sub-chunks of 32 elements each → 2 copies per hop
+  std::uint32_t copy_count = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    if (result.Operations()[i].Type() ==
+        setu::planner::ir::cir::OpType::kCopy) {
+      copy_count++;
+    }
+  }
+  EXPECT_EQ(copy_count, 4u);  // 2 copies per hop × 2 hops
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+TEST_F(RegisterTilingTest, ChainedSlicesOnChunkedAllocTmp) {
+  RegisterTiling pass(kChunkBytes);
+
+  // alloc_tmp(256) → 4 register chunks
+  // slice(alloc, [0, 128]) → first 2 chunks
+  // slice(outer, [0, 64]) → first 1 chunk
+  // copy through the inner slice
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, kChunkElements}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, kChunkElements}, dt);
+  auto tmp = program.EmitAllocTmp(dev2, kChunkElements * 4, dt);
+  auto outer_slice = program.EmitSlice(tmp, Slice{0, kChunkElements * 2});
+  auto inner_slice = program.EmitSlice(outer_slice, Slice{0, kChunkElements});
+  auto tmp_out = program.EmitCopy(src, inner_slice);
+  (void)program.EmitCopy(tmp_out, dst);
+
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  // Inner slice resolves to exactly 1 register chunk → 1 copy per hop
+  std::uint32_t copy_count = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    if (result.Operations()[i].Type() ==
+        setu::planner::ir::cir::OpType::kCopy) {
+      copy_count++;
+    }
+  }
+  EXPECT_EQ(copy_count, 2u);  // 1 copy per hop × 2 hops
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+//==============================================================================
+// Pipelining → RegisterTiling composition
+//==============================================================================
+
+TEST_F(RegisterTilingTest, PipeliningThenRegisterTiling_TwoHop) {
+  // Build a 2-hop relay: dev0 → dev2 → dev1
+  // Payload = 256 elements, pipeline chunk = 128, register chunk = 64
+  const std::size_t payload = kChunkElements * 4;  // 256
+
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, payload}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, payload}, dt);
+  auto tmp = program.EmitAllocTmp(dev2, payload, dt);
+  auto s_src = program.EmitSlice(src, Slice{0, payload});
+  auto s_dst = program.EmitSlice(dst, Slice{0, payload});
+  auto s_tmp = program.EmitSlice(tmp, Slice{0, payload});
+  auto c0 = program.EmitCopy(s_src, s_tmp);
+  (void)program.EmitCopy(c0, s_dst);
+  (void)program.EmitConsume(dst);
+
+  // Pipeline chunk = 128 elements → 2 pipeline chunks
+  Pipelining pipe_pass(kChunkElements * 2);
+  auto after_pipe = pipe_pass.Run(std::move(program), DefaultCtx());
+  EXPECT_NO_THROW(Linearity::Check(after_pipe));
+
+  // Register tile → 64-element register chunks
+  RegisterTiling rt_pass(kChunkBytes);
+  auto result = rt_pass.Run(std::move(after_pipe), DefaultCtx());
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // 2 pipeline chunks × 2 hops = 4 logical copies
+  // Each pipeline chunk = 2 register chunks → 2 copies per logical copy
+  // Total = 4 × 2 = 8 copies
+  std::uint32_t copy_count = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    if (result.Operations()[i].Type() ==
+        setu::planner::ir::cir::OpType::kCopy) {
+      copy_count++;
+    }
+  }
+  EXPECT_EQ(copy_count, 8u);
+}
+
+TEST_F(RegisterTilingTest, PipeliningThenRegisterTiling_ThreeHop) {
+  // Build a 3-hop relay: dev0 → dev2 → dev3 → dev1
+  const std::size_t payload = kChunkElements * 4;  // 256
+
+  Program program;
+  auto src = program.EmitView(dev0, shard, Slice{0, payload}, dt);
+  auto dst = program.EmitView(dev1, shard, Slice{0, payload}, dt);
+  auto tmp_c = program.EmitAllocTmp(dev2, payload, dt);
+  auto tmp_d = program.EmitAllocTmp(dev3, payload, dt);
+  auto s_src = program.EmitSlice(src, Slice{0, payload});
+  auto s_dst = program.EmitSlice(dst, Slice{0, payload});
+  auto s_tmp_c = program.EmitSlice(tmp_c, Slice{0, payload});
+  auto s_tmp_d = program.EmitSlice(tmp_d, Slice{0, payload});
+  auto c0 = program.EmitCopy(s_src, s_tmp_c);
+  auto c1 = program.EmitCopy(c0, s_tmp_d);
+  (void)program.EmitCopy(c1, s_dst);
+  (void)program.EmitConsume(dst);
+
+  Pipelining pipe_pass(kChunkElements * 2);  // 2 pipeline chunks
+  auto after_pipe = pipe_pass.Run(std::move(program), DefaultCtx());
+  EXPECT_NO_THROW(Linearity::Check(after_pipe));
+
+  RegisterTiling rt_pass(kChunkBytes);
+  auto result = rt_pass.Run(std::move(after_pipe), DefaultCtx());
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // 2 pipeline chunks × 3 hops = 6 logical copies
+  // Each pipeline chunk = 2 register chunks → 2 copies per logical copy
+  // Total = 6 × 2 = 12 copies
+  std::uint32_t copy_count = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    if (result.Operations()[i].Type() ==
+        setu::planner::ir::cir::OpType::kCopy) {
+      copy_count++;
+    }
+  }
+  EXPECT_EQ(copy_count, 12u);
 }
 
 //==============================================================================

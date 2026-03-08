@@ -16,14 +16,20 @@ inline std::size_t NumElementsInChunk(std::size_t chunk_size_bytes,
   return chunk_size_bytes / element_size;
 }
 
-cir::Program RegisterTiling::Run(cir::Program program,
-                                 const PassContext& /*ctx*/) {
+cir::Program RegisterTiling::Run(cir::Program program, const PassContext& ctx) {
+  // Use register size from PassContext if available, otherwise fall back to
+  // the constructor parameter.
+  auto chunk_size_bytes = chunk_size_bytes_;
+  if (!ctx.register_sets.empty()) {
+    chunk_size_bytes = ctx.register_sets.begin()->second.SizeBytes(0);
+  }
+
   bool has_large_tmp = false;
   for (const auto& op : program.Operations()) {
     if (op.Type() == cir::OpType::kAllocTmp) {
       const auto& alloc = std::get<cir::AllocTmpOp>(op.op);
       if (alloc.size_elements >
-          NumElementsInChunk(chunk_size_bytes_, alloc.dtype)) {
+          NumElementsInChunk(chunk_size_bytes, alloc.dtype)) {
         has_large_tmp = true;
         break;
       }
@@ -45,7 +51,7 @@ cir::Program RegisterTiling::Run(cir::Program program,
 
           if constexpr (std::is_same_v<T, cir::AllocTmpOp>) {
             auto chunk_elems =
-                NumElementsInChunk(chunk_size_bytes_, concrete.dtype);
+                NumElementsInChunk(chunk_size_bytes, concrete.dtype);
 
             if (concrete.size_elements <= chunk_elems) {
               rw.CloneOp(i);
@@ -118,6 +124,55 @@ cir::Program RegisterTiling::Run(cir::Program program,
               rw.MapValue(concrete.dst_out, new_dst_out);
             }
             return;
+          }
+
+          if constexpr (std::is_same_v<T, cir::SliceOp>) {
+            if (chunk_map.contains(concrete.src)) {
+              const auto& src_chunks = chunk_map.at(concrete.src);
+              std::vector<cir::Value> result_chunks;
+
+              std::size_t slice_start = concrete.slice.offset;
+              std::size_t slice_end = slice_start + concrete.slice.size;
+              std::size_t global_offset = 0;
+
+              for (const auto& chunk_val : src_chunks) {
+                auto chunk_elems =
+                    rw.Target().GetValueInfo(chunk_val).size_elements;
+                auto chunk_start = global_offset;
+                auto chunk_end = global_offset + chunk_elems;
+
+                auto overlap_start = std::max(slice_start, chunk_start);
+                auto overlap_end = std::min(slice_end, chunk_end);
+
+                if (overlap_start < overlap_end) {
+                  auto local_offset = overlap_start - chunk_start;
+                  auto overlap_size = overlap_end - overlap_start;
+
+                  if (local_offset == 0 && overlap_size == chunk_elems) {
+                    result_chunks.push_back(chunk_val);
+                  } else {
+                    result_chunks.push_back(rw.Target().EmitSlice(
+                        chunk_val, cir::Slice{local_offset, overlap_size}));
+                  }
+                }
+                global_offset += chunk_elems;
+              }
+              chunk_map[concrete.out] = std::move(result_chunks);
+              return;
+            }
+          }
+
+          if constexpr (std::is_same_v<T, cir::ConsumeOp>) {
+            if (chunk_map.contains(concrete.src)) {
+              const auto& src_chunks = chunk_map.at(concrete.src);
+              std::vector<cir::Value> result_chunks;
+              result_chunks.reserve(src_chunks.size());
+              for (const auto& chunk_val : src_chunks) {
+                result_chunks.push_back(rw.Target().EmitConsume(chunk_val));
+              }
+              chunk_map[concrete.out] = std::move(result_chunks);
+              return;
+            }
           }
 
           rw.CloneOp(i);

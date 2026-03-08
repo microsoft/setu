@@ -22,31 +22,101 @@
 namespace setu::planner::passes {
 //==============================================================================
 
+namespace {
+
+/// Per-alias-root use count: how many times each AllocTmpOp's alias chain
+/// is referenced across the program.
+using UseCounts = std::unordered_map<cir::Value, std::uint32_t>;
+
+/// Bookkeeping for register pressure simulation.  Shared between the
+/// pressure feasibility check and the scheduling loop.
+struct PressureTracker {
+  const cir::Program& program;
+  const cir::AliasChains& alias;
+  const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
+      register_sets;
+  const UseCounts& use_count;
+
+  std::unordered_map<cir::Device, std::uint32_t> live_registers;
+  std::unordered_map<cir::Value, std::uint32_t> remaining_uses;
+
+  /// Track a newly scheduled AllocTmpOp.
+  void TrackAlloc(const cir::AllocTmpOp& alloc_op) {
+    live_registers[alloc_op.device]++;
+    auto it = use_count.find(alloc_op.out);
+    remaining_uses[alloc_op.out] = (it != use_count.end()) ? it->second : 0;
+  }
+
+  /// Returns true if scheduling an AllocTmpOp on the given device would
+  /// exceed the register pool.
+  [[nodiscard]] bool WouldExceedBudget(const cir::Device& device) const {
+    auto set_it = register_sets.find(device);
+    if (set_it == register_sets.end()) return false;
+    auto it = live_registers.find(device);
+    auto live = (it != live_registers.end()) ? it->second : 0u;
+    return live >= set_it->second.NumRegisters();
+  }
+
+  /// Retire uses for an op and free registers whose alias chains are
+  /// exhausted.  Returns the set of devices that gained capacity.
+  std::unordered_set<cir::Device> RetireUses(const cir::Operation& op) {
+    std::unordered_set<cir::Device> freed_devices;
+    for (const auto& used : op.Uses()) {
+      if (!alias.root[used.id].has_value()) continue;
+      auto root_val = alias.root[used.id].value();
+      auto it = remaining_uses.find(root_val);
+      if (it == remaining_uses.end()) continue;
+      it->second--;
+      if (it->second == 0) {
+        auto root_device = program.GetValueInfo(root_val).device;
+        live_registers[root_device]--;
+        remaining_uses.erase(it);
+        freed_devices.insert(root_device);
+      }
+    }
+    return freed_devices;
+  }
+};
+
+/// Check whether the original program order fits within the register budget.
+bool OriginalOrderFitsWithinBudget(
+    const cir::Program& program, const cir::AliasChains& alias,
+    const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
+        register_sets,
+    const UseCounts& use_count) {
+  PressureTracker tracker{program, alias, register_sets, use_count, {}, {}};
+
+  for (std::uint32_t op_idx = 0; op_idx < program.NumOperations(); ++op_idx) {
+    const auto& op = program.Operations()[op_idx];
+
+    if (op.Type() == cir::OpType::kAllocTmp) {
+      const auto& alloc_op = std::get<cir::AllocTmpOp>(op.op);
+      if (tracker.WouldExceedBudget(alloc_op.device)) {
+        return false;
+      }
+      tracker.TrackAlloc(alloc_op);
+    }
+
+    tracker.RetireUses(op);
+  }
+  return true;
+}
+
+}  // namespace
+
+//==============================================================================
+
 /// Instruction Scheduling for CIR operations.
 ///
-/// After RegisterTiling, the program contains flat sequences of AllocTmpOps
-/// followed by their associated copies:
+/// The scheduler ensures that register allocation will not fail by
+/// reordering operations to keep peak register pressure within the
+/// device's register pool.  If the program's original order already
+/// satisfies the pressure budget, it is returned unchanged — preserving
+/// any upstream ordering (e.g. wavefront order from Pipelining).
 ///
-///   AllocTmp(c0), AllocTmp(c1), ...,
-///   Copy(s0, c0), Copy(s1, c1), ...,     // writes into tmps
-///   Copy(c0_out, d0), Copy(c1_out, d1), ...  // reads out of tmps
-///
-/// All AllocTmpOps are independent and thus simultaneously ready for
-/// scheduling.  Without reordering the register allocator would see all
-/// tmps live at once and exhaust its pool.
-///
-/// The scheduler performs a priority-based topological sort. AllocTmpOps
-/// (which create new live registers) get score -1; every other op gets
-/// score 0.  Among ready ops the highest score wins, with original program
-/// order as tie-break.  This causes the scheduler to drain each tmp's
-/// copy chain before allocating the next one, producing an interleaved
-/// schedule with bounded register pressure.
-///
-/// When register_sets are provided, a pressure guard additionally defers
-/// AllocTmpOps that would exceed the device's register pool.  Registers
-/// are tracked via alias-chain use-counts (refcounting): when all uses of
-/// a root AllocTmpOp's alias chain are exhausted, the register is freed
-/// and deferred AllocTmpOps for that device are re-enqueued.
+/// When reordering IS needed, a priority-based topological sort is used.
+/// AllocTmpOps get score -1, everything else gets score 0.  A pressure
+/// guard defers AllocTmpOps that would exceed the device's register pool.
 cir::Program InstructionScheduler::Run(cir::Program program,
                                        const PassContext& ctx) {
   const auto& register_sets_ = ctx.register_sets;
@@ -63,11 +133,10 @@ cir::Program InstructionScheduler::Run(cir::Program program,
     alias = cir::AliasChains::Build(program);
   }
 
-  // Build `in_degree` and `successors` map to facilitate toposort.
-  // Also compute use_count per alias root (for pressure tracking).
+  // Build dependency graph and use counts.
   std::vector<std::uint32_t> in_degree(num_ops, 0);
   std::vector<std::vector<std::uint32_t>> successors(num_ops);
-  std::unordered_map<cir::Value, std::uint32_t> use_count;
+  UseCounts use_count;
 
   for (std::uint32_t op_idx = 0; op_idx < num_ops; ++op_idx) {
     const auto& op = program.Operations()[op_idx];
@@ -85,7 +154,15 @@ cir::Program InstructionScheduler::Run(cir::Program program,
     }
   }
 
-  // Score each operation.
+  // If the original order already fits, preserve it (e.g. wavefront from
+  // Pipelining).
+  if (has_pressure_guard && OriginalOrderFitsWithinBudget(
+                                program, alias, register_sets_, use_count)) {
+    return program;
+  }
+
+  // --- Reordering needed: priority-based toposort ---
+
   std::vector<std::int32_t> score(num_ops, 0);
   for (std::uint32_t op_idx = 0; op_idx < num_ops; ++op_idx) {
     if (program.Operations()[op_idx].Type() == cir::OpType::kAllocTmp) {
@@ -93,7 +170,6 @@ cir::Program InstructionScheduler::Run(cir::Program program,
     }
   }
 
-  // Priority-based toposort with optional pressure guard.
   using Entry = std::pair<std::int32_t, std::int32_t>;
   std::priority_queue<Entry> ready;
   for (std::uint32_t op_idx = 0; op_idx < num_ops; ++op_idx) {
@@ -102,16 +178,12 @@ cir::Program InstructionScheduler::Run(cir::Program program,
     }
   }
 
-  // Pressure guard state.
-  std::unordered_map<cir::Device, std::uint32_t> live_registers;
-  std::unordered_map<cir::Value, std::uint32_t> remaining_uses;
+  PressureTracker tracker{program, alias, register_sets_, use_count, {}, {}};
   std::vector<Entry> deferred;
-
   std::vector<std::size_t> schedule;
   schedule.reserve(num_ops);
 
   while (!ready.empty() || !deferred.empty()) {
-    // Pop from ready queue, deferring AllocTmpOps that would exceed pressure.
     std::optional<std::uint32_t> chosen;
     while (!ready.empty()) {
       auto [s, neg_idx] = ready.top();
@@ -121,9 +193,7 @@ cir::Program InstructionScheduler::Run(cir::Program program,
           program.Operations()[op_idx].Type() == cir::OpType::kAllocTmp) {
         const auto& alloc_op =
             std::get<cir::AllocTmpOp>(program.Operations()[op_idx].op);
-        auto set_it = register_sets_.find(alloc_op.device);
-        if (set_it != register_sets_.end() &&
-            live_registers[alloc_op.device] >= set_it->second.NumRegisters()) {
+        if (tracker.WouldExceedBudget(alloc_op.device)) {
           ready.pop();
           deferred.push_back({s, neg_idx});
           continue;
@@ -146,33 +216,13 @@ cir::Program InstructionScheduler::Run(cir::Program program,
 
     const auto& op = program.Operations()[op_idx];
 
-    // If this is an AllocTmpOp, start tracking its register.
     if (has_pressure_guard && op.Type() == cir::OpType::kAllocTmp) {
-      const auto& alloc_op = std::get<cir::AllocTmpOp>(op.op);
-      live_registers[alloc_op.device]++;
-      remaining_uses[alloc_op.out] = use_count[alloc_op.out];
+      tracker.TrackAlloc(std::get<cir::AllocTmpOp>(op.op));
     }
 
-    // Decrement use counts for alias roots and free registers.
     if (has_pressure_guard) {
-      std::unordered_set<cir::Device> freed_devices;
-      for (const auto& used : op.Uses()) {
-        if (alias.root[used.id].has_value()) {
-          auto root_val = alias.root[used.id].value();
-          auto it = remaining_uses.find(root_val);
-          if (it != remaining_uses.end()) {
-            it->second--;
-            if (it->second == 0) {
-              auto root_device = program.GetValueInfo(root_val).device;
-              live_registers[root_device]--;
-              remaining_uses.erase(it);
-              freed_devices.insert(root_device);
-            }
-          }
-        }
-      }
+      auto freed_devices = tracker.RetireUses(op);
 
-      // Re-enqueue deferred AllocTmpOps whose devices now have capacity.
       if (!freed_devices.empty() && !deferred.empty()) {
         std::vector<Entry> still_deferred;
         for (const auto& entry : deferred) {
@@ -189,7 +239,6 @@ cir::Program InstructionScheduler::Run(cir::Program program,
       }
     }
 
-    // Update successors.
     for (auto succ : successors[op_idx]) {
       --in_degree[succ];
       if (in_degree[succ] == 0) {

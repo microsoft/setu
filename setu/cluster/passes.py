@@ -11,6 +11,9 @@ from setu._coordinator import Topology
 _PASS_REGISTRY = {
     "shortest_path_routing": lambda topo, **_: _make_shortest_path_routing(topo),
     "bandwidth_aggregation": lambda topo, **_: _make_bandwidth_aggregation(topo),
+    "pipelining": lambda topo, **kw: _make_pipelining(
+        kw.get("chunk_size_elements", 33554432)
+    ),
     "register_tiling": lambda topo, **_: _make_register_tiling(),
     "instruction_scheduler": lambda topo, **_: _make_instruction_scheduler(),
 }
@@ -34,6 +37,12 @@ def _make_register_tiling():
     from setu._coordinator import RegisterTiling
 
     return RegisterTiling()
+
+
+def _make_pipelining(chunk_size_elements: int):
+    from setu._coordinator import Pipelining
+
+    return Pipelining(chunk_size_elements)
 
 
 def _make_instruction_scheduler():
