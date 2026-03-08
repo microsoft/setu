@@ -25,6 +25,7 @@
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::datatypes {
+using setu::commons::ReplicaId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -54,13 +55,24 @@ struct TensorShardSpec {
    * @throws std::invalid_argument if dims is empty
    */
   TensorShardSpec(TensorName name_param, std::vector<TensorDimSpec> dims_param,
-                  torch::Dtype dtype_param, Device device_param)
+                  torch::Dtype dtype_param, Device device_param,
+                  ReplicaId replica_id_param = 0,
+                  std::int32_t num_replicas_param = 1)
       : name(std::move(name_param)),
         dims(std::move(dims_param)),
         dtype(dtype_param),
         device(device_param),
+        replica_id(replica_id_param),
+        num_replicas(num_replicas_param),
         row_major_start_position_(ComputeRowMajorStartPosition()) {
     ASSERT_VALID_ARGUMENTS(!dims.empty(), "Dims must be non-empty");
+    ASSERT_VALID_ARGUMENTS(num_replicas >= 1,
+                           "num_replicas must be >= 1, got {}", num_replicas);
+    ASSERT_VALID_ARGUMENTS(replica_id >= 0, "replica_id must be >= 0, got {}",
+                           replica_id);
+    ASSERT_VALID_ARGUMENTS(replica_id < num_replicas,
+                           "replica_id {} must be < num_replicas {}",
+                           replica_id, num_replicas);
   }
 
   /**
@@ -134,8 +146,10 @@ struct TensorShardSpec {
       dims_str += dims[i].ToString();
     }
     dims_str += "]";
-    return std::format("TensorShardSpec(name={}, dims={}, dtype={}, device={})",
-                       name, dims_str, dtype, device);
+    return std::format(
+        "TensorShardSpec(name={}, dims={}, dtype={}, device={}, "
+        "replica_id={}, num_replicas={})",
+        name, dims_str, dtype, device, replica_id, num_replicas);
   }
 
   void Serialize(BinaryBuffer& buffer) const;
@@ -146,6 +160,8 @@ struct TensorShardSpec {
   const std::vector<TensorDimSpec> dims;  ///< Dimension specs of the tensor
   const torch::Dtype dtype;               ///< Data type of tensor elements
   const Device device;                    ///< Device where tensor resides
+  const ReplicaId replica_id;             ///< Replica index (0-based)
+  const std::int32_t num_replicas;        ///< Total number of replicas
 
  private:
   [[nodiscard]] std::size_t ComputeRowMajorStartPosition() const {

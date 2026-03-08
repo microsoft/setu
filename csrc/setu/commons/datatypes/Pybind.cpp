@@ -242,9 +242,10 @@ void InitTensorShardPybind(py::module_& m) {
 void InitTensorShardSpecPybind(py::module_& m) {
   py::class_<TensorShardSpec>(m, "TensorShardSpec", py::module_local())
       .def(py::init<TensorName, std::vector<TensorDimSpec>, torch::Dtype,
-                    Device>(),
+                    Device, ReplicaId, std::int32_t>(),
            py::arg("name"), py::arg("dims"), py::arg("dtype"),
-           py::arg("device"))
+           py::arg("device"), py::arg("replica_id") = 0,
+           py::arg("num_replicas") = 1)
       .def_readonly("name", &TensorShardSpec::name,
                     "Name/identifier for the tensor")
       .def_readonly("dims", &TensorShardSpec::dims,
@@ -253,6 +254,10 @@ void InitTensorShardSpecPybind(py::module_& m) {
                     "Data type of tensor elements")
       .def_readonly("device", &TensorShardSpec::device,
                     "Device where tensor resides")
+      .def_readonly("replica_id", &TensorShardSpec::replica_id,
+                    "Replica index (0-based)")
+      .def_readonly("num_replicas", &TensorShardSpec::num_replicas,
+                    "Total number of replicas")
       .def("get_num_elements", &TensorShardSpec::GetNumElements,
            "Get total number of owned elements in the shard")
       .def("get_num_dims", &TensorShardSpec::GetNumDims,
@@ -262,16 +267,18 @@ void InitTensorShardSpecPybind(py::module_& m) {
       // Pickle support for multiprocessing
       .def(py::pickle(
           [](const TensorShardSpec& s) {  // __getstate__
-            return py::make_tuple(s.name, s.dims, s.dtype, s.device);
+            return py::make_tuple(s.name, s.dims, s.dtype, s.device,
+                                  s.replica_id, s.num_replicas);
           },
           [](py::tuple t) {  // __setstate__
-            if (t.size() != 4) {
+            if (t.size() != 6) {
               throw std::runtime_error("Invalid state for TensorShardSpec");
             }
             return TensorShardSpec(t[0].cast<TensorName>(),
                                    t[1].cast<std::vector<TensorDimSpec>>(),
                                    t[2].cast<torch::Dtype>(),
-                                   t[3].cast<Device>());
+                                   t[3].cast<Device>(), t[4].cast<ReplicaId>(),
+                                   t[5].cast<std::int32_t>());
           }));
 }
 //==============================================================================

@@ -56,13 +56,19 @@ TensorShardMetadataPtr MetaStore::RegisterTensorShard(
       total_tensor_size *= dim_spec.size;
       dims.emplace(dim_spec.name, TensorDim(dim_spec.name, dim_spec.size));
     }
-    registered_data.expected_size = total_tensor_size;
+    registered_data.num_replicas = shard_spec.num_replicas;
+    registered_data.expected_size =
+        total_tensor_size * static_cast<std::size_t>(shard_spec.num_replicas);
     tensor_spec_cache_.emplace(
         shard_spec.name,
         TensorSpec(shard_spec.name, std::move(dims), shard_spec.dtype));
   }
 
   registered_data.registered_size += shard_num_elements;
+
+  if (shard_spec.replica_id == 0) {
+    registered_data.unique_shard_count++;
+  }
 
   LOG_DEBUG(
       "Registered tensor shard: id={}, name={}, num_dims={}, "
@@ -83,6 +89,14 @@ bool MetaStore::ValidateShardRegistration(
 
   // Get reference shard for metadata comparison
   const auto& ref_spec = registered_data.shards.begin()->second->spec;
+
+  // Check num_replicas matches
+  if (shard_spec.num_replicas != registered_data.num_replicas) {
+    LOG_WARNING(
+        "num_replicas mismatch for tensor '{}': new shard has {}, expected {}",
+        shard_spec.name, shard_spec.num_replicas, registered_data.num_replicas);
+    return false;
+  }
 
   // Check dtype matches
   if (shard_spec.dtype != ref_spec.dtype) {
@@ -116,10 +130,11 @@ bool MetaStore::ValidateShardRegistration(
     return false;
   }
 
-  // Check for overlaps with all existing shards
+  // Check for overlaps with existing shards that have the same replica_id
   auto overlap_it = std::ranges::find_if(
       registered_data.shards, [&shard_spec](const auto& pair) {
-        return shard_spec.Overlaps(pair.second->spec);
+        return shard_spec.replica_id == pair.second->spec.replica_id &&
+               shard_spec.Overlaps(pair.second->spec);
       });
 
   if (overlap_it != registered_data.shards.end()) {
@@ -147,9 +162,20 @@ std::size_t MetaStore::GetNumShardsForTensor(
 
   auto it = registered_shards_data_.find(tensor_name);
   if (it != registered_shards_data_.end()) {
-    return it->second.shards.size();
+    return it->second.unique_shard_count;
   }
   return 0;
+}
+//==============================================================================
+std::int32_t MetaStore::GetNumReplicasForTensor(
+    const TensorName& tensor_name) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it != registered_shards_data_.end() && it->second.num_replicas > 0) {
+    return it->second.num_replicas;
+  }
+  return 1;
 }
 //==============================================================================
 TensorMetadataPtr MetaStore::GetTensorMetadata(const TensorName& tensor_name) {
@@ -185,7 +211,8 @@ TensorMetadataPtr MetaStore::GetTensorMetadata(const TensorName& tensor_name) {
 
   // Build and cache TensorMetadata
   auto metadata = std::make_shared<TensorMetadata>(
-      tensor_name, dims, first_shard->spec.dtype, shards);
+      tensor_name, dims, first_shard->spec.dtype, shards,
+      tensor_data.num_replicas);
   tensor_metadata_cache_.emplace(tensor_name, metadata);
 
   return metadata;
@@ -245,6 +272,9 @@ void MetaStore::DeregisterShards(
       }
 
       std::size_t shard_num_elements = shard_it->second->spec.GetNumElements();
+      if (shard_it->second->spec.replica_id == 0) {
+        data.unique_shard_count--;
+      }
       data.registered_size -= shard_num_elements;
       data.shards.erase(shard_it);
 

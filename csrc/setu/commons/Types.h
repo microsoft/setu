@@ -65,6 +65,8 @@ using TensorIndices = datatypes::IndexRangeSet;
 using TensorIndicesMap = std::unordered_map<TensorDimName, TensorIndices>;
 /// @brief Unique identifier for a tensor shard (UUID)
 using ShardId = boost::uuids::uuid;
+/// @brief Replica identifier within a replicated tensor
+using ReplicaId = std::int32_t;
 /// @brief Unique identifier for a copy operation (UUID)
 using CopyOperationId = boost::uuids::uuid;
 /// @brief Unique identifier for a request (UUID)

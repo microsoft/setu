@@ -57,14 +57,18 @@ struct TensorMetadata {
    * shards don't fully cover the tensor
    */
   TensorMetadata(TensorName name_param, TensorDimMap dims_param,
-                 torch::Dtype dtype_param, TensorShardMetadataMap shards_param)
+                 torch::Dtype dtype_param, TensorShardMetadataMap shards_param,
+                 std::int32_t num_replicas_param = 1)
       : name(name_param),
         dims(dims_param),
         dtype(dtype_param),
         shards(shards_param),
-        size(GetSize()) {
+        size(GetSize()),
+        num_replicas(num_replicas_param) {
     ASSERT_VALID_ARGUMENTS(dims_param.size() > 0, "Dims must be non-empty");
     ASSERT_VALID_ARGUMENTS(shards_param.size() > 0, "Shards must be non-empty");
+    ASSERT_VALID_ARGUMENTS(num_replicas >= 1,
+                           "num_replicas must be >= 1, got {}", num_replicas);
 
     ValidateShards();
   }
@@ -137,7 +141,8 @@ struct TensorMetadata {
   const TensorDimMap dims;   ///< Map of dimension names to TensorDim objects
   const torch::Dtype dtype;  ///< Data type of tensor elements
   const TensorShardMetadataMap shards;  ///< Map of shard IDs to shard metadata
-  const std::size_t size;  ///< Total number of elements in the tensor
+  const std::size_t size;           ///< Total number of elements in the tensor
+  const std::int32_t num_replicas;  ///< Number of replicas for this tensor
 
  private:
   /**
@@ -156,14 +161,17 @@ struct TensorMetadata {
       total_shard_size += shard->spec.GetNumElements();
     }
 
-    ASSERT_VALID_ARGUMENTS(total_shard_size == size,
-                           "Total shard size {} does not match tensor size {}",
-                           total_shard_size, size);
+    std::size_t expected_total = size * static_cast<std::size_t>(num_replicas);
+    ASSERT_VALID_ARGUMENTS(
+        total_shard_size == expected_total,
+        "Total shard size {} does not match tensor size {} x {} replicas = {}",
+        total_shard_size, size, num_replicas, expected_total);
 
-    // Ensure that no two shards overlap by using TensorSelection intersections
+    // Ensure that no two shards with the same replica_id overlap
     for (const auto& [id1, shard1] : shards) {
       for (const auto& [id2, shard2] : shards) {
         if (id1 >= id2) continue;  // Only check each pair once, skip self
+        if (shard1->spec.replica_id != shard2->spec.replica_id) continue;
 
         // Create selections from each shard spec
         TensorSelectionPtr selection1 =
@@ -177,8 +185,9 @@ struct TensorMetadata {
 
         ASSERT_VALID_ARGUMENTS(
             intersection->IsEmpty(),
-            "Shards {} and {} overlap - their intersection is non-empty", id1,
-            id2);
+            "Shards {} and {} (replica_id={}) overlap - their intersection is "
+            "non-empty",
+            id1, id2, shard1->spec.replica_id);
       }
     }
   }

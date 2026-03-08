@@ -100,6 +100,15 @@ class MetaStore {
       const TensorName& tensor_name /*[in]*/) const;
 
   /**
+   * @brief Returns the number of replicas for a given tensor
+   *
+   * @param tensor_name The name of the tensor to query
+   * @return Number of replicas (1 if tensor not found or unreplicated)
+   */
+  [[nodiscard]] std::int32_t GetNumReplicasForTensor(
+      const TensorName& tensor_name /*[in]*/) const;
+
+  /**
    * @brief Returns the tensor metadata for a fully registered tensor
    *
    * Builds and caches TensorMetadata when all shards have been registered.
@@ -171,6 +180,8 @@ class MetaStore {
     std::size_t registered_size{0};
     TensorShardMetadataMap shards;
     bool has_deregistered_shards{false};
+    std::int32_t num_replicas{0};
+    std::size_t unique_shard_count{0};
   };
 
   /**

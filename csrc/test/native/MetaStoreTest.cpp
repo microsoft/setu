@@ -42,21 +42,49 @@ namespace {
 //==============================================================================
 // Helper to create a simple 1D tensor shard spec
 TensorShardSpec Make1DShardSpec(const TensorName& name, std::size_t total_size,
-                                std::int32_t start, std::int32_t end) {
+                                std::int32_t start, std::int32_t end,
+                                std::int32_t replica_id = 0,
+                                std::int32_t num_replicas = 1) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", total_size, start, end);
-  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU));
+  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU),
+                         replica_id, num_replicas);
 }
 
 // Helper to create a 2D tensor shard spec
 TensorShardSpec Make2DShardSpec(const TensorName& name, std::size_t rows,
                                 std::size_t cols, std::int32_t row_start,
                                 std::int32_t row_end, std::int32_t col_start,
-                                std::int32_t col_end) {
+                                std::int32_t col_end,
+                                std::int32_t replica_id = 0,
+                                std::int32_t num_replicas = 1) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("row", rows, row_start, row_end);
   dims.emplace_back("col", cols, col_start, col_end);
-  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU));
+  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU),
+                         replica_id, num_replicas);
+}
+
+// Helper to register a 1D tensor with replicas across evenly-split shards
+// Returns the vector of all registered shard metadata pointers
+std::vector<TensorShardMetadataPtr> RegisterReplicated1DTensor(
+    MetaStore& store, const TensorName& name, std::size_t total_size,
+    std::int32_t num_shards, std::int32_t num_replicas) {
+  std::vector<TensorShardMetadataPtr> all_metadata;
+  std::size_t shard_size = total_size / static_cast<std::size_t>(num_shards);
+  for (std::int32_t replica = 0; replica < num_replicas; ++replica) {
+    for (std::int32_t s = 0; s < num_shards; ++s) {
+      auto start =
+          static_cast<std::int32_t>(static_cast<std::size_t>(s) * shard_size);
+      auto end = static_cast<std::int32_t>(static_cast<std::size_t>(s + 1) *
+                                           shard_size);
+      auto spec =
+          Make1DShardSpec(name, total_size, start, end, replica, num_replicas);
+      auto metadata = store.RegisterTensorShard(spec, GenerateUUID());
+      all_metadata.push_back(metadata);
+    }
+  }
+  return all_metadata;
 }
 
 // Helper to find a dimension by name in a TensorShardSpec
@@ -1016,6 +1044,171 @@ TEST(MetaStoreTest, DeregisterShards_MultipleTensorsInSingleCall_CleansUpAll) {
   EXPECT_EQ(store.GetNumShardsForTensor("tensor_b"), 1);
   EXPECT_TRUE(store.AllShardsRegistered("tensor_b"));
   EXPECT_NE(store.GetTensorSpec("tensor_b"), nullptr);
+}
+//==============================================================================
+// Replication tests
+//==============================================================================
+TEST(MetaStoreTest,
+     RegisterTensorShard_WithReplicas_AllShardsRegisteredAfterAllReplicas) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+  constexpr std::int32_t kNumShards = 2;
+  constexpr std::int32_t kNumReplicas = 2;
+
+  // Register shard 0, replica 0
+  auto s0r0 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50, 0, kNumReplicas),
+      GenerateUUID());
+  ASSERT_NE(s0r0, nullptr);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+
+  // Register shard 1, replica 0
+  auto s1r0 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100, 0, kNumReplicas),
+      GenerateUUID());
+  ASSERT_NE(s1r0, nullptr);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+
+  // Register shard 0, replica 1
+  auto s0r1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50, 1, kNumReplicas),
+      GenerateUUID());
+  ASSERT_NE(s0r1, nullptr);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+
+  // Register shard 1, replica 1 — now all should be registered
+  auto s1r1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100, 1, kNumReplicas),
+      GenerateUUID());
+  ASSERT_NE(s1r1, nullptr);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_SameRangeDifferentReplica_Succeeds) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+  const NodeId node_0 = GenerateUUID();
+  const NodeId node_1 = GenerateUUID();
+
+  // Register same range [0, 100) with replica_id 0 and 1
+  auto shard0 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100, 0, 2), node_0);
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100, 1, 2), node_1);
+
+  ASSERT_NE(shard0, nullptr);
+  ASSERT_NE(shard1, nullptr);
+  EXPECT_NE(shard0->id, shard1->id);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_SameRangeSameReplica_Rejected) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+  const NodeId owner = GenerateUUID();
+
+  auto shard0 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100, 0, 2), owner);
+  ASSERT_NE(shard0, nullptr);
+
+  // Same range, same replica_id → overlap → rejected
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100, 0, 2), owner);
+  EXPECT_EQ(shard1, nullptr);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_MismatchedNumReplicas_Rejected) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+  const NodeId owner = GenerateUUID();
+
+  auto shard0 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 50, 0, 2), owner);
+  ASSERT_NE(shard0, nullptr);
+
+  // Different num_replicas → rejected
+  auto shard1 = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 50, 100, 0, 3), owner);
+  EXPECT_EQ(shard1, nullptr);
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+}
+
+TEST(MetaStoreTest, GetNumShardsForTensor_WithReplicas_ReturnsUniqueCount) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+
+  auto all = RegisterReplicated1DTensor(store, tensor_name, 100, 2, 2);
+  ASSERT_EQ(all.size(), 4);
+  for (const auto& m : all) {
+    ASSERT_NE(m, nullptr);
+  }
+
+  // 4 total shards but only 2 unique (replica_id == 0)
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 2);
+}
+
+TEST(MetaStoreTest, GetNumReplicasForTensor_ReturnsCorrectValue) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+
+  // Unknown tensor returns 1
+  EXPECT_EQ(store.GetNumReplicasForTensor("nonexistent"), 1);
+
+  // Register with num_replicas=3
+  auto shard = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100, 0, 3), GenerateUUID());
+  ASSERT_NE(shard, nullptr);
+  EXPECT_EQ(store.GetNumReplicasForTensor(tensor_name), 3);
+}
+
+TEST(MetaStoreTest, DeregisterShards_WithReplicas_CorrectAccounting) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+
+  auto all = RegisterReplicated1DTensor(store, tensor_name, 100, 2, 2);
+  ASSERT_EQ(all.size(), 4);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 2);
+
+  // Deregister one replica_id=0 shard
+  std::unordered_map<TensorName, std::vector<ShardId>> to_deregister;
+  to_deregister[tensor_name] = {all[0]->id};  // shard 0, replica 0
+  store.DeregisterShards(to_deregister);
+
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+  EXPECT_FALSE(store.AllShardsRegistered(tensor_name));
+}
+
+TEST(MetaStoreTest, GetTensorMetadata_WithReplicas_ValidMetadata) {
+  MetaStore store;
+  const TensorName tensor_name = "replicated_tensor";
+
+  auto all = RegisterReplicated1DTensor(store, tensor_name, 100, 2, 2);
+  ASSERT_EQ(all.size(), 4);
+
+  auto tensor_metadata = store.GetTensorMetadata(tensor_name);
+  ASSERT_NE(tensor_metadata, nullptr);
+  EXPECT_EQ(tensor_metadata->name, tensor_name);
+  EXPECT_EQ(tensor_metadata->size, 100);
+  EXPECT_EQ(tensor_metadata->num_replicas, 2);
+  EXPECT_EQ(tensor_metadata->shards.size(), 4);
+}
+
+TEST(MetaStoreTest, RegisterTensorShard_DefaultReplica_BackwardCompatible) {
+  MetaStore store;
+  const TensorName tensor_name = "plain_tensor";
+  const NodeId owner = GenerateUUID();
+
+  // Default (no replica args) should work exactly as before
+  auto shard = store.RegisterTensorShard(
+      Make1DShardSpec(tensor_name, 100, 0, 100), owner);
+
+  ASSERT_NE(shard, nullptr);
+  EXPECT_EQ(shard->spec.replica_id, 0);
+  EXPECT_EQ(shard->spec.num_replicas, 1);
+  EXPECT_TRUE(store.AllShardsRegistered(tensor_name));
+  EXPECT_EQ(store.GetNumShardsForTensor(tensor_name), 1);
+  EXPECT_EQ(store.GetNumReplicasForTensor(tensor_name), 1);
 }
 //==============================================================================
 }  // namespace setu::test::native

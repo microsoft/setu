@@ -44,7 +44,9 @@ void InitMetaStoreClassPybind(py::module_& m) {
            "Get the number of shards registered for a tensor")
       .def("get_tensor_metadata", &MetaStore::GetTensorMetadata,
            py::arg("tensor_name"),
-           "Get tensor metadata if all shards are registered");
+           "Get tensor metadata if all shards are registered")
+      .def("get_num_replicas_for_tensor", &MetaStore::GetNumReplicasForTensor,
+           py::arg("tensor_name"), "Get the number of replicas for a tensor");
 }
 //==============================================================================
 void InitMetastorePybind(py::module_& m) {

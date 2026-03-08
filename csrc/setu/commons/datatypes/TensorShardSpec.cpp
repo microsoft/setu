@@ -18,6 +18,7 @@
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
+using setu::commons::ReplicaId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -25,15 +26,17 @@ using setu::commons::utils::BinaryWriter;
 //==============================================================================
 void TensorShardSpec::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(name, dims, dtype, device);
+  writer.WriteFields(name, dims, dtype, device, replica_id, num_replicas);
 }
 
 TensorShardSpec TensorShardSpec::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [name_val, dims_val, dtype_val, device_val] =
+  auto [name_val, dims_val, dtype_val, device_val, replica_id_val,
+        num_replicas_val] =
       reader.ReadFields<TensorName, std::vector<TensorDimSpec>, torch::Dtype,
-                        Device>();
-  return TensorShardSpec(name_val, dims_val, dtype_val, device_val);
+                        Device, ReplicaId, std::int32_t>();
+  return TensorShardSpec(name_val, dims_val, dtype_val, device_val,
+                         replica_id_val, num_replicas_val);
 }
 //==============================================================================
 bool TensorShardSpec::Overlaps(const TensorShardSpec& other) const {
