@@ -42,6 +42,23 @@ struct ViewInfo {
   torch::Dtype dtype;
 };
 
+/// Per-participant data for a pending AllGather collective.
+struct AllGatherParticipant {
+  Participant participant;
+  ref::BufferRef send_ref;
+  std::size_t send_offset_bytes;
+  ref::BufferRef recv_ref;
+  std::size_t recv_offset_bytes;
+};
+
+/// Pending AllGather collective, collected before LLC emission.
+struct PendingAllGather {
+  std::vector<AllGatherParticipant> participants;
+  std::size_t send_count;
+  torch::Dtype dtype;
+  std::uint32_t cir_op_index;
+};
+
 /// Intermediate copy between two views, collected before LLC emission.
 struct PendingCopy {
   Participant src_part;
@@ -80,6 +97,7 @@ Plan NCCL::Run(const cir::Program& program) {
   Plan plan;
   Participants& parts = plan.participants;
   std::vector<PendingCopy> pending_copies;
+  std::vector<PendingAllGather> pending_all_gathers;
 
   // === Step 0: Register allocation (only if AllocTmpOps are present) ===
 
@@ -271,6 +289,49 @@ Plan NCCL::Run(const cir::Program& program) {
               view_map.try_emplace(concrete.dst_outs[i], dst_it->second);
             }
 
+          } else if constexpr (std::is_same_v<T, cir::AllGatherOp>) {
+            ASSERT_VALID_RUNTIME(
+                concrete.srcs.size() == concrete.dst_ins.size() &&
+                    concrete.srcs.size() == concrete.dst_outs.size(),
+                "AllGatherOp: srcs/dst_ins/dst_outs size mismatch");
+            ASSERT_VALID_RUNTIME(concrete.srcs.size() >= 2,
+                                 "AllGatherOp: need at least 2 participants");
+
+            PendingAllGather pending;
+            pending.cir_op_index = op_idx;
+
+            for (std::size_t i = 0; i < concrete.srcs.size(); ++i) {
+              auto src_it = view_map.find(concrete.srcs[i]);
+              auto dst_it = view_map.find(concrete.dst_ins[i]);
+              ASSERT_VALID_RUNTIME(
+                  src_it != view_map.end() && dst_it != view_map.end(),
+                  "AllGatherOp src/dst_in not found in view_map");
+
+              const auto& src = src_it->second;
+              const auto& dst = dst_it->second;
+
+              if (i == 0) {
+                pending.send_count = src.count;
+                pending.dtype = src.dtype;
+              }
+
+              parts.insert(src.participant);
+              parts.insert(dst.participant);
+
+              pending.participants.push_back(AllGatherParticipant{
+                  .participant = dst.participant,
+                  .send_ref = src.buffer_ref,
+                  .send_offset_bytes = src.offset_bytes,
+                  .recv_ref = dst.buffer_ref,
+                  .recv_offset_bytes = dst.offset_bytes,
+              });
+
+              // dst_out inherits dst view info
+              view_map.try_emplace(concrete.dst_outs[i], dst_it->second);
+            }
+
+            pending_all_gathers.push_back(std::move(pending));
+
           } else {
             RAISE_RUNTIME_ERROR("NCCL backend: unsupported CIR operation");
           }
@@ -317,6 +378,31 @@ Plan NCCL::Run(const cir::Program& program) {
       comm_cache_[pair_parts] = CommCacheEntry{.id = comm_id, .ranks = ranks};
 
       for (const auto& p : pair_parts) {
+        programs[p].emplace_back(llc::InitComm(comm_id, ranks));
+      }
+    }
+  }
+
+  // Set up N-way communicators for AllGather collectives
+  for (const auto& ag : pending_all_gathers) {
+    Participants ag_parts;
+    for (const auto& p : ag.participants) {
+      ag_parts.insert(p.participant);
+    }
+
+    if (!comm_cache_.contains(ag_parts)) {
+      ncclUniqueId nccl_id;
+      ncclGetUniqueId(&nccl_id);
+      auto comm_id = CommId::From(nccl_id);
+
+      DeviceRank rank = 0;
+      std::unordered_map<Participant, DeviceRank> ranks;
+      for (const auto& p : ag_parts) {
+        ranks[p] = rank++;
+      }
+      comm_cache_[ag_parts] = CommCacheEntry{.id = comm_id, .ranks = ranks};
+
+      for (const auto& p : ag_parts) {
         programs[p].emplace_back(llc::InitComm(comm_id, ranks));
       }
     }
@@ -434,6 +520,37 @@ Plan NCCL::Run(const cir::Program& program) {
   }
 
   flush_all_copy_batches();
+
+  // === Step 4: Emit AllGather instructions ===
+  for (const auto& ag : pending_all_gathers) {
+    Participants ag_parts;
+    for (const auto& p : ag.participants) {
+      ag_parts.insert(p.participant);
+    }
+    const auto& cache_entry = comm_cache_.at(ag_parts);
+    auto num_ranks = static_cast<DeviceRank>(ag.participants.size());
+
+    for (const auto& p : ag.participants) {
+      // Fence before AllGather if any pending writes conflict with the
+      // send or recv buffers
+      auto send_size = ag.send_count * torch::elementSize(ag.dtype);
+      auto recv_size = send_size * num_ranks;
+      if (has_conflict(p.participant, p.send_ref, p.send_offset_bytes,
+                       send_size) ||
+          has_conflict(p.participant, p.recv_ref, p.recv_offset_bytes,
+                       recv_size)) {
+        fence_participant(p.participant);
+      }
+
+      programs[p.participant].emplace_back(llc::AllGather(
+          cache_entry.id, p.send_ref, p.send_offset_bytes, p.recv_ref,
+          p.recv_offset_bytes, ag.send_count, ag.dtype, num_ranks));
+
+      // Record recv buffer as written
+      pending_writes[p.participant].push_back(
+          {p.recv_ref, p.recv_offset_bytes, recv_size});
+    }
+  }
 
   return plan;
 }

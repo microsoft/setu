@@ -37,6 +37,8 @@ OpType Operation::Type() const {
           return OpType::kSlice;
         } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           return OpType::kConsume;
+        } else if constexpr (std::is_same_v<T, AllGatherOp>) {
+          return OpType::kAllGather;
         }
       },
       op);
@@ -60,6 +62,8 @@ std::vector<Value> Operation::Defs() const {
           return {op.out};
         } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           return {op.out};
+        } else if constexpr (std::is_same_v<T, AllGatherOp>) {
+          return op.dst_outs;
         }
       },
       op);
@@ -87,6 +91,10 @@ std::vector<Value> Operation::Uses() const {
           return {op.src};
         } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           return {op.src};
+        } else if constexpr (std::is_same_v<T, AllGatherOp>) {
+          std::vector<Value> uses = op.srcs;
+          uses.insert(uses.end(), op.dst_ins.begin(), op.dst_ins.end());
+          return uses;
         }
       },
       op);
@@ -110,6 +118,8 @@ std::vector<Value> Operation::ConsumedOperands() const {
           return {};
         } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           return {op.src};
+        } else if constexpr (std::is_same_v<T, AllGatherOp>) {
+          return op.dst_ins;
         }
       },
       op);

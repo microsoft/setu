@@ -175,6 +175,21 @@ cir::Program RegisterTiling::Run(cir::Program program, const PassContext& ctx) {
             }
           }
 
+          if constexpr (std::is_same_v<T, cir::AllGatherOp>) {
+            for (const auto& s : concrete.srcs) {
+              ASSERT_VALID_RUNTIME(
+                  !chunk_map.contains(s),
+                  "RegisterTiling: AllGather src operand is tiled, "
+                  "AllGather requires contiguous buffers");
+            }
+            for (const auto& d : concrete.dst_ins) {
+              ASSERT_VALID_RUNTIME(
+                  !chunk_map.contains(d),
+                  "RegisterTiling: AllGather dst_in operand is tiled, "
+                  "AllGather requires contiguous buffers");
+            }
+          }
+
           rw.CloneOp(i);
         },
         op.op);

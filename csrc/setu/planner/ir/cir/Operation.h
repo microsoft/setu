@@ -19,6 +19,7 @@
 #include "commons/StdCommon.h"
 //==============================================================================
 #include "planner/ir/cir/Value.h"
+#include "planner/ir/cir/operations/AllGatherOp.h"
 #include "planner/ir/cir/operations/AllocTmp.h"
 #include "planner/ir/cir/operations/ConsumeOp.h"
 #include "planner/ir/cir/operations/CopyOp.h"
@@ -38,10 +39,12 @@ enum class OpType : std::uint8_t {
   kUnpack = 5,
   kSlice = 6,
   kConsume = 7,
+  kAllGather = 8,
 };
 
-using OperationVariant = std::variant<ViewOp, AllocTmpOp, CopyOp, PackOp,
-                                      UnpackOp, SliceOp, ConsumeOp>;
+using OperationVariant =
+    std::variant<ViewOp, AllocTmpOp, CopyOp, PackOp, UnpackOp, SliceOp,
+                 ConsumeOp, AllGatherOp>;
 
 /// Wrapper around OperationVariant, providing uniform access to defs/uses
 /// and string representation. Follows the same variant+wrapper pattern

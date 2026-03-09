@@ -78,6 +78,12 @@ class Program : public setu::commons::NonCopyable {
   [[nodiscard]] std::vector<Value> EmitUnpack(
       Value src /*[in]*/, std::vector<Value> dst_ins /*[in]*/);
 
+  /// (%dst0_out, ..., %dstN_out) = all_gather(srcs, dst_ins)
+  /// Requires: all srcs have the same size_elements
+  /// Requires: each dst_in.size_elements == N * src.size_elements
+  [[nodiscard]] std::vector<Value> EmitAllGather(
+      std::vector<Value> srcs /*[in]*/, std::vector<Value> dst_ins /*[in]*/);
+
   // ==================== Query API ====================
 
   [[nodiscard]] const std::vector<Operation>& Operations() const {

@@ -82,7 +82,8 @@ void NCCLWorker::Execute(const Program& program) {
             ExecuteInitComm(inst);
           } else if constexpr (std::is_same_v<T, Copy> ||
                                std::is_same_v<T, Send> ||
-                               std::is_same_v<T, Receive>) {
+                               std::is_same_v<T, Receive> ||
+                               std::is_same_v<T, AllGather>) {
             active_stream_ = streams_[group_index % kNumStreams];
 
             cudaEvent_t start_event;
@@ -93,8 +94,10 @@ void NCCLWorker::Execute(const Program& program) {
               ExecuteCopy(inst);
             } else if constexpr (std::is_same_v<T, Send>) {
               ExecuteSend(inst);
-            } else {
+            } else if constexpr (std::is_same_v<T, Receive>) {
               ExecuteReceive(inst);
+            } else {
+              ExecuteAllGather(inst);
             }
 
             cudaEvent_t end_event;
@@ -229,6 +232,21 @@ void NCCLWorker::ExecuteReceive(const Receive& inst) {
 
   LOG_DEBUG("Receive: {} elements to {} from device rank: {}", inst.count,
             inst.dst_ref.ToString(), inst.peer_rank);
+}
+
+void NCCLWorker::ExecuteAllGather(const AllGather& inst) {
+  auto& entry = comm_cache_.at(inst.comm_id);
+
+  auto* send_buf = static_cast<char*>(inst.send_ptr) + inst.send_offset_bytes;
+  auto* recv_buf = static_cast<char*>(inst.recv_ptr) + inst.recv_offset_bytes;
+
+  NCCL_CHECK(ncclAllGather(send_buf, recv_buf, inst.send_count,
+                           ToNcclDataType(inst.dtype), entry.nccl_comm,
+                           active_stream_));
+
+  LOG_DEBUG("AllGather: {} elements/rank, {} ranks, send={}, recv={}",
+            inst.send_count, inst.num_ranks, inst.send_ref.ToString(),
+            inst.recv_ref.ToString());
 }
 
 DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {

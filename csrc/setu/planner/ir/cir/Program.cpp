@@ -150,6 +150,47 @@ std::vector<Value> Program::EmitUnpack(Value src, std::vector<Value> dst_ins) {
   return dst_outs;
 }
 
+std::vector<Value> Program::EmitAllGather(std::vector<Value> srcs,
+                                          std::vector<Value> dst_ins) {
+  auto num_participants = srcs.size();
+  ASSERT_VALID_ARGUMENTS(num_participants >= 2,
+                         "all_gather requires at least 2 participants");
+  ASSERT_VALID_ARGUMENTS(num_participants == dst_ins.size(),
+                         "all_gather srcs ({}) and dst_ins ({}) size mismatch",
+                         num_participants, dst_ins.size());
+
+  auto src_size = GetValueInfo(srcs[0]).size_elements;
+  auto expected_dst_size = num_participants * src_size;
+
+  for (std::size_t i = 0; i < num_participants; ++i) {
+    const auto& si = GetValueInfo(srcs[i]);
+    ASSERT_VALID_ARGUMENTS(si.size_elements == src_size,
+                           "all_gather src[{}] size ({}) != src[0] size ({})",
+                           i, si.size_elements, src_size);
+    const auto& di = GetValueInfo(dst_ins[i]);
+    ASSERT_VALID_ARGUMENTS(di.size_elements == expected_dst_size,
+                           "all_gather dst_in[{}] size ({}) != {} * {} = {}", i,
+                           di.size_elements, num_participants, src_size,
+                           expected_dst_size);
+  }
+
+  auto op_index = static_cast<std::uint32_t>(ops_.size());
+  std::vector<Value> dst_outs;
+  dst_outs.reserve(num_participants);
+
+  for (std::size_t i = 0; i < num_participants; ++i) {
+    const auto& di = GetValueInfo(dst_ins[i]);
+    dst_outs.push_back(
+        AllocateValue(di.device, di.size_elements, di.dtype, op_index));
+  }
+
+  ops_.emplace_back(AllGatherOp{.dst_outs = dst_outs,
+                                .srcs = std::move(srcs),
+                                .dst_ins = std::move(dst_ins)});
+
+  return dst_outs;
+}
+
 // ========================= Query API =======================================
 
 const ValueInfo& Program::GetValueInfo(Value v) const {
@@ -267,6 +308,23 @@ void ProgramRewriter::CloneOp(std::size_t op_index) {
         } else if constexpr (std::is_same_v<T, ConsumeOp>) {
           auto new_val = target_.EmitConsume(Lookup(concrete_op.src));
           MapValue(concrete_op.out, new_val);
+
+        } else if constexpr (std::is_same_v<T, AllGatherOp>) {
+          std::vector<Value> new_srcs;
+          new_srcs.reserve(concrete_op.srcs.size());
+          for (const auto& s : concrete_op.srcs) {
+            new_srcs.push_back(Lookup(s));
+          }
+          std::vector<Value> new_dst_ins;
+          new_dst_ins.reserve(concrete_op.dst_ins.size());
+          for (const auto& d : concrete_op.dst_ins) {
+            new_dst_ins.push_back(Lookup(d));
+          }
+          auto new_vals = target_.EmitAllGather(std::move(new_srcs),
+                                                std::move(new_dst_ins));
+          for (std::size_t i = 0; i < concrete_op.dst_outs.size(); ++i) {
+            MapValue(concrete_op.dst_outs[i], new_vals[i]);
+          }
         }
       },
       op.op);

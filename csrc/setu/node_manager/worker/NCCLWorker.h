@@ -41,6 +41,7 @@ using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::planner::ir::llc::AllGather;
 using setu::planner::ir::llc::CommId;
 using setu::planner::ir::llc::CommIdHash;
 using setu::planner::ir::llc::Copy;
@@ -70,6 +71,7 @@ class NCCLWorker : public Worker {
   void ExecuteCopy(const Copy& inst);
   void ExecuteSend(const Send& inst);
   void ExecuteReceive(const Receive& inst);
+  void ExecuteAllGather(const AllGather& inst);
 
   [[nodiscard]] static ncclDataType_t ToNcclDataType(torch::Dtype dtype);
   [[nodiscard]] static std::size_t GetDTypeSizeBytes(torch::Dtype dtype);
