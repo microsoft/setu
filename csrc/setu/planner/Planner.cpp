@@ -38,7 +38,7 @@ CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
 
   // Stage 1: CopySpec -> CIR
   auto t0 = std::chrono::high_resolution_clock::now();
-  auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore);
+  auto cir = planner::passes::CopySpecToCIR::Run(spec, metastore, hints);
   double stage1_ms = std::chrono::duration<double, std::milli>(
                          std::chrono::high_resolution_clock::now() - t0)
                          .count();

@@ -20,6 +20,7 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "metastore/MetaStore.h"
+#include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Program.h"
 //==============================================================================
 namespace setu::planner::passes {
@@ -27,6 +28,7 @@ namespace setu::planner::passes {
 
 using setu::commons::datatypes::CopySpec;
 using setu::metastore::MetaStore;
+using setu::planner::hints::HintStore;
 namespace cir = setu::planner::ir::cir;
 
 /// CopySpec → CIR lowering pass.
@@ -37,9 +39,15 @@ namespace cir = setu::planner::ir::cir;
 ///   %src = view(src_device, &src_shard, [offset, size], dtype)
 ///   %dst = view(dst_device, &dst_shard, [offset, size], dtype)
 ///   %dst' = copy(%src, %dst)
+///
+/// For replicated destinations (num_replicas > 1), supports two strategies
+/// controlled via ReplicationHint in the HintStore:
+///   AllGather (default) — each replica copies 1/N of src, then AllGather
+///   Naive               — each replica copies the full src independently
 struct CopySpecToCIR {
   [[nodiscard]] static cir::Program Run(const CopySpec& copy_spec /*[in]*/,
-                                        MetaStore& metastore /*[in]*/);
+                                        MetaStore& metastore /*[in]*/,
+                                        const HintStore& hints /*[in]*/);
 };
 
 //==============================================================================

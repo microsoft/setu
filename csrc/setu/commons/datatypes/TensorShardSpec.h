@@ -119,7 +119,9 @@ struct TensorShardSpec {
    * tensor. Shards are ordered by their row-major start position.
    */
   [[nodiscard]] bool operator<(const TensorShardSpec& other) const {
-    return row_major_start_position_ < other.row_major_start_position_;
+    if (row_major_start_position_ != other.row_major_start_position_)
+      return row_major_start_position_ < other.row_major_start_position_;
+    return replica_id < other.replica_id;
   }
 
   /**

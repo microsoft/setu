@@ -25,6 +25,33 @@
 namespace setu::planner::hints {
 //==============================================================================
 void InitHintsPybind(py::module_& m) {
+  py::enum_<ReplicationStrategy>(m, "ReplicationStrategy")
+      .value("AllGather", ReplicationStrategy::kAllGather)
+      .value("Naive", ReplicationStrategy::kNaive);
+
+  py::class_<ReplicationHint>(m, "ReplicationHint")
+      .def(py::init<setu::commons::TensorName, ReplicationStrategy>(),
+           py::arg("dst_name"), py::arg("strategy"),
+           "Create a replication hint to control AllGather vs Naive strategy")
+      .def_readonly("dst_name", &ReplicationHint::dst_name,
+                    "Destination tensor name")
+      .def_readonly("strategy", &ReplicationHint::strategy,
+                    "Replication strategy")
+      .def("__repr__", &ReplicationHint::ToString)
+      .def(py::pickle(
+          [](const ReplicationHint& rh) {  // __getstate__
+            return py::make_tuple(rh.dst_name,
+                                  static_cast<std::int32_t>(rh.strategy));
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 2) {
+              throw std::runtime_error("Invalid state for ReplicationHint");
+            }
+            return ReplicationHint(
+                t[0].cast<setu::commons::TensorName>(),
+                static_cast<ReplicationStrategy>(t[1].cast<std::int32_t>()));
+          }));
+
   py::class_<RoutingHint>(m, "RoutingHint")
       .def(py::init<Participant, Participant, Path>(), py::arg("src"),
            py::arg("dst"), py::arg("path"),

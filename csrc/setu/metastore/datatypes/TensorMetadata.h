@@ -28,6 +28,7 @@ namespace setu::metastore::datatypes {
 //==============================================================================
 // Type aliases for convenience
 using setu::commons::NodeId;
+using setu::commons::ReplicaId;
 using setu::commons::TensorName;
 using setu::commons::datatypes::CreateSelectionFromShardMetadata;
 using setu::commons::datatypes::TensorDimMap;
@@ -111,6 +112,36 @@ struct TensorMetadata {
         selection->name, name);
 
     return std::make_shared<TensorOwnershipMap>(selection, shards);
+  }
+
+  /**
+   * @brief Creates an ownership map filtered to a single replica
+   *
+   * @param selection Selection of the tensor to create ownership map for
+   * @param replica_id The replica to filter shards by
+   * @return Shared pointer to TensorOwnershipMap for the given replica only
+   */
+  [[nodiscard]] TensorOwnershipMapPtr GetOwnershipMapForReplica(
+      TensorSelectionPtr selection, ReplicaId replica_id) const {
+    ASSERT_VALID_POINTER_ARGUMENT(selection);
+    ASSERT_VALID_ARGUMENTS(
+        selection->name == name,
+        "Selection tensor name {} does not match metadata tensor name {}",
+        selection->name, name);
+    ASSERT_VALID_ARGUMENTS(replica_id >= 0 && replica_id < num_replicas,
+                           "replica_id {} out of range [0, {})", replica_id,
+                           num_replicas);
+
+    TensorShardMetadataMap filtered;
+    for (const auto& [shard_id, shard] : shards) {
+      if (shard->spec.replica_id == replica_id) {
+        filtered[shard_id] = shard;
+      }
+    }
+
+    ASSERT_VALID_RUNTIME(!filtered.empty(), "No shards found for replica_id {}",
+                         replica_id);
+    return std::make_shared<TensorOwnershipMap>(selection, filtered);
   }
 
   /**

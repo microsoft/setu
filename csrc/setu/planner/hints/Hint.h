@@ -17,6 +17,7 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 #include "planner/Participant.h"
@@ -98,7 +99,40 @@ struct BandwidthHint {
   }
 };
 
-using CompilerHint = std::variant<RoutingHint, BandwidthHint>;
+enum class ReplicationStrategy { kAllGather, kNaive };
+
+struct ReplicationHint {
+  setu::commons::TensorName dst_name;
+  ReplicationStrategy strategy;
+
+  ReplicationHint() = default;
+
+  ReplicationHint(setu::commons::TensorName dst_name_param,
+                  ReplicationStrategy strategy_param)
+      : dst_name(std::move(dst_name_param)), strategy(strategy_param) {}
+
+  [[nodiscard]] std::string ToString() const {
+    auto strategy_str =
+        strategy == ReplicationStrategy::kAllGather ? "AllGather" : "Naive";
+    return std::format("ReplicationHint(dst_name={}, strategy={})", dst_name,
+                       strategy_str);
+  }
+
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    writer.WriteFields(dst_name, static_cast<std::int32_t>(strategy));
+  }
+
+  static ReplicationHint Deserialize(const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    auto [name, strat_int] =
+        reader.ReadFields<setu::commons::TensorName, std::int32_t>();
+    return ReplicationHint(std::move(name),
+                           static_cast<ReplicationStrategy>(strat_int));
+  }
+};
+
+using CompilerHint = std::variant<RoutingHint, BandwidthHint, ReplicationHint>;
 
 /// @brief Compute an FNV-1a fingerprint of a hints vector for SPMD
 /// consistency verification. Cheap (~nanoseconds for typical hint lists).
