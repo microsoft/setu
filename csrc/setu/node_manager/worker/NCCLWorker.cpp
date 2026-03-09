@@ -107,23 +107,29 @@ void NCCLWorker::Execute(const Program& program) {
             timings.push_back({group_index, 0.0, 1});
             group_index++;
           } else if constexpr (std::is_same_v<T, Fence>) {
-            // Full cross-stream synchronization: every stream waits on
-            // every other stream's pre-fence work, so post-fence ops on
-            // any stream observe all prior results.
-            std::vector<cudaEvent_t> fence_events(kNumStreams);
-            for (std::size_t i = 0; i < kNumStreams; ++i) {
-              CUDA_CHECK(cudaEventCreate(&fence_events[i]));
-              CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
-            }
-            for (std::size_t i = 0; i < kNumStreams; ++i) {
-              for (std::size_t j = 0; j < kNumStreams; ++j) {
-                if (i != j) {
-                  CUDA_CHECK(cudaStreamWaitEvent(streams_[i], fence_events[j]));
+            // Cross-stream synchronization: only sync streams that
+            // actually had pre-fence work, then make all streams wait
+            // on those events so post-fence ops on any stream observe
+            // completed pre-fence results.
+            const std::size_t num_used =
+                std::min(static_cast<std::size_t>(group_index), kNumStreams);
+            if (num_used > 0) {
+              std::vector<cudaEvent_t> fence_events(num_used);
+              for (std::size_t i = 0; i < num_used; ++i) {
+                CUDA_CHECK(cudaEventCreate(&fence_events[i]));
+                CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
+              }
+              for (std::size_t i = 0; i < kNumStreams; ++i) {
+                for (std::size_t j = 0; j < num_used; ++j) {
+                  if (i != j) {
+                    CUDA_CHECK(
+                        cudaStreamWaitEvent(streams_[i], fence_events[j]));
+                  }
                 }
               }
-            }
-            for (auto& e : fence_events) {
-              CUDA_CHECK(cudaEventDestroy(e));
+              for (auto& e : fence_events) {
+                CUDA_CHECK(cudaEventDestroy(e));
+              }
             }
             group_index = 0;
           }
@@ -131,9 +137,11 @@ void NCCLWorker::Execute(const Program& program) {
         instruction.instr);
   }
 
-  // Sync all streams to ensure completion before returning.
-  for (auto s : streams_) {
-    CUDA_CHECK(cudaStreamSynchronize(s));
+  // Sync only streams that had work queued.
+  const std::size_t num_streams_used =
+      std::min(static_cast<std::size_t>(group_index) + 1, kNumStreams);
+  for (std::size_t i = 0; i < num_streams_used; ++i) {
+    CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
   }
 
   // Compute elapsed times from CUDA event pairs
