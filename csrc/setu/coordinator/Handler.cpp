@@ -105,8 +105,8 @@ void Handler::Loop() {
 void Handler::HandleRegisterTensorShardRequest(
     const Identity& node_agent_identity,
     const RegisterTensorShardRequest& request) {
-  LOG_INFO("Coordinator received RegisterTensorShardRequest for tensor: {}",
-           request.tensor_shard_spec.name);
+  LOG_DEBUG("Coordinator received RegisterTensorShardRequest for tensor: {}",
+            request.tensor_shard_spec.name);
 
   // Parse NodeId from the identity (NodeAgent REQ identity is
   // "uuid_req")
@@ -148,7 +148,7 @@ void Handler::HandleRegisterTensorShardRequest(
 
   // Check if all shards for this tensor are registered
   if (metastore_.AllShardsRegistered(request.tensor_shard_spec.name)) {
-    LOG_INFO(
+    LOG_DEBUG(
         "All shards registered for tensor: {}, sending AllocateTensorRequest "
         "to all owners",
         request.tensor_shard_spec.name);
@@ -175,9 +175,9 @@ void Handler::HandleRegisterTensorShardRequest(
 
 void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
                                       const SubmitCopyRequest& request) {
-  LOG_INFO("Coordinator received SubmitCopyRequest from {} to {} for shard {}",
-           request.copy_spec.src_name, request.copy_spec.dst_name,
-           request.shard_id);
+  LOG_DEBUG("Coordinator received SubmitCopyRequest from {} to {} for shard {}",
+            request.copy_spec.src_name, request.copy_spec.dst_name,
+            request.shard_id);
 
   if (metastore_.IsTensorDeregistered(request.copy_spec.src_name) ||
       metastore_.IsTensorDeregistered(request.copy_spec.dst_name)) {
@@ -204,9 +204,9 @@ void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
 
 void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
                                       const SubmitPullRequest& request) {
-  LOG_INFO("Coordinator received SubmitPullRequest from {} to {} for shard {}",
-           request.copy_spec.src_name, request.copy_spec.dst_name,
-           request.shard_id);
+  LOG_DEBUG("Coordinator received SubmitPullRequest from {} to {} for shard {}",
+            request.copy_spec.src_name, request.copy_spec.dst_name,
+            request.shard_id);
 
   if (metastore_.IsTensorDeregistered(request.copy_spec.src_name) ||
       metastore_.IsTensorDeregistered(request.copy_spec.dst_name)) {
@@ -269,7 +269,7 @@ void Handler::HandleShardSubmission(
                                  T, DispatchManager::CompletedAggregation>) {
           auto [copy_op_id, state] = dispatch_manager_.FinalizeAggregation(alt);
 
-          LOG_INFO(
+          LOG_DEBUG(
               "All shards submitted for {} -> {}, "
               "copy_op_id={}, adding to planner queue",
               alt.spec.src_name, alt.spec.dst_name, copy_op_id);
@@ -315,7 +315,7 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
   // Check if any deferred deregistrations are now unblocked
   auto unblocked = deregistration_tracker_.Resolve(response.copy_op_id);
   for (auto& dereg : unblocked) {
-    LOG_INFO(
+    LOG_DEBUG(
         "All blocking copies completed for deregistration from {} — "
         "proceeding with deregistration",
         dereg.node_agent_identity);
@@ -373,8 +373,8 @@ void Handler::HandleGetTensorSpecRequest(const Identity& node_agent_identity,
 void Handler::HandleDeregisterShardsRequest(
     const Identity& node_agent_identity,
     const DeregisterShardsRequest& request) {
-  LOG_INFO("Coordinator received DeregisterShardsRequest from {}",
-           node_agent_identity);
+  LOG_DEBUG("Coordinator received DeregisterShardsRequest from {}",
+            node_agent_identity);
 
   // Collect tensor names being deregistered
   std::set<TensorName> tensor_names;
@@ -397,7 +397,7 @@ void Handler::HandleDeregisterShardsRequest(
 
   // Send error responses to cancelled participants
   for (const auto& participant : cancelled_participants) {
-    LOG_INFO(
+    LOG_DEBUG(
         "Cancelling pending copy submission for participant {} due to tensor "
         "deregistration",
         participant.identity);
@@ -430,7 +430,7 @@ void Handler::HandleDeregisterShardsRequest(
     DeregisterShardsResponse response(request.request_id, ErrorCode::kSuccess);
     outbox_queue_.push(OutboxMessage{node_agent_identity, response});
   } else {
-    LOG_INFO(
+    LOG_DEBUG(
         "Deferring deregistration for {} tensors from {} — blocked by "
         "in-flight copy operations",
         tensor_names.size(), node_agent_identity);
@@ -440,8 +440,8 @@ void Handler::HandleDeregisterShardsRequest(
 void Handler::HandleOnboardNodeAgentRequest(
     const Identity& node_agent_identity,
     const OnboardNodeAgentRequest& request) {
-  LOG_INFO("Coordinator received OnboardNodeAgentRequest from {} ({} devices)",
-           node_agent_identity, request.register_sets.size());
+  LOG_DEBUG("Coordinator received OnboardNodeAgentRequest from {} ({} devices)",
+            node_agent_identity, request.register_sets.size());
 
   // Route to Executor thread — Planner is only accessed from Executor.
   // Executor sends the response after processing.

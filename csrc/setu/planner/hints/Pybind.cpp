@@ -25,6 +25,25 @@
 namespace setu::planner::hints {
 //==============================================================================
 void InitHintsPybind(py::module_& m) {
+  py::class_<PipelineChunkSizeHint>(m, "PipelineChunkSizeHint")
+      .def(py::init<std::size_t>(), py::arg("chunk_size_bytes"),
+           "Create a hint to override the pipeline chunk size in bytes")
+      .def_readonly("chunk_size_bytes",
+                    &PipelineChunkSizeHint::chunk_size_bytes,
+                    "Chunk size in bytes")
+      .def("__repr__", &PipelineChunkSizeHint::ToString)
+      .def(py::pickle(
+          [](const PipelineChunkSizeHint& h) {  // __getstate__
+            return py::make_tuple(h.chunk_size_bytes);
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 1) {
+              throw std::runtime_error(
+                  "Invalid state for PipelineChunkSizeHint");
+            }
+            return PipelineChunkSizeHint(t[0].cast<std::size_t>());
+          }));
+
   py::enum_<ReplicationStrategy>(m, "ReplicationStrategy")
       .value("AllGather", ReplicationStrategy::kAllGather)
       .value("Naive", ReplicationStrategy::kNaive);

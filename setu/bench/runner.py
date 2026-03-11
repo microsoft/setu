@@ -446,6 +446,15 @@ def run_experiment(
             [(d.name, d.size, d.start, d.end) for d in s.dims],
         )
 
+    # Reset telemetry so only this experiment's reports are collected.
+    if metrics_http_url:
+        try:
+            from setu.telemetry.server import MetricsClient
+
+            MetricsClient(metrics_http_url).reset_reports()
+        except Exception:
+            logger.warning("run_experiment: failed to reset metrics", exc_info=True)
+
     t0 = time.monotonic()
 
     try:

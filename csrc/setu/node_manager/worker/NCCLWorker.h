@@ -90,8 +90,8 @@ class NCCLWorker : public Worker {
   std::unordered_map<CommId, CommCacheEntry, CommIdHash> comm_cache_;
 
   /// Pool of CUDA streams for overlapping independent operations.
-  /// Round-robin assigned per op, reset on Fence.
-  static constexpr std::size_t kNumStreams = 8;
+  /// Round-robin assigned per op, reset on Fence.  Pool grows
+  /// dynamically so that independent ops never share a stream.
   std::vector<cudaStream_t> streams_;
   cudaStream_t active_stream_ = nullptr;
 

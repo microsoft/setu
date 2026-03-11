@@ -667,8 +667,8 @@ void NodeAgent::Handler::AllocateTensor(
 
 void NodeAgent::Handler::HandleDeregisterShardsRequest(
     const Identity& client_identity, const DeregisterShardsRequest& request) {
-  LOG_INFO("NodeAgent received DeregisterShardsRequest from client {}",
-           client_identity);
+  LOG_DEBUG("NodeAgent received DeregisterShardsRequest from client {}",
+            client_identity);
 
   // Track client identity so we can route the async response back
   request_router_.TrackRequest(request.request_id, client_identity);
@@ -845,7 +845,7 @@ void NodeAgent::Executor::Loop() {
       auto to_us = [](auto d) {
         return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
       };
-      LOG_INFO(
+      LOG_DEBUG(
           "NodeAgent Executor: copy_op_id={}, embellish+send={}us, "
           "worker_execution={}us, total={}us, workers={}",
           copy_op_id, to_us(t_sent - t_dequeued),

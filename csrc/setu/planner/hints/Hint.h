@@ -99,6 +99,37 @@ struct BandwidthHint {
   }
 };
 
+struct PipelineChunkSizeHint {
+  std::size_t chunk_size_bytes;
+
+  PipelineChunkSizeHint() = default;
+
+  explicit PipelineChunkSizeHint(std::size_t chunk_size_bytes_param)
+      : chunk_size_bytes(chunk_size_bytes_param) {
+    ASSERT_VALID_ARGUMENTS(chunk_size_bytes > 0,
+                           "PipelineChunkSizeHint: chunk_size_bytes must be "
+                           "positive, got {}",
+                           chunk_size_bytes);
+  }
+
+  [[nodiscard]] std::string ToString() const {
+    return std::format("PipelineChunkSizeHint(chunk_size_bytes={})",
+                       chunk_size_bytes);
+  }
+
+  void Serialize(setu::commons::BinaryBuffer& buffer) const {
+    setu::commons::utils::BinaryWriter writer(buffer);
+    writer.WriteFields(chunk_size_bytes);
+  }
+
+  static PipelineChunkSizeHint Deserialize(
+      const setu::commons::BinaryRange& range) {
+    setu::commons::utils::BinaryReader reader(range);
+    auto [sz] = reader.ReadFields<std::size_t>();
+    return PipelineChunkSizeHint(sz);
+  }
+};
+
 enum class ReplicationStrategy { kAllGather, kNaive };
 
 struct ReplicationHint {
@@ -132,7 +163,8 @@ struct ReplicationHint {
   }
 };
 
-using CompilerHint = std::variant<RoutingHint, BandwidthHint, ReplicationHint>;
+using CompilerHint = std::variant<RoutingHint, BandwidthHint, ReplicationHint,
+                                  PipelineChunkSizeHint>;
 
 /// @brief Compute an FNV-1a fingerprint of a hints vector for SPMD
 /// consistency verification. Cheap (~nanoseconds for typical hint lists).

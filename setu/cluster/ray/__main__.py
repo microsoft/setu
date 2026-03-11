@@ -9,6 +9,7 @@ Usage::
 """
 
 import argparse
+import os
 import signal
 import threading
 from pathlib import Path
@@ -46,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-level",
         type=str,
-        default="DEBUG",
-        help='Value for SETU_LOG_LEVEL env var on actors (default: "DEBUG").',
+        default="INFO",
+        help='Value for SETU_LOG_LEVEL env var on actors (default: "INFO").',
     )
     parser.add_argument(
         "--env",
@@ -122,7 +123,8 @@ def _build_env_vars(args: argparse.Namespace) -> Optional[Dict[str, str]]:
     """Build env_vars dict from CLI arguments."""
     env_vars: Dict[str, str] = {}
 
-    env_vars["SETU_LOG_LEVEL"] = args.log_level
+    log_level = os.environ.get("SETU_LOG_LEVEL", args.log_level)
+    env_vars["SETU_LOG_LEVEL"] = log_level
 
     if args.nccl_socket_ifname is not None:
         env_vars["NCCL_SOCKET_IFNAME"] = args.nccl_socket_ifname

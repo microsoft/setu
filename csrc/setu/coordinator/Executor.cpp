@@ -121,13 +121,13 @@ void Executor::HandlePlannerTask(PlannerTask task) {
   auto to_us = [](auto d) {
     return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
   };
-  LOG_INFO("Executor: copy_op_id={}, total={}us", task.copy_op_id,
-           to_us(t_end - t_after_dequeue));
+  LOG_DEBUG("Executor: copy_op_id={}, total={}us", task.copy_op_id,
+            to_us(t_end - t_after_dequeue));
 }
 
 void Executor::HandleOnboardingTask(OnboardingTask task) {
-  LOG_INFO("Executor processing OnboardingTask ({} devices)",
-           task.register_sets.size());
+  LOG_DEBUG("Executor processing OnboardingTask ({} devices)",
+            task.register_sets.size());
   planner_.AddBackendRegisterSets(task.register_sets);
 
   OnboardNodeAgentResponse response(task.request_id, ErrorCode::kSuccess);

@@ -1,4 +1,4 @@
-//==============================================================================
+//=============================================================================
 // Copyright (c) 2025 Vajra Team; Georgia Institute of Technology; Microsoft
 // Corporation.
 //
@@ -51,6 +51,7 @@ NCCLWorker::~NCCLWorker() {
 
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
+  static constexpr std::size_t kNumStreams = 1024;
   streams_.resize(kNumStreams);
   for (auto& s : streams_) {
     CUDA_CHECK(cudaStreamCreate(&s));
@@ -73,22 +74,41 @@ void NCCLWorker::Execute(const Program& program) {
   std::vector<GroupTimingState> event_states;
   std::vector<setu::telemetry::NCCLGroupTiming> timings;
 
+  bool in_nccl_group = false;
+
+  auto open_nccl_group = [&]() {
+    if (!in_nccl_group) {
+      NCCL_CHECK(ncclGroupStart());
+      in_nccl_group = true;
+    }
+  };
+
+  auto close_nccl_group = [&]() {
+    if (in_nccl_group) {
+      NCCL_CHECK(ncclGroupEnd());
+      in_nccl_group = false;
+    }
+  };
+
   for (const auto& instruction : program) {
     std::visit(
         [&](const auto& inst) {
           using T = std::decay_t<decltype(inst)>;
 
           if constexpr (std::is_same_v<T, InitComm>) {
+            close_nccl_group();
             ExecuteInitComm(inst);
           } else if constexpr (std::is_same_v<T, Copy> ||
                                std::is_same_v<T, Send> ||
                                std::is_same_v<T, Receive> ||
                                std::is_same_v<T, AllGather>) {
-            active_stream_ = streams_[group_index % kNumStreams];
+            active_stream_ = streams_[group_index % streams_.size()];
 
             cudaEvent_t start_event;
             CUDA_CHECK(cudaEventCreate(&start_event));
             CUDA_CHECK(cudaEventRecord(start_event, active_stream_));
+
+            open_nccl_group();
 
             if constexpr (std::is_same_v<T, Copy>) {
               ExecuteCopy(inst);
@@ -107,19 +127,16 @@ void NCCLWorker::Execute(const Program& program) {
             timings.push_back({group_index, 0.0, 1});
             group_index++;
           } else if constexpr (std::is_same_v<T, Fence>) {
-            // Cross-stream synchronization: only sync streams that
-            // actually had pre-fence work, then make all streams wait
-            // on those events so post-fence ops on any stream observe
-            // completed pre-fence results.
-            const std::size_t num_used =
-                std::min(static_cast<std::size_t>(group_index), kNumStreams);
+            close_nccl_group();
+            const std::size_t num_used = std::min(
+                static_cast<std::size_t>(group_index), streams_.size());
             if (num_used > 0) {
               std::vector<cudaEvent_t> fence_events(num_used);
               for (std::size_t i = 0; i < num_used; ++i) {
                 CUDA_CHECK(cudaEventCreate(&fence_events[i]));
                 CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
               }
-              for (std::size_t i = 0; i < kNumStreams; ++i) {
+              for (std::size_t i = 0; i < num_used; ++i) {
                 for (std::size_t j = 0; j < num_used; ++j) {
                   if (i != j) {
                     CUDA_CHECK(
@@ -137,9 +154,12 @@ void NCCLWorker::Execute(const Program& program) {
         instruction.instr);
   }
 
+  // Close any trailing group
+  close_nccl_group();
+
   // Sync only streams that had work queued.
   const std::size_t num_streams_used =
-      std::min(static_cast<std::size_t>(group_index) + 1, kNumStreams);
+      std::min(static_cast<std::size_t>(group_index) + 1, streams_.size());
   for (std::size_t i = 0; i < num_streams_used; ++i) {
     CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
   }

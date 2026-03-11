@@ -6,7 +6,7 @@ from setu.cluster.ray import Cluster
 from setu.bench.__main__ import _connect_prespawned, _build_sharded_tensor
 from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
-from setu._coordinator import BandwidthHint, Participant, Link, Path as RoutePath
+from setu._coordinator import BandwidthHint, Participant, Link, Path as RoutePath, PipelineChunkSizeHint
 
 try:
     from setu.utils.parsing import parse_num_bytes as _parse_size
@@ -18,9 +18,11 @@ parser.add_argument("--cluster-info", type=str, required=True)
 parser.add_argument(
     "--size",
     type=str,
-    default="256M",
-    help="Total tensor size in bytes, e.g. '256M', '1G', '512K'. "
-    "Suffix: K=KiB, M=MiB, G=GiB (default: 256 MiB).",
+    nargs="+",
+    default=["256M"],
+    help="Total tensor size(s) in bytes, e.g. '256M', '1G', '512K'. "
+    "Suffix: K=KiB, M=MiB, G=GiB. Multiple values sweep over each size "
+    "(default: 256M).",
 )
 parser.add_argument(
     "--group",
@@ -41,23 +43,34 @@ parser.add_argument(
     default="./bw_agg",
     help="Base output directory for results (default: ./bw_agg).",
 )
+parser.add_argument(
+    "--num-copy-rounds",
+    type=int,
+    default=20,
+)
+parser.add_argument(
+    "--pipeline-chunk-size",
+    type=str,
+    default=None,
+    help="Pipeline chunk size in bytes (e.g. '64M', '128M'). "
+    "Passed as a PipelineChunkSizeHint. If omitted, the pass default is used.",
+)
 args = parser.parse_args()
 
 cluster_info = _connect_prespawned(args.cluster_info)
 print(cluster_info)
 
-tensor_bytes = _parse_size(args.size)
-
 # Select GPU group: 0 = devices 0-3, 1 = devices 4-7
 base = args.group * 4
-src_spec = [f"0:{base}"]
-dst_spec = [f"0:{base + 3}"]
-
-src = _build_sharded_tensor("src_t", cluster_info, tensor_bytes, src_spec)
-dst = _build_sharded_tensor("dst_t", cluster_info, tensor_bytes, dst_spec)
 
 node_id = uuid.UUID(cluster_info.nodes[0].node_id)
 devices = cluster_info.nodes[0].devices
+
+pipeline_chunk_size_hints = (
+    [PipelineChunkSizeHint(_parse_size(args.pipeline_chunk_size))]
+    if args.pipeline_chunk_size is not None
+    else []
+)
 
 hints = [
     BandwidthHint(
@@ -85,41 +98,51 @@ hints = [
     )
 ]
 
-for run_idx in range(args.runs):
-    run_dir = os.path.join(args.output_dir, str(run_idx))
-    os.makedirs(run_dir, exist_ok=True)
+for size_str in args.size:
+    tensor_bytes = _parse_size(size_str)
+    size_dir = os.path.join(args.output_dir, size_str)
 
-    print(f"\n{'='*10} Run {run_idx} | Group {args.group} (devices {base}-{base+3}) {'='*10}")
+    src_spec = [f"0:{base}"]
+    dst_spec = [f"0:{base + 3}"]
+    src = _build_sharded_tensor("src_t", cluster_info, tensor_bytes, src_spec)
+    dst = _build_sharded_tensor("dst_t", cluster_info, tensor_bytes, dst_spec)
 
-    # without hints (baseline)
-    result = run_experiment(
-        cluster_info=cluster_info,
-        src=src,
-        dst=dst,
-        copy_mode=CopyMode("pull"),
-        init_value=10,
-        n_copy_rounds=10,
-        n_warmup_rounds=1,
-        blocking=False,
-        metrics_http_url=cluster_info.metrics_http_url,
-    )
-    print("="*10, "Without Hints", "="*10)
-    print(result.pretty_print())
-    result.dump_csv(os.path.join(run_dir, "wo_hints"))
+    for run_idx in range(args.runs):
+        run_dir = os.path.join(size_dir, str(run_idx))
+        os.makedirs(run_dir, exist_ok=True)
 
-    # with hints (baseline + relay)
-    result = run_experiment(
-        cluster_info=cluster_info,
-        src=src,
-        dst=dst,
-        copy_mode=CopyMode("pull"),
-        init_value=10,
-        n_copy_rounds=10,
-        n_warmup_rounds=1,
-        blocking=False,
-        metrics_http_url=cluster_info.metrics_http_url,
-        hints=hints,
-    )
-    print("="*10, "With Hints", "="*10)
-    print(result.pretty_print())
-    result.dump_csv(os.path.join(run_dir, "w_hints"))
+        print(f"\n{'='*10} Size {size_str} | Run {run_idx} | Group {args.group} (devices {base}-{base+3}) {'='*10}")
+
+        # without hints (baseline)
+        result = run_experiment(
+            cluster_info=cluster_info,
+            src=src,
+            dst=dst,
+            copy_mode=CopyMode("pull"),
+            init_value=10,
+            n_copy_rounds=args.num_copy_rounds,
+            n_warmup_rounds=1,
+            blocking=False,
+            metrics_http_url=cluster_info.metrics_http_url,
+            hints=pipeline_chunk_size_hints,
+        )
+        print("="*10, "Without Hints", "="*10)
+        print(result.pretty_print())
+        result.dump_csv(os.path.join(run_dir, "wo_hints"))
+
+        # with hints (baseline + relay)
+        result = run_experiment(
+            cluster_info=cluster_info,
+            src=src,
+            dst=dst,
+            copy_mode=CopyMode("pull"),
+            init_value=10,
+            n_copy_rounds=args.num_copy_rounds,
+            n_warmup_rounds=1,
+            blocking=False,
+            metrics_http_url=cluster_info.metrics_http_url,
+            hints=hints + pipeline_chunk_size_hints,
+        )
+        print("="*10, "With Hints", "="*10)
+        print(result.pretty_print())
+        result.dump_csv(os.path.join(run_dir, "w_hints"))

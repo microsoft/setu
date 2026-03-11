@@ -161,33 +161,39 @@ static void EmitTwoPointerCopies(
 static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
                                           const TensorMetadataPtr& src_meta,
                                           const TensorMetadataPtr& dst_meta) {
-  auto num_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
+  auto num_src_replicas = static_cast<std::size_t>(src_meta->num_replicas);
+  auto num_dst_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
+
   auto total_elements = src_meta->size;
-  auto chunk_size = total_elements / num_replicas;
+  auto chunk_size = total_elements / num_dst_replicas;
 
   ASSERT_VALID_RUNTIME(
-      total_elements % num_replicas == 0,
+      total_elements % num_dst_replicas == 0,
       "AllGather strategy requires src elements ({}) to be divisible "
-      "by num_replicas ({}). Consider using Naive strategy.",
-      total_elements, num_replicas);
-
-  auto src_own = src_meta->GetOwnershipMap(copy_spec.src_selection);
-  auto src_view = TensorShardRangeView(src_own);
+      "by num_dst_replicas ({}). Consider using Naive strategy.",
+      total_elements, num_dst_replicas);
 
   cir::Program program;
 
   // Collect per-replica info for the AllGather.
   struct ReplicaInfo {
+    TensorOwnershipMapPtr src_own;
+    TensorShardRangeView src_view;
     TensorOwnershipMapPtr dst_own;
     TensorShardRangeView dst_view;
   };
   std::vector<ReplicaInfo> replicas;
-  replicas.reserve(num_replicas);
+  replicas.reserve(num_dst_replicas);
 
-  for (std::size_t r = 0; r < num_replicas; ++r) {
-    auto replica_id = static_cast<setu::commons::ReplicaId>(r);
+  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
+    // round-robin across sources
+    auto src_replica_id =
+        static_cast<setu::commons::ReplicaId>(r % num_src_replicas);
+    auto dst_replica_id = static_cast<setu::commons::ReplicaId>(r);
+    auto src_own = src_meta->GetOwnershipMapForReplica(copy_spec.src_selection,
+                                                       src_replica_id);
     auto dst_own = dst_meta->GetOwnershipMapForReplica(copy_spec.dst_selection,
-                                                       replica_id);
+                                                       dst_replica_id);
 
     // TODO: Support multi-shard replicas by decomposing into per-shard-position
     // AllGathers. For now, require single shard per replica.
@@ -197,17 +203,19 @@ static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
         "but replica {} has {} shards. Consider using Naive strategy.",
         r, dst_own->GetNumShards());
 
-    replicas.push_back(ReplicaInfo{.dst_own = dst_own,
+    replicas.push_back(ReplicaInfo{.src_own = src_own,
+                                   .src_view = TensorShardRangeView(src_own),
+                                   .dst_own = dst_own,
                                    .dst_view = TensorShardRangeView(dst_own)});
   }
 
   // Step 1: Copy 1/N of source to each replica's chunk region.
   // Replica r gets src elements [r*chunk_size, (r+1)*chunk_size) written
   // to dst_replica_r at offset [r*chunk_size, (r+1)*chunk_size).
-  for (std::size_t r = 0; r < num_replicas; ++r) {
+  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
     auto global_offset = r * chunk_size;
-    EmitTwoPointerCopies(program, src_view, replicas[r].dst_view, global_offset,
-                         chunk_size);
+    EmitTwoPointerCopies(program, replicas[r].src_view, replicas[r].dst_view,
+                         global_offset, chunk_size);
   }
 
   // Step 2: Emit AllGather across all replicas.
@@ -216,10 +224,10 @@ static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
   //   dst_in = view of dst_replica_r at [0, total_elements]       (full buffer)
   std::vector<Value> allgather_srcs;
   std::vector<Value> allgather_dst_ins;
-  allgather_srcs.reserve(num_replicas);
-  allgather_dst_ins.reserve(num_replicas);
+  allgather_srcs.reserve(num_dst_replicas);
+  allgather_dst_ins.reserve(num_dst_replicas);
 
-  for (std::size_t r = 0; r < num_replicas; ++r) {
+  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
     const auto& shard_meta = replicas[r].dst_own->shard_mapping[0].second;
     auto device = Device(shard_meta->owner, shard_meta->spec.device);
     auto shard_ref =
@@ -239,8 +247,10 @@ static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
   (void)program.EmitAllGather(std::move(allgather_srcs),
                               std::move(allgather_dst_ins));
 
-  LOG_DEBUG("AllGather strategy: {} replicas, chunk_size={}, total={}",
-            num_replicas, chunk_size, total_elements);
+  LOG_DEBUG(
+      "AllGather strategy: {} src replicas, {} dst replicas, chunk_size={}, "
+      "total={}",
+      num_src_replicas, num_dst_replicas, chunk_size, total_elements);
 
   return program;
 }
@@ -253,24 +263,29 @@ static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
 static cir::Program EmitNaiveStrategy(const CopySpec& copy_spec,
                                       const TensorMetadataPtr& src_meta,
                                       const TensorMetadataPtr& dst_meta) {
-  auto num_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
-
-  auto src_own = src_meta->GetOwnershipMap(copy_spec.src_selection);
-  auto src_view = TensorShardRangeView(src_own);
+  auto num_src_replicas = static_cast<std::size_t>(src_meta->num_replicas);
+  auto num_dst_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
 
   cir::Program program;
 
-  for (std::size_t r = 0; r < num_replicas; ++r) {
-    auto replica_id = static_cast<setu::commons::ReplicaId>(r);
+  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
+    // round-robin across sources
+    auto src_replica_id =
+        static_cast<setu::commons::ReplicaId>(r % num_src_replicas);
+    auto dst_replica_id = static_cast<setu::commons::ReplicaId>(r);
+    auto src_own = src_meta->GetOwnershipMapForReplica(copy_spec.src_selection,
+                                                       src_replica_id);
     auto dst_own = dst_meta->GetOwnershipMapForReplica(copy_spec.dst_selection,
-                                                       replica_id);
+                                                       dst_replica_id);
     auto dst_view = TensorShardRangeView(dst_own);
+    auto src_view = TensorShardRangeView(src_own);
 
     EmitTwoPointerCopies(program, src_view, dst_view);
   }
 
-  LOG_DEBUG("Naive strategy: {} replicas, {} elements each", num_replicas,
-            src_meta->size);
+  LOG_DEBUG(
+      "Naive strategy: {} src replicas, {} dst replicas, {} elements each",
+      num_src_replicas, num_dst_replicas, src_meta->size);
 
   return program;
 }

@@ -29,23 +29,26 @@ namespace setu::planner::passes {
 /// A relay chain is a sequence of CopyOps where each copy's dst_out feeds
 /// into the next copy's src (possibly through Slice/Consume).  The pass:
 ///   1. Detects all maximal linear relay chains (asserts no branching).
-///   2. For chains with payload > chunk_size_elements, splits into
-///      ceil(payload / chunk_size) chunks.
+///   2. For chains with payload > chunk_size_bytes / element_size, splits into
+///      ceil(payload / chunk_size_elements) chunks.
 ///   3. Emits chunks in wavefront order: micro_stage = chunk_idx + hop_idx.
 ///      This lets chunk N's later hops overlap with chunk N+1's earlier hops.
 ///
 /// Single-hop copies and small payloads are passed through unchanged.
+///
+/// The chunk size can be overridden per-operation via PipelineChunkSizeHint
+/// in the PassContext.
 class Pipelining : public Pass {
  public:
-  explicit Pipelining(std::size_t chunk_size_elements)
-      : chunk_size_elements_(chunk_size_elements) {}
+  explicit Pipelining(std::size_t chunk_size_bytes)
+      : chunk_size_bytes_(chunk_size_bytes) {}
 
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override { return "Pipelining"; }
 
  private:
-  std::size_t chunk_size_elements_;
+  std::size_t chunk_size_bytes_;
 };
 
 //==============================================================================

@@ -17,6 +17,8 @@
 #include "planner/passes/Pipelining.h"
 //==============================================================================
 #include "commons/Logging.h"
+#include "commons/TorchCommon.h"
+#include "planner/hints/Hint.h"
 #include "planner/ir/cir/Analysis.h"
 //==============================================================================
 namespace setu::planner::passes {
@@ -165,13 +167,26 @@ std::optional<std::uint32_t> FindChainConsumeOp(
 
 //==============================================================================
 
-cir::Program Pipelining::Run(cir::Program program, const PassContext& /*ctx*/) {
+cir::Program Pipelining::Run(cir::Program program, const PassContext& ctx) {
+  // Allow per-operation hint to override the constructor chunk size.
+  auto chunk_size_bytes = chunk_size_bytes_;
+  auto hint_refs = ctx.hints.GetHints<hints::PipelineChunkSizeHint>();
+  if (!hint_refs.empty()) {
+    chunk_size_bytes = hint_refs.front().get().chunk_size_bytes;
+    LOG_DEBUG("Pipelining: using chunk_size_bytes={} from hint",
+              chunk_size_bytes);
+  }
+
   auto chains = DetectChains(program);
 
-  // Filter to chains that need pipelining
-  std::erase_if(chains, [this](const CopyChain& chain) {
-    return chain.hops.size() < 2 ||
-           chain.payload_elements <= chunk_size_elements_;
+  // Filter to chains that need pipelining (convert bytes to elements per
+  // chain using the chain's element dtype).
+  std::erase_if(chains, [&](const CopyChain& chain) {
+    if (chain.hops.size() < 2) return true;
+    auto dtype = program.GetValueInfo(chain.hops[0].src).dtype;
+    auto element_size = static_cast<std::size_t>(torch::elementSize(dtype));
+    auto chunk_size_elements = chunk_size_bytes / element_size;
+    return chain.payload_elements <= chunk_size_elements;
   });
 
   if (chains.empty()) {
@@ -220,7 +235,9 @@ cir::Program Pipelining::Run(cir::Program program, const PassContext& /*ctx*/) {
     const auto& chain = chains[head_it->second];
     auto num_hops = chain.hops.size();
     auto payload = chain.payload_elements;
-    auto chunk_size = chunk_size_elements_;
+    auto dtype = program.GetValueInfo(chain.hops[0].src).dtype;
+    auto element_size = static_cast<std::size_t>(torch::elementSize(dtype));
+    auto chunk_size = chunk_size_bytes / element_size;
     auto num_chunks = (payload + chunk_size - 1) / chunk_size;
     auto num_micro_stages = num_chunks + num_hops - 1;
 

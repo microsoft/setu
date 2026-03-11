@@ -69,7 +69,7 @@ void InitPassesPybind(py::module_& m) {
            "into register-sized chunks");
 
   py::class_<Pipelining, Pass, std::shared_ptr<Pipelining>>(m, "Pipelining")
-      .def(py::init<std::size_t>(), py::arg("chunk_size_elements"),
+      .def(py::init<std::size_t>(), py::arg("chunk_size_bytes"),
            "Create a Pipelining pass that splits multi-hop relay chains "
            "into chunks and emits them in wavefront order");
 

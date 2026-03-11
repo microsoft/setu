@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import zmq
 
@@ -138,6 +138,15 @@ def _make_http_handler(server_ref: "MetricsServer") -> type:
             else:
                 self._json_response(404, {"error": "not found"})
 
+        def do_POST(self):
+            path = urlparse(self.path).path.rstrip("/")
+
+            if path == "/reset":
+                server_ref.reset_reports()
+                self._json_response(200, {"status": "ok"})
+            else:
+                self._json_response(404, {"error": "not found"})
+
         def _json_response(self, status: int, body: Any) -> None:
             data = json.dumps(body, default=_json_default).encode("utf-8")
             self.send_response(status)
@@ -249,6 +258,11 @@ class MetricsServer:
         with self._lock:
             return dict(self._reports)
 
+    def reset_reports(self) -> None:
+        """Clear all collected reports."""
+        with self._lock:
+            self._reports.clear()
+
     def _listen_loop(self) -> None:
         """Background thread: receive and process metrics messages."""
         while self._running:
@@ -347,6 +361,12 @@ class MetricsClient:
         url = f"{self._base_url}/reports"
         with urlopen(url, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
+
+    def reset_reports(self) -> None:
+        """Clear all reports on the server."""
+        req = Request(f"{self._base_url}/reset", method="POST")
+        with urlopen(req, timeout=10):
+            pass
 
     def get_report(self, copy_op_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single report by copy_op_id. Returns None if not found."""
