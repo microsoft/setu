@@ -1,5 +1,7 @@
+import glob
 import io
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -212,10 +214,34 @@ class cmake_build_ext(build_ext):
             ["cmake", ext.cmake_lists_dir, *build_tool, *cmake_args], cwd=build_dir
         )
 
+    def _copy_prebuilt_extensions(self) -> None:
+        """Copy pre-built .so files from the source tree to the setuptools output directory."""
+        setu_src_dir = os.path.join(ROOT_DIR, "setu")
+        for ext in self.extensions:
+            ext_target_name = remove_prefix(ext.name, "setu.")
+            # Find the pre-built .so file in the source tree
+            pattern = os.path.join(setu_src_dir, f"{ext_target_name}*.so")
+            matches = glob.glob(pattern)
+            if not matches:
+                raise FileNotFoundError(
+                    f"Pre-built extension not found: {pattern}\n"
+                    f"Run 'make build' first to compile the C++ extensions."
+                )
+            src_so = matches[0]
+            # Copy to where setuptools expects it
+            dest_dir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_so = os.path.join(dest_dir, os.path.basename(src_so))
+            if os.path.abspath(src_so) != os.path.abspath(dest_so):
+                print(f"Copying pre-built {os.path.basename(src_so)} -> {dest_dir}")
+                shutil.copy2(src_so, dest_so)
+
     def build_extensions(self) -> None:
-        # Check if we should skip the C++ build entirely
+        # If C++ build is skipped, copy pre-built .so files to the output directory
         if os.getenv("SETU_SKIP_CPP_BUILD", "0") == "1":
             print("Skipping C++ build (SETU_SKIP_CPP_BUILD=1)")
+            self._copy_prebuilt_extensions()
+            self._fix_rpath()
             return
 
         # Standard setuptools build process
@@ -252,13 +278,26 @@ class cmake_build_ext(build_ext):
 
             subprocess.check_call(["cmake", *build_args], cwd=build_directory)
 
-    def copy_extensions_to_source(self):
-        """Override to skip copying when we skipped the C++ build."""
-        if os.getenv("SETU_SKIP_CPP_BUILD", "0") == "1":
-            print("Skipping copy_extensions_to_source since C++ build was skipped")
+        # Strip hardcoded absolute RPATHs from built .so files so that wheels
+        # are portable across environments. Skip for editable (inplace) installs
+        # so the build environment's library paths are preserved for local dev.
+        if not self.inplace:
+            self._fix_rpath()
+
+    def _fix_rpath(self) -> None:
+        """Rewrite RPATH on all built extension .so files to use $ORIGIN only."""
+        if not which("patchelf"):
+            print(
+                "WARNING: patchelf not found, skipping RPATH fix. "
+                "Install patchelf to produce portable wheels."
+            )
             return
-        # Standard setuptools behavior
-        super().copy_extensions_to_source()
+
+        for ext in self.extensions:
+            ext_path = self.get_ext_fullpath(ext.name)
+            if os.path.isfile(ext_path):
+                print(f"Fixing RPATH on {os.path.basename(ext_path)}")
+                subprocess.check_call(["patchelf", "--set-rpath", "$ORIGIN", ext_path])
 
 
 def _is_cuda() -> bool:
@@ -313,8 +352,11 @@ def get_package_name() -> str:
 
 ext_modules = []
 
+ext_modules.append(CMakeExtension(name="setu._kernels"))
 ext_modules.append(CMakeExtension(name="setu._commons"))
 ext_modules.append(CMakeExtension(name="setu._client"))
+ext_modules.append(CMakeExtension(name="setu._node_manager"))
+ext_modules.append(CMakeExtension(name="setu._coordinator"))
 
 
 setup(
@@ -330,7 +372,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
-    packages=find_packages(exclude=("csrc")),
+    packages=find_packages(exclude=("csrc", "test", "test.*")),
     python_requires=">=3.12",
     install_requires=get_requirements(),
     entry_points={

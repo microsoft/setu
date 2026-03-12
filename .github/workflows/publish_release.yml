@@ -9,14 +9,14 @@ permissions:
   id-token: write
 env:
   PYPI_RELEASE_CUDA_VERSION: "129"
-  PYPI_RELEASE_TORCH_VERSION: "280"
+  PYPI_RELEASE_TORCH_VERSION: "210"
   IS_NIGHTLY_BUILD: "false"
 jobs:
   build:
     uses: ./.github/workflows/build_wheels.yml
     with:
       cuda_version: "129"
-      torch_version: "280"
+      torch_version: "210"
       is_nightly: "false"
   publish:
     needs: build

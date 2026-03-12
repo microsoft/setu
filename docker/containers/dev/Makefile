@@ -1,6 +1,6 @@
 # Default values - can be overridden when calling make
 CUDA_VERSION ?= 12.9.0
-PYTORCH_VERSION ?= 2.8
+PYTORCH_VERSION ?= 2.10
 ORGANIZATION ?= $(shell git config --get remote.origin.url | sed -E 's/.*[:/]([^/]+)\/[^/]+\.git/\1/')
 # Image name now includes versions for clarity
 IMAGE_NAME ?= setu-dev-cuda$(CUDA_VERSION)-torch$(PYTORCH_VERSION)

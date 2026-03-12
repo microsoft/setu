@@ -12,7 +12,7 @@ jobs:
     uses: ./.github/workflows/build_wheels.yml
     with:
       cuda_version: "129"
-      torch_version: "280"
+      torch_version: "210"
       is_nightly: "true"
   publish-nightly:
     needs: build

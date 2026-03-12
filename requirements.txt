@@ -1,7 +1,7 @@
 ninja  # For faster builds.
 psutil
 numpy
-torch == 2.8
+torch == 2.10
 pillow
 zmq
 rich

@@ -27,7 +27,7 @@ set(CMAKE_LINKER_TYPE MOLD)
 # Define supported versions
 set(PYTHON_SUPPORTED_VERSIONS "3.12")
 set(CUDA_SUPPORTED_ARCHS "7.0;7.5;8.0;8.6;8.9;9.0")
-set(TORCH_SUPPORTED_VERSION_CUDA "2.8")
+set(TORCH_SUPPORTED_VERSION_CUDA "2.10")
 # ##################################################################################################
 # Include utility functions and setup modules
 include(cmake/Utils.cmake)

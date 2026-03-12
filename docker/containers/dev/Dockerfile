@@ -2,7 +2,7 @@ ARG CUDA_VERSION=12.9.0
 
 FROM nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu24.04
 
-ARG PYTORCH_VERSION=2.8
+ARG PYTORCH_VERSION=2.10
 
 # Set environment variables
 ENV SETU_CI_CUDA_VERSION=${CUDA_VERSION%.*}

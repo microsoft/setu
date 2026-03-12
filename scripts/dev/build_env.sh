@@ -22,7 +22,7 @@ get_cuda_version() {
 }
 
 get_torch_version() {
-    echo "${SETU_CI_TORCH_VERSION:-2.8}"
+    echo "${SETU_CI_TORCH_VERSION:-2.10}"
 }
 
 get_build_type() {
