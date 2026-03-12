@@ -25,6 +25,8 @@
 #include "planner/ir/llc/instructions/InitComm.h"
 #include "planner/ir/llc/instructions/Receive.h"
 #include "planner/ir/llc/instructions/Send.h"
+#include "planner/ir/llc/instructions/SyncPoint.h"
+#include "planner/ir/llc/instructions/Wait.h"
 #include "planner/ir/ref/ShardRef.h"
 //==============================================================================
 /// Low-Level Copy (LLC) IR — the target IR for backend code generation.
@@ -36,11 +38,14 @@
 /// device pointers and issue the corresponding runtime calls.
 ///
 /// Instruction set:
-///   InitComm  — initialize a new communicator among a set of devices
-///   Copy      — local (same-device) memcpy between shard regions
-///   Send      — point-to-point send to a peer rank
-///   Receive   — point-to-point receive from a peer rank
-///   Fence     — synchronize all in-flight operations before continuing
+///   InitComm   — initialize a new communicator among a set of devices
+///   Copy       — local (same-device) memcpy between shard regions
+///   Send       — point-to-point send to a peer rank
+///   Receive    — point-to-point receive from a peer rank
+///   Fence      — synchronize all in-flight operations before continuing
+///   (legacy) AllGather  — collective all-gather across a communicator
+///   SyncPoint  — record a CUDA event after a write, for dependency tracking
+///   Wait       — declare a dependency on a prior SyncPoint; applied to next op
 namespace setu::planner::ir::llc {
 //==============================================================================
 using setu::commons::DevicePtr;
@@ -58,10 +63,12 @@ enum class InstructionType : std::uint8_t {
   kReceive = 5,
   kFence = 6,
   kAllGather = 7,
+  kSyncPoint = 8,
+  kWait = 9,
 };
 
-using InstructionVariant =
-    std::variant<InitComm, Copy, Send, Receive, Fence, AllGather>;
+using InstructionVariant = std::variant<InitComm, Copy, Send, Receive, Fence,
+                                        AllGather, SyncPoint, Wait>;
 
 /// A single LLC instruction.  Wraps one of the five concrete instruction
 /// types in a variant.  Supports serialization for wire transfer and

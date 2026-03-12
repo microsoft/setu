@@ -27,6 +27,8 @@
 //==============================================================================
 #include "planner/Participant.h"
 #include "planner/ir/llc/Instruction.h"
+#include "planner/ir/llc/instructions/SyncPoint.h"
+#include "planner/ir/llc/instructions/Wait.h"
 #include "planner/ir/ref/ShardRef.h"
 //==============================================================================
 namespace setu::planner::ir::llc {
@@ -150,6 +152,26 @@ void InitFenceInstructionPybind(py::module_& m) {
       .def("__repr__", &Fence::ToString);
 }
 //==============================================================================
+void InitSyncPointInstructionPybind(py::module_& m) {
+  py::class_<SyncPoint>(m, "SyncPoint")
+      .def(py::init<std::uint32_t>(), py::arg("id"),
+           "Create a sync point instruction that records a CUDA event after "
+           "the preceding write op")
+      .def_readonly("id", &SyncPoint::id, "Unique sync point identifier")
+      .def("__str__", &SyncPoint::ToString)
+      .def("__repr__", &SyncPoint::ToString);
+}
+//==============================================================================
+void InitWaitInstructionPybind(py::module_& m) {
+  py::class_<Wait>(m, "Wait")
+      .def(py::init<std::uint32_t>(), py::arg("id"),
+           "Create a wait instruction that declares a dependency on "
+           "SyncPoint(id)")
+      .def_readonly("id", &Wait::id, "Sync point id this wait depends on")
+      .def("__str__", &Wait::ToString)
+      .def("__repr__", &Wait::ToString);
+}
+//==============================================================================
 void InitInstructionPybind(py::module_& m) {
   py::class_<Instruction>(m, "Instruction")
       .def(py::init<Copy>(), py::arg("copy"), "Create instruction from Copy")
@@ -159,6 +181,9 @@ void InitInstructionPybind(py::module_& m) {
       .def(py::init<InitComm>(), py::arg("init_comm"),
            "Create instruction from InitComm")
       .def(py::init<Fence>(), py::arg("fence"), "Create instruction from Fence")
+      .def(py::init<SyncPoint>(), py::arg("sync_point"),
+           "Create instruction from SyncPoint")
+      .def(py::init<Wait>(), py::arg("wait"), "Create instruction from Wait")
       .def(
           "embellish",
           [](Instruction& self, py::function py_resolver) {
@@ -212,6 +237,8 @@ void InitLLCPybind(py::module_& m) {
   InitReceiveInstructionPybind(m);
   InitInitCommInstructionPybind(m);
   InitFenceInstructionPybind(m);
+  InitSyncPointInstructionPybind(m);
+  InitWaitInstructionPybind(m);
   InitInstructionPybind(m);
 }
 //==============================================================================

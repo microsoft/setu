@@ -29,6 +29,8 @@
 #include "planner/Constants.h"
 #include "planner/ir/llc/CommId.h"
 #include "planner/ir/llc/Instruction.h"
+#include "planner/ir/llc/instructions/SyncPoint.h"
+#include "planner/ir/llc/instructions/Wait.h"
 #include "telemetry/NCCLWorkerMetrics.h"
 //==============================================================================
 namespace setu::node_manager::worker {
@@ -51,6 +53,8 @@ using setu::planner::ir::llc::Instruction;
 using setu::planner::ir::llc::Program;
 using setu::planner::ir::llc::Receive;
 using setu::planner::ir::llc::Send;
+using setu::planner::ir::llc::SyncPoint;
+using setu::planner::ir::llc::Wait;
 //==============================================================================
 
 class NCCLWorker : public Worker {
@@ -72,6 +76,8 @@ class NCCLWorker : public Worker {
   void ExecuteSend(const Send& inst);
   void ExecuteReceive(const Receive& inst);
   void ExecuteAllGather(const AllGather& inst);
+  void ExecuteSyncPoint(const SyncPoint& inst);
+  void ExecuteWait(const Wait& inst);
 
   [[nodiscard]] static ncclDataType_t ToNcclDataType(torch::Dtype dtype);
   [[nodiscard]] static std::size_t GetDTypeSizeBytes(torch::Dtype dtype);
@@ -80,20 +86,25 @@ class NCCLWorker : public Worker {
     ncclComm_t nccl_comm;
   };
 
-  /// @brief Holds CUDA events for measuring group timing.
-  struct GroupTimingState {
-    cudaEvent_t start_event;
-    cudaEvent_t end_event;
-    std::size_t ops_in_group;
-  };
-
   std::unordered_map<CommId, CommCacheEntry, CommIdHash> comm_cache_;
 
   /// Pool of CUDA streams for overlapping independent operations.
-  /// Round-robin assigned per op, reset on Fence.  Pool grows
-  /// dynamically so that independent ops never share a stream.
+  /// Round-robin assigned per op; independent ops naturally land on
+  /// different streams without any explicit reset.
   std::vector<cudaStream_t> streams_;
   cudaStream_t active_stream_ = nullptr;
+
+  /// Lazily grown pool of CUDA events, indexed by SyncPoint id.
+  /// Events are created on first use and reused across Execute() calls.
+  std::vector<cudaEvent_t> event_pool_;
+
+  /// Two pre-allocated CUDA events for measuring total execution time.
+  cudaEvent_t timing_start_ = nullptr;
+  cudaEvent_t timing_end_ = nullptr;
+
+  /// Buffered Wait ids accumulated between data ops.
+  /// Flushed as cudaStreamWaitEvent calls at the start of the next data op.
+  std::vector<std::uint32_t> pending_waits_;
 
   RegisterFile register_file_;
 };

@@ -44,6 +44,11 @@ NCCLWorker::~NCCLWorker() {
   for (auto s : streams_) {
     cudaStreamDestroy(s);
   }
+  for (auto e : event_pool_) {
+    cudaEventDestroy(e);
+  }
+  if (timing_start_) cudaEventDestroy(timing_start_);
+  if (timing_end_) cudaEventDestroy(timing_end_);
   for (auto& [key, entry] : comm_cache_) {
     ncclCommDestroy(entry.nccl_comm);
   }
@@ -51,7 +56,7 @@ NCCLWorker::~NCCLWorker() {
 
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
-  static constexpr std::size_t kNumStreams = 1024;
+  static constexpr std::size_t kNumStreams = 32;
   streams_.resize(kNumStreams);
   for (auto& s : streams_) {
     CUDA_CHECK(cudaStreamCreate(&s));
@@ -71,9 +76,6 @@ void NCCLWorker::Execute(const Program& program) {
   auto t_start = std::chrono::high_resolution_clock::now();
 
   std::uint32_t group_index = 0;
-  std::vector<GroupTimingState> event_states;
-  std::vector<setu::telemetry::NCCLGroupTiming> timings;
-
   bool in_nccl_group = false;
 
   auto open_nccl_group = [&]() {
@@ -83,9 +85,18 @@ void NCCLWorker::Execute(const Program& program) {
     }
   };
 
+  std::int64_t total_group_end_us = 0;
+  std::uint32_t group_end_count = 0;
+
   auto close_nccl_group = [&]() {
     if (in_nccl_group) {
+      auto t0 = std::chrono::steady_clock::now();
       NCCL_CHECK(ncclGroupEnd());
+      auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count();
+      total_group_end_us += dt;
+      group_end_count++;
       in_nccl_group = false;
     }
   };
@@ -104,9 +115,16 @@ void NCCLWorker::Execute(const Program& program) {
                                std::is_same_v<T, AllGather>) {
             active_stream_ = streams_[group_index % streams_.size()];
 
-            cudaEvent_t start_event;
-            CUDA_CHECK(cudaEventCreate(&start_event));
-            CUDA_CHECK(cudaEventRecord(start_event, active_stream_));
+            // Apply buffered dependency waits on this stream.
+            for (auto wait_id : pending_waits_) {
+              ASSERT_VALID_RUNTIME(
+                  wait_id < event_pool_.size(),
+                  "Wait references event id {} but event pool size is {}",
+                  wait_id, event_pool_.size());
+              CUDA_CHECK(
+                  cudaStreamWaitEvent(active_stream_, event_pool_[wait_id]));
+            }
+            pending_waits_.clear();
 
             open_nccl_group();
 
@@ -120,11 +138,6 @@ void NCCLWorker::Execute(const Program& program) {
               ExecuteAllGather(inst);
             }
 
-            cudaEvent_t end_event;
-            CUDA_CHECK(cudaEventCreate(&end_event));
-            CUDA_CHECK(cudaEventRecord(end_event, active_stream_));
-            event_states.push_back({start_event, end_event, 1});
-            timings.push_back({group_index, 0.0, 1});
             group_index++;
           } else if constexpr (std::is_same_v<T, Fence>) {
             close_nccl_group();
@@ -149,29 +162,26 @@ void NCCLWorker::Execute(const Program& program) {
               }
             }
             group_index = 0;
+          } else if constexpr (std::is_same_v<T, SyncPoint>) {
+            close_nccl_group();
+            ExecuteSyncPoint(inst);
+          } else if constexpr (std::is_same_v<T, Wait>) {
+            ExecuteWait(inst);
           }
         },
         instruction.instr);
   }
 
-  // Close any trailing group
   close_nccl_group();
+
+  LOG_INFO("Execute[{}]: {} ncclGroupEnd calls, total {}us", device_,
+           group_end_count, total_group_end_us);
 
   // Sync only streams that had work queued.
   const std::size_t num_streams_used =
       std::min(static_cast<std::size_t>(group_index) + 1, streams_.size());
   for (std::size_t i = 0; i < num_streams_used; ++i) {
     CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
-  }
-
-  // Compute elapsed times from CUDA event pairs
-  for (std::size_t i = 0; i < event_states.size(); ++i) {
-    float ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&ms, event_states[i].start_event,
-                                    event_states[i].end_event));
-    timings[i].elapsed_ms = static_cast<double>(ms);
-    CUDA_CHECK(cudaEventDestroy(event_states[i].start_event));
-    CUDA_CHECK(cudaEventDestroy(event_states[i].end_event));
   }
 
   auto t_end = std::chrono::high_resolution_clock::now();
@@ -184,7 +194,6 @@ void NCCLWorker::Execute(const Program& program) {
     wm.copy_op_id = current_copy_op_id_;
     wm.node_id = node_id_;
     wm.device_rank = device_.LocalDeviceIndex();
-    wm.group_timings = std::move(timings);
     wm.total_execute_ms = total_ms;
     metrics_sink_->Submit(setu::telemetry::MetricsMessage{wm});
   }
@@ -275,6 +284,34 @@ void NCCLWorker::ExecuteAllGather(const AllGather& inst) {
   LOG_DEBUG("AllGather: {} elements/rank, {} ranks, send={}, recv={}",
             inst.send_count, inst.num_ranks, inst.send_ref.ToString(),
             inst.recv_ref.ToString());
+}
+
+void NCCLWorker::ExecuteSyncPoint(const SyncPoint& inst) {
+  // Grow the event pool lazily to accommodate this id.
+  if (event_pool_.size() <= inst.id) {
+    auto t0 = std::chrono::steady_clock::now();
+    while (event_pool_.size() <= inst.id) {
+      cudaEvent_t e;
+      CUDA_CHECK(cudaEventCreate(&e));
+      event_pool_.push_back(e);
+    }
+    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - t0)
+                  .count();
+    LOG_INFO("SyncPoint({}): grew event pool to {} events in {}us", inst.id,
+             event_pool_.size(), dt);
+  }
+  // Record on the stream that just ran the preceding write op.
+  // active_stream_ is still set to that op's stream at this point.
+  CUDA_CHECK(cudaEventRecord(event_pool_[inst.id], active_stream_));
+  LOG_DEBUG("SyncPoint({}): recorded event on stream", inst.id);
+}
+
+void NCCLWorker::ExecuteWait(const Wait& inst) {
+  // Buffer the id; the dependency will be applied to the next data op's
+  // stream when that op sets active_stream_.
+  pending_waits_.push_back(inst.id);
+  LOG_DEBUG("Wait({}): buffered dependency", inst.id);
 }
 
 DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {
