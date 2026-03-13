@@ -63,6 +63,7 @@ class Gateway {
   /// return immediately.
   ZmqSocketPtr wakeup_recv_;
   ZmqSocketPtr wakeup_send_;
+  std::mutex wakeup_mutex_;  // Serializes NotifyOutbox() from Handler/Executor
 
   std::thread thread_;
   std::atomic<bool> running_{false};

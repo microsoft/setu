@@ -125,7 +125,7 @@ void Handler::HandleRegisterTensorShardRequest(
         request.tensor_shard_spec.name);
     RegisterTensorShardCoordinatorResponse response(
         request.request_id, ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -187,7 +187,7 @@ void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
         request.copy_spec.src_name, request.copy_spec.dst_name);
     SubmitCopyResponse response(request.request_id, CopyOperationId{},
                                 ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -216,7 +216,7 @@ void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
         request.copy_spec.src_name, request.copy_spec.dst_name);
     SubmitCopyResponse response(request.request_id, CopyOperationId{},
                                 ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -330,8 +330,7 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
 
     DeregisterShardsResponse dereg_response(dereg.request_id,
                                             ErrorCode::kSuccess);
-    outbox_queue_.push(
-        OutboxMessage{dereg.node_agent_identity, dereg_response});
+    PushOutbox(OutboxMessage{dereg.node_agent_identity, dereg_response});
   }
 }
 
@@ -346,7 +345,7 @@ void Handler::HandleGetTensorSpecRequest(const Identity& node_agent_identity,
         request.tensor_name);
     GetTensorSpecResponse response(request.request_id,
                                    ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -409,7 +408,7 @@ void Handler::HandleDeregisterShardsRequest(
         participant.identity);
     SubmitCopyResponse error_response(participant.request_id, CopyOperationId{},
                                       ErrorCode::kTensorDeregistered);
-    outbox_queue_.push(OutboxMessage{participant.identity, error_response});
+    PushOutbox(OutboxMessage{participant.identity, error_response});
   }
 
   // Find all in-flight copy operations that involve any of the tensors
@@ -423,7 +422,7 @@ void Handler::HandleDeregisterShardsRequest(
     // No in-flight copies — deregister immediately
     metastore_.DeregisterShards(dereg_data.shards_by_tensor);
     DeregisterShardsResponse response(request.request_id, ErrorCode::kSuccess);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
     return;
   }
 
@@ -434,7 +433,7 @@ void Handler::HandleDeregisterShardsRequest(
     // All blocking copies already resolved — deregister immediately
     metastore_.DeregisterShards(immediate->shards_by_tensor);
     DeregisterShardsResponse response(request.request_id, ErrorCode::kSuccess);
-    outbox_queue_.push(OutboxMessage{node_agent_identity, response});
+    PushOutbox(OutboxMessage{node_agent_identity, response});
   } else {
     LOG_DEBUG(
         "Deferring deregistration for {} tensors from {} — blocked by "

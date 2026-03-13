@@ -58,6 +58,9 @@ void Gateway::InitSockets() {
 void Gateway::NotifyOutbox() {
   // Send a single byte to wake the Gateway from zmq::poll().
   // Uses dontwait to avoid blocking the caller if the pipe is full.
+  // Lock required: called from both Handler and Executor threads,
+  // and ZMQ sockets are not thread-safe.
+  std::lock_guard<std::mutex> lock(wakeup_mutex_);
   zmq::message_t signal(1);
   static_cast<char*>(signal.data())[0] = 'W';
   [[maybe_unused]] auto result =
