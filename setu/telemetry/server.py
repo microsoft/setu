@@ -36,6 +36,7 @@ class CopySpecReport:
     copy_op_id: uuid.UUID
     compile_time_ms: Optional[float] = None
     e2e_time_ms: Optional[float] = None
+    total_bytes_transferred: Optional[int] = None
     num_participants: Optional[int] = None
     participant_instruction_counts: Optional[List] = None
     pass_timings: Optional[List] = None
@@ -48,6 +49,7 @@ class CopySpecReport:
             "copy_op_id": str(self.copy_op_id),
             "compile_time_ms": self.compile_time_ms,
             "e2e_time_ms": self.e2e_time_ms,
+            "total_bytes_transferred": self.total_bytes_transferred,
             "num_participants": self.num_participants,
             "participant_instruction_counts": self.participant_instruction_counts,
             "pass_timings": self.pass_timings,
@@ -321,6 +323,7 @@ class MetricsServer:
             elif isinstance(record, E2EMetricsRecord):
                 report = self._get_or_create(record.copy_op_id)
                 report.e2e_time_ms = record.e2e_time_ms
+                report.total_bytes_transferred = record.total_bytes_transferred
 
                 # E2E is the last metric received; finalize the report
                 self._finalize_report(report)

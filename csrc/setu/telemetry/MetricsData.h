@@ -93,16 +93,18 @@ struct CompilationMetrics {
 struct E2EMetrics {
   CopyOperationId copy_op_id;
   double e2e_time_ms;
+  std::uint64_t total_bytes_transferred = 0;
 
   void Serialize(BinaryBuffer& buffer) const {
     BinaryWriter writer(buffer);
-    writer.WriteFields(copy_op_id, e2e_time_ms);
+    writer.WriteFields(copy_op_id, e2e_time_ms, total_bytes_transferred);
   }
 
   static E2EMetrics Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    auto [id, ms] = reader.ReadFields<CopyOperationId, double>();
-    return E2EMetrics{id, ms};
+    auto [id, ms, bytes] =
+        reader.ReadFields<CopyOperationId, double, std::uint64_t>();
+    return E2EMetrics{id, ms, bytes};
   }
 };
 

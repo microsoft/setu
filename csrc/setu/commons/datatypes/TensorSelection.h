@@ -241,6 +241,14 @@ struct TensorSelection {
     return std::make_shared<TensorSelection>(name, localized_indices);
   }
 
+  [[nodiscard]] std::size_t NumElements() const {
+    std::size_t num_elements = 1;
+    for (const auto& [dim_name, idx] : indices) {
+      num_elements *= idx.Count();
+    }
+    return num_elements;
+  }
+
   const TensorName name;
 
  private:

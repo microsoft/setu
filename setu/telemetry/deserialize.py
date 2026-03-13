@@ -97,6 +97,7 @@ class CompilationMetricsRecord:
 class E2EMetricsRecord:
     copy_op_id: uuid.UUID
     e2e_time_ms: float
+    total_bytes_transferred: int
 
 
 # Variant index mapping (must match C++ MetricsMessage variant order)
@@ -174,7 +175,12 @@ def _read_e2e_metrics(reader: BinaryReader) -> E2EMetricsRecord:
     _size = reader.read_uint32()
     copy_op_id = reader.read_uuid()
     ms = reader.read_double()
-    return E2EMetricsRecord(copy_op_id=copy_op_id, e2e_time_ms=ms)
+    total_bytes = reader.read_uint64()
+    return E2EMetricsRecord(
+        copy_op_id=copy_op_id,
+        e2e_time_ms=ms,
+        total_bytes_transferred=total_bytes,
+    )
 
 
 # Maps variant index to reader function

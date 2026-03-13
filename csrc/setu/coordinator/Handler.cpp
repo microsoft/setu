@@ -301,9 +301,15 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
         std::chrono::duration<double, std::milli>(
             std::chrono::high_resolution_clock::now() - state->start_time)
             .count();
+    // Compute transfer size from the source selection
+    const auto* tensor_spec = metastore_.GetTensorSpec(state->spec.src_name);
+    std::uint64_t total_bytes = state->spec.src_selection->NumElements() *
+                                torch::elementSize(tensor_spec->dtype);
+
     setu::telemetry::E2EMetrics e2e;
     e2e.copy_op_id = response.copy_op_id;
     e2e.e2e_time_ms = e2e_ms;
+    e2e.total_bytes_transferred = total_bytes;
     metrics_sink_->Submit(setu::telemetry::MetricsMessage{e2e});
   }
 
