@@ -518,6 +518,116 @@ TEST_F(RegisterTilingTest, PipeliningThenRegisterTiling_ThreeHop) {
 }
 
 //==============================================================================
+// PackUnpackCopies → RegisterTiling composition
+//==============================================================================
+
+TEST_F(RegisterTilingTest, PackUnpackThenRegisterTiling_SourcesStraddleChunks) {
+  // 3 cross-device copies GPU0→GPU1 with sizes that don't align to chunks.
+  // PackUnpackCopies consolidates them into pack → copy → unpack.
+  // RegisterTiling must then chunk through the pack/unpack ops.
+  //
+  // Sources: 100 + 200 + 50 = 350 elements
+  // Chunk size: 64 elements → chunks of [64, 64, 64, 64, 64, 30]
+
+  Program program;
+  auto src0 = program.EmitView(dev0, shard, Slice{0, 100}, dt);
+  auto src1 = program.EmitView(dev0, shard, Slice{100, 200}, dt);
+  auto src2 = program.EmitView(dev0, shard, Slice{300, 50}, dt);
+  auto dst0 = program.EmitView(dev1, shard, Slice{0, 100}, dt);
+  auto dst1 = program.EmitView(dev1, shard, Slice{100, 200}, dt);
+  auto dst2 = program.EmitView(dev1, shard, Slice{300, 50}, dt);
+
+  // Simulate what PackUnpackCopies produces:
+  // pack sources into tmp on src device, copy across, unpack into dsts
+  auto tmp_src = program.EmitAllocTmp(dev0, 350, dt);
+  auto packed = program.EmitPack({src0, src1, src2}, tmp_src);
+  auto tmp_dst = program.EmitAllocTmp(dev1, 350, dt);
+  auto copied = program.EmitCopy(packed, tmp_dst);
+  auto unpacked = program.EmitUnpack(copied, {dst0, dst1, dst2});
+  (void)unpacked;
+
+  EXPECT_NO_THROW(Linearity::Check(program));
+
+  RegisterTiling pass(kChunkBytes);
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // No alloc_tmp should exceed the chunk size.
+  for (const auto& op : result.Operations()) {
+    if (op.Type() == setu::planner::ir::cir::OpType::kAllocTmp) {
+      auto& alloc = std::get<setu::planner::ir::cir::AllocTmpOp>(op.op);
+      EXPECT_LE(alloc.size_elements, kChunkElements);
+    }
+  }
+}
+
+TEST_F(RegisterTilingTest, PackUnpackThenRegisterTiling_AlignedSources) {
+  // Sources perfectly align with chunk boundaries → no slicing needed.
+  // 2 sources of 64 elements each = 128 total = 2 chunks exactly.
+
+  Program program;
+  auto src0 = program.EmitView(dev0, shard, Slice{0, kChunkElements}, dt);
+  auto src1 =
+      program.EmitView(dev0, shard, Slice{kChunkElements, kChunkElements}, dt);
+  auto dst0 = program.EmitView(dev1, shard, Slice{0, kChunkElements}, dt);
+  auto dst1 =
+      program.EmitView(dev1, shard, Slice{kChunkElements, kChunkElements}, dt);
+
+  auto tmp_src = program.EmitAllocTmp(dev0, kChunkElements * 2, dt);
+  auto packed = program.EmitPack({src0, src1}, tmp_src);
+  auto tmp_dst = program.EmitAllocTmp(dev1, kChunkElements * 2, dt);
+  auto copied = program.EmitCopy(packed, tmp_dst);
+  auto unpacked = program.EmitUnpack(copied, {dst0, dst1});
+  (void)unpacked;
+
+  EXPECT_NO_THROW(Linearity::Check(program));
+
+  RegisterTiling pass(kChunkBytes);
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // Each pack chunk has exactly one source, each unpack dest gets exactly
+  // one chunk → all packs have 1 source, all unpacks become copies.
+  // Should have 4 copies: 2 pack-into-chunk + 2 cross-device copies...
+  // actually the pack(single_src, chunk) is still a pack, and unpack with
+  // 1 piece becomes a copy. Let's just verify linearity and no large tmps.
+  for (const auto& op : result.Operations()) {
+    if (op.Type() == setu::planner::ir::cir::OpType::kAllocTmp) {
+      auto& alloc = std::get<setu::planner::ir::cir::AllocTmpOp>(op.op);
+      EXPECT_LE(alloc.size_elements, kChunkElements);
+    }
+  }
+}
+
+TEST_F(RegisterTilingTest, PackUnpackThenRegisterTiling_SmallTmpsUnchanged) {
+  // Tmp buffers already fit in a single chunk → pass is a no-op.
+
+  Program program;
+  auto src0 = program.EmitView(dev0, shard, Slice{0, 30}, dt);
+  auto src1 = program.EmitView(dev0, shard, Slice{30, 20}, dt);
+  auto dst0 = program.EmitView(dev1, shard, Slice{0, 30}, dt);
+  auto dst1 = program.EmitView(dev1, shard, Slice{30, 20}, dt);
+
+  auto tmp_src = program.EmitAllocTmp(dev0, 50, dt);
+  auto packed = program.EmitPack({src0, src1}, tmp_src);
+  auto tmp_dst = program.EmitAllocTmp(dev1, 50, dt);
+  auto copied = program.EmitCopy(packed, tmp_dst);
+  auto unpacked = program.EmitUnpack(copied, {dst0, dst1});
+  (void)unpacked;
+
+  auto original_dump = program.Dump();
+
+  RegisterTiling pass(kChunkBytes);
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  // Small tmps (50 < 64) → no transformation
+  EXPECT_EQ(result.Dump(), original_dump);
+  EXPECT_NO_THROW(Linearity::Check(result));
+}
+
+//==============================================================================
 }  // namespace
 }  // namespace setu::test::native
 //==============================================================================

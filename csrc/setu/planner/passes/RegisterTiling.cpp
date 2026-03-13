@@ -6,6 +6,40 @@ namespace setu::planner::passes {
 
 using ChunkMap = std::unordered_map<cir::Value, std::vector<cir::Value>>;
 
+/// Walks two contiguous partitions of the same logical buffer and groups
+/// pieces from `from_vals` by their overlap with each item in `by_vals`.
+///
+/// Returns one vector of Value pieces per item in `by_vals`.  Each piece is
+/// either the full `from` value (when the overlap covers it entirely) or a
+/// freshly emitted slice.
+///
+/// `from_size_fn(val)` / `by_size_fn(val)` return element counts.
+/// `resolve(val, offset, size, total)` maps a from-value + sub-range to a
+/// target-program Value (handling Lookup and slicing).
+template <typename FromSizeFn, typename BySizeFn, typename ResolveFn>
+static std::vector<std::vector<cir::Value>> GroupPiecesByOverlap(
+    const std::vector<cir::Value>& from_vals, FromSizeFn from_size_fn,
+    const std::vector<cir::Value>& by_vals, BySizeFn by_size_fn,
+    ResolveFn resolve) {
+  std::vector<std::vector<cir::Value>> groups(by_vals.size());
+  std::size_t fi = 0, fo = 0;
+  for (std::size_t bi = 0; bi < by_vals.size(); ++bi) {
+    auto by_remaining = by_size_fn(by_vals[bi]);
+    while (by_remaining > 0) {
+      auto from_total = from_size_fn(from_vals[fi]);
+      auto take = std::min(by_remaining, from_total - fo);
+      groups[bi].push_back(resolve(from_vals[fi], fo, take, from_total));
+      by_remaining -= take;
+      fo += take;
+      if (fo == from_total) {
+        fi++;
+        fo = 0;
+      }
+    }
+  }
+  return groups;
+}
+
 /// Number of elements that fit in one register-sized chunk for a given dtype.
 inline std::size_t NumElementsInChunk(std::size_t chunk_size_bytes,
                                       torch::Dtype dtype) {
@@ -71,6 +105,76 @@ cir::Program RegisterTiling::Run(cir::Program program, const PassContext& ctx) {
                   rw.Target().EmitAllocTmp(device, this_chunk, concrete.dtype));
             }
             chunk_map[concrete.out] = std::move(chunks);
+            return;
+          }
+
+          if constexpr (std::is_same_v<T, cir::PackOp>) {
+            if (!chunk_map.contains(concrete.dst_in)) {
+              rw.CloneOp(i);
+              return;
+            }
+
+            const auto& dst_chunks = chunk_map.at(concrete.dst_in);
+            auto src_size = [&](cir::Value v) {
+              return program.GetValueInfo(v).size_elements;
+            };
+            auto chunk_size = [&](cir::Value v) {
+              return rw.Target().GetValueInfo(v).size_elements;
+            };
+            auto resolve_src = [&](cir::Value v, std::size_t off,
+                                   std::size_t sz, std::size_t total) {
+              auto mapped = rw.Lookup(v);
+              if (off == 0 && sz == total) return mapped;
+              return rw.Target().EmitSlice(mapped, cir::Slice{off, sz});
+            };
+
+            auto groups = GroupPiecesByOverlap(
+                concrete.srcs, src_size, dst_chunks, chunk_size, resolve_src);
+
+            std::vector<cir::Value> result_chunks;
+            result_chunks.reserve(dst_chunks.size());
+            for (std::size_t c = 0; c < dst_chunks.size(); ++c) {
+              result_chunks.push_back(
+                  rw.Target().EmitPack(std::move(groups[c]), dst_chunks[c]));
+            }
+            chunk_map[concrete.dst_out] = std::move(result_chunks);
+            return;
+          }
+
+          if constexpr (std::is_same_v<T, cir::UnpackOp>) {
+            if (!chunk_map.contains(concrete.src)) {
+              rw.CloneOp(i);
+              return;
+            }
+
+            const auto& src_chunks = chunk_map.at(concrete.src);
+            auto chunk_size = [&](cir::Value v) {
+              return rw.Target().GetValueInfo(v).size_elements;
+            };
+            auto dst_size = [&](cir::Value v) {
+              return program.GetValueInfo(v).size_elements;
+            };
+            auto resolve_chunk = [&](cir::Value v, std::size_t off,
+                                     std::size_t sz, std::size_t total) {
+              if (off == 0 && sz == total) return v;
+              return rw.Target().EmitSlice(v, cir::Slice{off, sz});
+            };
+
+            auto groups =
+                GroupPiecesByOverlap(src_chunks, chunk_size, concrete.dst_ins,
+                                     dst_size, resolve_chunk);
+
+            for (std::size_t d = 0; d < concrete.dst_ins.size(); ++d) {
+              auto mapped_dst = rw.Lookup(concrete.dst_ins[d]);
+              cir::Value dst_out;
+              if (groups[d].size() == 1) {
+                dst_out = rw.Target().EmitCopy(groups[d][0], mapped_dst);
+              } else {
+                dst_out =
+                    rw.Target().EmitPack(std::move(groups[d]), mapped_dst);
+              }
+              rw.MapValue(concrete.dst_outs[d], dst_out);
+            }
             return;
           }
 
