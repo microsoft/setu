@@ -15,6 +15,7 @@ _PASS_REGISTRY = {
         kw.get("chunk_size_bytes", 67108864)
     ),
     "register_tiling": lambda topo, **_: _make_register_tiling(),
+    "pack_unpack_copies": lambda topo, **_: _make_pack_unpack_copies(),
     "instruction_scheduler": lambda topo, **_: _make_instruction_scheduler(),
 }
 
@@ -37,6 +38,12 @@ def _make_register_tiling():
     from setu._coordinator import RegisterTiling
 
     return RegisterTiling()
+
+
+def _make_pack_unpack_copies():
+    from setu._coordinator import PackUnpackCopies
+
+    return PackUnpackCopies()
 
 
 def _make_pipelining(chunk_size_bytes: int):
