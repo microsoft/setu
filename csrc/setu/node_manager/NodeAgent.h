@@ -30,6 +30,8 @@
 #include "commons/utils/RequestRouter.h"
 #include "commons/utils/ThreadingUtils.h"
 #include "commons/utils/ZmqHelper.h"
+#include "commons/utils/ring/CompletionEntry.h"
+#include "commons/utils/ring/ShmRing.h"
 #include "messaging/Messages.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
@@ -58,6 +60,8 @@ using setu::commons::datatypes::TensorSpec;
 using setu::commons::datatypes::TensorSpecMap;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
+using setu::commons::messages::ConnectRequest;
+using setu::commons::messages::ConnectResponse;
 using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::DeregisterShardsRequest;
@@ -82,6 +86,9 @@ using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::commons::utils::ring::CompletionEntry;
+using setu::commons::utils::ring::CompletionRingProducer;
+using setu::commons::utils::ring::ShmRing;
 using setu::node_manager::worker::Worker;
 using setu::planner::Plan;
 using setu::planner::ir::llc::Program;
@@ -167,6 +174,8 @@ class NodeAgent {
         const GetTensorSelectionRequest& request);
     void HandleDeregisterShardsRequest(const Identity& client_identity,
                                        const DeregisterShardsRequest& request);
+    void HandleConnectRequest(const Identity& client_identity,
+                              const ConnectRequest& request);
 
     // Async coordinator message handlers (received on DEALER socket)
     void HandleAllocateTensorRequest(const AllocateTensorRequest& request);
@@ -223,6 +232,30 @@ class NodeAgent {
     setu::commons::utils::PendingOperations<RequestId, RequestId,
                                             DeregisterShardsRequest>
         pending_deregistrations_;
+
+    // Completion ring state per client.
+    // NB(Elton): Push() spins if the ring is full, which blocks the
+    // Handler thread. For v0 we don't offer a more robust fallback
+    // (overflow queue, dropped messages, etc.).
+    static constexpr std::uint32_t kCompletionRingCapacity = 1024;
+
+    /// Maps client identity to its completion ring producer.
+    std::unordered_map<Identity, std::unique_ptr<CompletionRingProducer>>
+        client_rings_;
+
+    /// Tracks shared-memory resources per client for cleanup.
+    struct ClientRingInfo {
+      std::string shm_name;
+      void* mmap_ptr;
+      std::size_t mmap_size;
+    };
+    std::unordered_map<Identity, ClientRingInfo> client_ring_info_;
+
+    /// Maps copy operation to the client(s) that initiated it.
+    /// Multiple clients may share the same copy_op_id (collective ops).
+    std::unordered_map<CopyOperationId, std::vector<Identity>,
+                       boost::hash<CopyOperationId>>
+        copy_op_to_clients_;
   };
 
   //============================================================================

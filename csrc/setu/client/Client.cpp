@@ -16,6 +16,8 @@
 //==============================================================================
 #include "client/Client.h"
 //==============================================================================
+#include <sys/mman.h>
+//==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ZmqHelper.h"
@@ -25,6 +27,8 @@ namespace setu::client {
 //==============================================================================
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::messages::ClientRequest;
+using setu::commons::messages::ConnectRequest;
+using setu::commons::messages::ConnectResponse;
 using setu::commons::messages::DeregisterShardsRequest;
 using setu::commons::messages::DeregisterShardsResponse;
 using setu::commons::messages::GetTensorHandleRequest;
@@ -42,6 +46,9 @@ using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::ZmqHelper;
+using setu::commons::utils::ring::CompletionEntry;
+using setu::commons::utils::ring::CompletionRingConsumer;
+using setu::commons::utils::ring::ShmRing;
 //==============================================================================
 Client::Client() { zmq_context_ = std::make_shared<zmq::context_t>(); }
 
@@ -66,7 +73,29 @@ void Client::Connect(const std::string& endpoint) {
   endpoint_ = endpoint;
   is_connected_ = true;
 
-  LOG_DEBUG("Client connected to {} successfully", endpoint_);
+  // Send ConnectRequest to set up the shared-memory completion ring
+  ClientRequest connect_req = ConnectRequest();
+  Comm::Send(request_socket_, connect_req);
+  auto connect_resp = Comm::Recv<ConnectResponse>(request_socket_);
+
+  ASSERT_VALID_RUNTIME(connect_resp.IsSuccess(),
+                       "ConnectRequest failed with error_code: {}",
+                       connect_resp.error_code);
+  ASSERT_VALID_RUNTIME(!connect_resp.completion_ring_shm_name.empty(),
+                       "ConnectResponse has empty shm_name");
+  ASSERT_VALID_RUNTIME(connect_resp.completion_ring_capacity > 0,
+                       "ConnectResponse has zero capacity");
+
+  completion_ring_shm_name_ = connect_resp.completion_ring_shm_name;
+  const auto capacity = connect_resp.completion_ring_capacity;
+  completion_ring_size_ = ShmRing::ComputeSize<CompletionEntry>(capacity);
+  completion_ring_mmap_ =
+      ShmRing::Open<CompletionEntry>(completion_ring_shm_name_, capacity);
+  completion_ring_ =
+      std::make_unique<CompletionRingConsumer>(completion_ring_mmap_);
+
+  LOG_DEBUG("Client connected to {} with completion ring '{}' (capacity={})",
+            endpoint_, completion_ring_shm_name_, capacity);
 }
 
 void Client::Disconnect() {
@@ -80,6 +109,16 @@ void Client::Disconnect() {
     }
     tensor_shards_.clear();
   }
+
+  // Clean up completion ring (client unmaps; NodeAgent handles shm_unlink)
+  completion_ring_.reset();
+  if (completion_ring_mmap_ != nullptr) {
+    munmap(completion_ring_mmap_, completion_ring_size_);
+    completion_ring_mmap_ = nullptr;
+    completion_ring_size_ = 0;
+  }
+  completion_ring_shm_name_.clear();
+  completed_ops_.clear();
 
   if (request_socket_) {
     request_socket_->close();
@@ -236,14 +275,45 @@ std::optional<CopyOperationId> Client::SubmitPull(
 }
 
 void Client::WaitForCopy(CopyOperationId copy_op_id) {
-  ClientRequest request = WaitForCopyRequest(copy_op_id);
-  Comm::Send(request_socket_, request);
+  // Check if already completed from a prior PollCompletions call
+  if (completed_ops_.erase(copy_op_id) > 0) {
+    LOG_DEBUG("Client: copy_op_id {} already completed (cached)", copy_op_id);
+    return;
+  }
 
-  auto response = Comm::Recv<WaitForCopyResponse>(request_socket_);
+  // Spin-poll the completion ring
+  while (true) {
+    auto completed = PollCompletions();
+    for (const auto& id : completed) {
+      if (id == copy_op_id) {
+        LOG_DEBUG("Client finished waiting for copy operation ID: {}",
+                  copy_op_id);
+        return;
+      }
+    }
+    std::this_thread::yield();
+  }
+}
 
-  LOG_DEBUG(
-      "Client finished waiting for copy operation ID: {} with error code: {}",
-      copy_op_id, response.error_code);
+std::vector<CopyOperationId> Client::PollCompletions() {
+  ASSERT_VALID_RUNTIME(completion_ring_ != nullptr,
+                       "PollCompletions called before Connect");
+
+  std::vector<CompletionEntry> entries;
+  [[maybe_unused]] auto count = completion_ring_->Poll(entries, kMaxPollBatch);
+
+  std::vector<CopyOperationId> result;
+  result.reserve(entries.size());
+  for (const auto& entry : entries) {
+    ASSERT_VALID_RUNTIME(
+        entry.error_code == setu::commons::enums::ErrorCode::kSuccess,
+        "Completion ring entry has error_code={} for copy_op_id={}",
+        entry.error_code, entry.copy_op_id);
+    result.push_back(entry.copy_op_id);
+    completed_ops_.insert(entry.copy_op_id);
+  }
+
+  return result;
 }
 
 void Client::WaitForShardAllocation(ShardId shard_id) {

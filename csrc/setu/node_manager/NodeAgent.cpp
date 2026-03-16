@@ -49,6 +49,8 @@ using setu::commons::enums::DeviceKind;
 using setu::commons::enums::ErrorCode;
 using setu::commons::messages::AllocateTensorRequest;
 using setu::commons::messages::ClientRequest;
+using setu::commons::messages::ConnectRequest;
+using setu::commons::messages::ConnectResponse;
 using setu::commons::messages::CoordinatorMessage;
 using setu::commons::messages::CopyOperationFinishedRequest;
 using setu::commons::messages::DeregisterShardsRequest;
@@ -79,6 +81,9 @@ using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::Comm;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
+using setu::commons::utils::ring::CompletionEntry;
+using setu::commons::utils::ring::CompletionRingProducer;
+using setu::commons::utils::ring::ShmRing;
 using setu::planner::Plan;
 using setu::planner::RegisterSet;
 using setu::planner::ir::llc::GetShardAccess;
@@ -254,6 +259,13 @@ NodeAgent::Handler::Handler(
 NodeAgent::Handler::~Handler() {
   Stop();
   CloseSockets();
+
+  // Clean up all client completion rings
+  for (auto& [identity, info] : client_ring_info_) {
+    ShmRing::Destroy(info.shm_name, info.mmap_ptr, info.mmap_size);
+  }
+  client_rings_.clear();
+  client_ring_info_.clear();
 }
 
 void NodeAgent::Handler::InitSockets() {
@@ -362,6 +374,8 @@ void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,
           HandleGetTensorSelectionRequest(client_identity, msg);
         } else if constexpr (std::is_same_v<T, DeregisterShardsRequest>) {
           HandleDeregisterShardsRequest(client_identity, msg);
+        } else if constexpr (std::is_same_v<T, ConnectRequest>) {
+          HandleConnectRequest(client_identity, msg);
         }
       },
       request);
@@ -613,6 +627,20 @@ void NodeAgent::Handler::HandleAllocateTensorRequest(
 
 void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
     const CopyOperationFinishedRequest& request) {
+  // Push completion to every client's shared-memory ring
+  auto clients_it = copy_op_to_clients_.find(request.copy_operation_id);
+  if (clients_it != copy_op_to_clients_.end()) {
+    CompletionEntry entry{request.copy_operation_id, ErrorCode::kSuccess, 0};
+    for (const auto& client_id : clients_it->second) {
+      auto ring_it = client_rings_.find(client_id);
+      if (ring_it != client_rings_.end()) {
+        ring_it->second->Push(entry);
+      }
+    }
+    copy_op_to_clients_.erase(clients_it);
+  }
+
+  // Still resolve pending_copies_ for any legacy ZMQ waiters
   auto waiters = pending_copies_.Resolve(request.copy_operation_id);
   for (const auto& client_id : waiters) {
     WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
@@ -636,6 +664,7 @@ void NodeAgent::Handler::HandleSubmitCopyResponse(
 
   if (response.error_code == ErrorCode::kSuccess) {
     pending_copies_.RegisterBlocker(response.copy_operation_id);
+    copy_op_to_clients_[response.copy_operation_id].push_back(*client_identity);
   }
 
   Comm::Send<SubmitCopyResponse>(client_socket_, *client_identity, response);
@@ -720,6 +749,26 @@ void NodeAgent::Handler::HandleDeregisterShardsResponse(
         "ignoring",
         response.request_id);
   }
+}
+
+void NodeAgent::Handler::HandleConnectRequest(const Identity& client_identity,
+                                              const ConnectRequest& request) {
+  auto shm_name = ShmRing::GenerateShmName("setu_cring", client_identity);
+  const auto capacity = kCompletionRingCapacity;
+  const auto mmap_size = ShmRing::ComputeSize<CompletionEntry>(capacity);
+
+  void* ptr = ShmRing::Create<CompletionEntry>(shm_name, capacity);
+
+  client_rings_[client_identity] =
+      std::make_unique<CompletionRingProducer>(ptr);
+  client_ring_info_[client_identity] = ClientRingInfo{shm_name, ptr, mmap_size};
+
+  ConnectResponse response(request.request_id, ErrorCode::kSuccess, shm_name,
+                           capacity);
+  Comm::Send<ConnectResponse>(client_socket_, client_identity, response);
+
+  LOG_DEBUG("HandleConnectRequest: created completion ring '{}' for client {}",
+            shm_name, client_identity);
 }
 
 //==============================================================================

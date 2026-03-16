@@ -74,7 +74,9 @@ void InitClientPybindClass(py::module_& m) {
       .def("get_shards", &Client::GetShards,
            "Get all registered tensor shard references")
       .def("select", &Client::Select, py::arg("name"),
-           "Get a TensorSelection covering the full tensor dimensions");
+           "Get a TensorSelection covering the full tensor dimensions")
+      .def("poll_completions", &Client::PollCompletions,
+           "Non-blocking poll for completed copy operations");
 }
 //==============================================================================
 void InitEnumsPybindClass(py::module_& m) {

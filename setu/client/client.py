@@ -252,6 +252,15 @@ class Client:
         )
         return copy_op_id
 
+    def poll_completions(self) -> List[CopyOperationId]:
+        """Non-blocking poll for completed copy operations.
+
+        Returns a (possibly empty) list of CopyOperationIds that have
+        completed since the last call. Each ID appears at most once across
+        all calls.
+        """
+        return self._client.poll_completions()
+
     def wait(self, copy_op_id: CopyOperationId) -> None:
         """
         Wait for a copy operation to complete.

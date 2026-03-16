@@ -22,6 +22,8 @@
 #include "messaging/AllocateTensorRequest.h"
 #include "messaging/AllocateTensorResponse.h"
 #include "messaging/BaseResponse.h"
+#include "messaging/ConnectRequest.h"
+#include "messaging/ConnectResponse.h"
 #include "messaging/CopyOperationFinishedRequest.h"
 #include "messaging/CopyOperationFinishedResponse.h"
 #include "messaging/DeregisterShardsRequest.h"
@@ -56,7 +58,7 @@ using ClientRequest =
     std::variant<RegisterTensorShardRequest, SubmitCopyRequest,
                  SubmitPullRequest, WaitForCopyRequest, GetTensorHandleRequest,
                  WaitForShardAllocationRequest, GetTensorSelectionRequest,
-                 DeregisterShardsRequest>;
+                 DeregisterShardsRequest, ConnectRequest>;
 
 /// @brief Requests from NodeAgent to Coordinator.
 using NodeAgentRequest =

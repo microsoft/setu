@@ -25,6 +25,8 @@
 #include "commons/enums/Enums.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "commons/utils/ZmqHelper.h"
+#include "commons/utils/ring/CompletionEntry.h"
+#include "commons/utils/ring/ShmRing.h"
 #include "messaging/GetTensorHandleResponse.h"
 #include "planner/hints/Hint.h"
 
@@ -42,6 +44,8 @@ using setu::commons::messages::GetTensorHandleResponse;
 using setu::commons::utils::TensorIPCSpec;
 using setu::commons::utils::ZmqContextPtr;
 using setu::commons::utils::ZmqSocketPtr;
+using setu::commons::utils::ring::CompletionEntry;
+using setu::commons::utils::ring::CompletionRingConsumer;
 using setu::planner::hints::CompilerHint;
 
 class Client {
@@ -76,8 +80,13 @@ class Client {
 
   [[nodiscard]] std::vector<TensorShardRefPtr> GetShards() const;
 
+  /// @brief Non-blocking poll for completed copy operations.
+  /// Drains entries from the shared-memory completion ring.
+  [[nodiscard]] std::vector<CopyOperationId> PollCompletions();
+
  private:
   static constexpr std::int32_t kDeregisterTimeoutMs = 300000;
+  static constexpr std::uint32_t kMaxPollBatch = 64;
 
   [[nodiscard]] bool DeregisterShards();
 
@@ -90,6 +99,14 @@ class Client {
 
   std::string endpoint_;
   bool is_connected_{false};
+
+  // Completion ring (shared memory)
+  void* completion_ring_mmap_{nullptr};
+  std::size_t completion_ring_size_{0};
+  std::string completion_ring_shm_name_;
+  std::unique_ptr<CompletionRingConsumer> completion_ring_;
+  std::unordered_set<CopyOperationId, boost::hash<CopyOperationId>>
+      completed_ops_;
 };
 //==============================================================================
 }  // namespace setu::client
