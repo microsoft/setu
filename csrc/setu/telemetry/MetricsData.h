@@ -19,6 +19,7 @@
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 //==============================================================================
+#include "commons/datatypes/TensorSelection.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::telemetry {
@@ -26,6 +27,7 @@ namespace setu::telemetry {
 using setu::commons::BinaryBuffer;
 using setu::commons::BinaryRange;
 using setu::commons::CopyOperationId;
+using setu::commons::datatypes::TensorSelectionPtr;
 using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
@@ -94,17 +96,30 @@ struct E2EMetrics {
   CopyOperationId copy_op_id;
   double e2e_time_ms;
   std::uint64_t total_bytes_transferred = 0;
+  std::string src_name;
+  std::string dst_name;
+  TensorSelectionPtr src_selection;
+  TensorSelectionPtr dst_selection;
 
   void Serialize(BinaryBuffer& buffer) const {
     BinaryWriter writer(buffer);
-    writer.WriteFields(copy_op_id, e2e_time_ms, total_bytes_transferred);
+    writer.WriteFields(copy_op_id, e2e_time_ms, total_bytes_transferred,
+                       src_name, dst_name, src_selection, dst_selection);
   }
 
   static E2EMetrics Deserialize(const BinaryRange& range) {
     BinaryReader reader(range);
-    auto [id, ms, bytes] =
-        reader.ReadFields<CopyOperationId, double, std::uint64_t>();
-    return E2EMetrics{id, ms, bytes};
+    auto [id, ms, bytes, src, dst, src_sel, dst_sel] =
+        reader
+            .ReadFields<CopyOperationId, double, std::uint64_t, std::string,
+                        std::string, TensorSelectionPtr, TensorSelectionPtr>();
+    return E2EMetrics{id,
+                      ms,
+                      bytes,
+                      std::move(src),
+                      std::move(dst),
+                      std::move(src_sel),
+                      std::move(dst_sel)};
   }
 };
 

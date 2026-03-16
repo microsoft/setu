@@ -310,6 +310,10 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
     e2e.copy_op_id = response.copy_op_id;
     e2e.e2e_time_ms = e2e_ms;
     e2e.total_bytes_transferred = total_bytes;
+    e2e.src_name = state->spec.src_name;
+    e2e.dst_name = state->spec.dst_name;
+    e2e.src_selection = state->spec.src_selection;
+    e2e.dst_selection = state->spec.dst_selection;
     metrics_sink_->Submit(setu::telemetry::MetricsMessage{e2e});
   }
 

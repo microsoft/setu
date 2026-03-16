@@ -12,7 +12,7 @@ Setu serialization conventions:
 import struct
 import uuid
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class BinaryReader:
@@ -48,6 +48,16 @@ class BinaryReader:
     def read_string(self) -> str:
         length = self.read_uint32()
         return self._read_raw(length).decode("utf-8")
+
+    def read_int64(self) -> int:
+        return struct.unpack("<q", self._read_raw(8))[0]
+
+    def read_uint64_native(self) -> int:
+        """Read a std::size_t (8 bytes on 64-bit systems)."""
+        return struct.unpack("<Q", self._read_raw(8))[0]
+
+    def read_bool(self) -> bool:
+        return struct.unpack("<?", self._read_raw(1))[0]
 
     def read_uuid(self) -> uuid.UUID:
         raw = self._read_raw(16)
@@ -94,10 +104,32 @@ class CompilationMetricsRecord:
 
 
 @dataclass
+class IndexRangeRecord:
+    start: int
+    end: int
+
+
+@dataclass
+class IndexRangeSetRecord:
+    dim_size: int
+    ranges: List[IndexRangeRecord]
+
+
+@dataclass
+class TensorSelectionRecord:
+    name: str
+    indices: Dict[str, IndexRangeSetRecord]
+
+
+@dataclass
 class E2EMetricsRecord:
     copy_op_id: uuid.UUID
     e2e_time_ms: float
     total_bytes_transferred: int
+    src_name: str
+    dst_name: str
+    src_selection: Optional[TensorSelectionRecord]
+    dst_selection: Optional[TensorSelectionRecord]
 
 
 # Variant index mapping (must match C++ MetricsMessage variant order)
@@ -170,16 +202,63 @@ def _read_compilation_metrics(reader: BinaryReader) -> CompilationMetricsRecord:
     )
 
 
+def _read_index_range_set(reader: BinaryReader) -> IndexRangeSetRecord:
+    """Read an IndexRangeSet (Serializable: uint32 size prefix + payload).
+
+    Payload: size_t dim_size + vector<IndexRange>.
+    IndexRange is trivially copyable (int64 start + int64 end = 16 bytes),
+    so the vector is bulk-copied: uint32 count + count * 16 bytes.
+    """
+    _size = reader.read_uint32()
+    dim_size = reader.read_uint64_native()
+    num_ranges = reader.read_uint32()
+    ranges = []
+    for _ in range(num_ranges):
+        start = reader.read_int64()
+        end = reader.read_int64()
+        ranges.append(IndexRangeRecord(start=start, end=end))
+    return IndexRangeSetRecord(dim_size=dim_size, ranges=ranges)
+
+
+def _read_tensor_selection(reader: BinaryReader) -> Optional[TensorSelectionRecord]:
+    """Read a shared_ptr<TensorSelection>.
+
+    Wire format: bool present + (if true) Serializable TensorSelection.
+    TensorSelection payload: string name + unordered_map<string, IndexRangeSet>.
+    """
+    present = reader.read_bool()
+    if not present:
+        return None
+    # Serializable size prefix
+    _size = reader.read_uint32()
+    name = reader.read_string()
+    num_dims = reader.read_uint32()
+    indices: Dict[str, IndexRangeSetRecord] = {}
+    for _ in range(num_dims):
+        dim_name = reader.read_string()
+        irs = _read_index_range_set(reader)
+        indices[dim_name] = irs
+    return TensorSelectionRecord(name=name, indices=indices)
+
+
 def _read_e2e_metrics(reader: BinaryReader) -> E2EMetricsRecord:
     """Read E2EMetrics (Serializable: uint32 size prefix + payload)."""
     _size = reader.read_uint32()
     copy_op_id = reader.read_uuid()
     ms = reader.read_double()
     total_bytes = reader.read_uint64()
+    src_name = reader.read_string()
+    dst_name = reader.read_string()
+    src_selection = _read_tensor_selection(reader)
+    dst_selection = _read_tensor_selection(reader)
     return E2EMetricsRecord(
         copy_op_id=copy_op_id,
         e2e_time_ms=ms,
         total_bytes_transferred=total_bytes,
+        src_name=src_name,
+        dst_name=dst_name,
+        src_selection=src_selection,
+        dst_selection=dst_selection,
     )
 
 

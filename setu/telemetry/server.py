@@ -17,6 +17,7 @@ from setu.telemetry.deserialize import (
     CompilationMetricsRecord,
     E2EMetricsRecord,
     NCCLWorkerMetricsRecord,
+    TensorSelectionRecord,
     deserialize_metrics_message,
 )
 from setu.telemetry.sinks.base import ReportSink
@@ -37,6 +38,10 @@ class CopySpecReport:
     compile_time_ms: Optional[float] = None
     e2e_time_ms: Optional[float] = None
     total_bytes_transferred: Optional[int] = None
+    src_name: Optional[str] = None
+    dst_name: Optional[str] = None
+    src_selection: Optional[Dict[str, Any]] = None
+    dst_selection: Optional[Dict[str, Any]] = None
     num_participants: Optional[int] = None
     participant_instruction_counts: Optional[List] = None
     pass_timings: Optional[List] = None
@@ -50,6 +55,10 @@ class CopySpecReport:
             "compile_time_ms": self.compile_time_ms,
             "e2e_time_ms": self.e2e_time_ms,
             "total_bytes_transferred": self.total_bytes_transferred,
+            "src_name": self.src_name,
+            "dst_name": self.dst_name,
+            "src_selection": self.src_selection,
+            "dst_selection": self.dst_selection,
             "num_participants": self.num_participants,
             "participant_instruction_counts": self.participant_instruction_counts,
             "pass_timings": self.pass_timings,
@@ -58,6 +67,24 @@ class CopySpecReport:
         if self.stall_analysis is not None:
             d["stall_analysis"] = {str(k): v for k, v in self.stall_analysis.items()}
         return d
+
+
+def _selection_to_dict(
+    sel: Optional[TensorSelectionRecord],
+) -> Optional[Dict[str, Any]]:
+    """Convert a TensorSelectionRecord to a JSON-serializable dict."""
+    if sel is None:
+        return None
+    return {
+        "name": sel.name,
+        "indices": {
+            dim_name: {
+                "dim_size": irs.dim_size,
+                "ranges": [{"start": r.start, "end": r.end} for r in irs.ranges],
+            }
+            for dim_name, irs in sel.indices.items()
+        },
+    }
 
 
 def _compute_stall_analysis(
@@ -324,6 +351,10 @@ class MetricsServer:
                 report = self._get_or_create(record.copy_op_id)
                 report.e2e_time_ms = record.e2e_time_ms
                 report.total_bytes_transferred = record.total_bytes_transferred
+                report.src_name = record.src_name
+                report.dst_name = record.dst_name
+                report.src_selection = _selection_to_dict(record.src_selection)
+                report.dst_selection = _selection_to_dict(record.dst_selection)
 
                 # E2E is the last metric received; finalize the report
                 self._finalize_report(report)
