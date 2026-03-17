@@ -29,10 +29,12 @@ import ray
 
 from setu._commons.datatypes import TensorDim
 from setu._coordinator import Link, Participant, Path as RoutePath, RoutingHint
-from setu.bench.__main__ import _build_sharded_tensor, _parse_size
+from setu.bench.cluster_setup import build_sharded_tensor
 from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
 from setu.cluster.ray.cluster import Cluster
+from setu.schedule import Schedule
+from setu.utils.parsing import parse_num_bytes
 
 
 def parse_args():
@@ -173,10 +175,10 @@ def _build_rail_hints(cluster_info):
 def main():
     args = parse_args()
 
-    begin_bytes = _parse_size(args.b)
-    end_bytes = _parse_size(args.e)
+    begin_bytes = parse_num_bytes(args.b)
+    end_bytes = parse_num_bytes(args.e)
     sizes = _build_size_list(begin_bytes, end_bytes, args.f)
-    register_sizes = [_parse_size(s) for s in args.register_sizes]
+    register_sizes = [parse_num_bytes(s) for s in args.register_sizes]
     copy_mode = CopyMode(args.mode)
 
     # Build env_vars for actors
@@ -227,7 +229,7 @@ def main():
 
         print(f"  Cluster started: {cluster_info.num_nodes} nodes, {cluster_info.total_gpus} GPUs")
 
-        hints = _build_rail_hints(cluster_info)
+        rail_schedule = Schedule(hints=_build_rail_hints(cluster_info))
 
         failed = 0
         for data_size in sizes:
@@ -235,16 +237,16 @@ def main():
             print(f"  {size_label}: ", end="", flush=True)
 
             # Source: 1 device on node 0
-            src = _build_sharded_tensor(
+            src = build_sharded_tensor(
                 "src_t", cluster_info, data_size, specs=["0:0"]
             )
             # Destination: all devices on node 1
-            dst = _build_sharded_tensor(
+            dst = build_sharded_tensor(
                 "dst_t", cluster_info, data_size, specs=["1"]
             )
 
             variant_results = []
-            for variant, variant_hints in [("baseline", None), ("rail_hints", hints)]:
+            for variant, variant_hints in [("baseline", None), ("rail_hints", rail_schedule.hints)]:
                 point_dir = os.path.join(reg_dir, size_label, variant)
                 os.makedirs(point_dir, exist_ok=True)
 

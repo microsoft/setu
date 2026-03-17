@@ -2,16 +2,12 @@ import argparse
 import os
 import uuid
 
-from setu.cluster.ray import Cluster
-from setu.bench.__main__ import _connect_prespawned, _build_sharded_tensor
+from setu._coordinator import BandwidthHint, Participant, Link, Path as RoutePath, PipelineChunkSizeHint
+from setu.bench.cluster_setup import connect_prespawned, build_sharded_tensor
 from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
-from setu._coordinator import BandwidthHint, Participant, Link, Path as RoutePath, PipelineChunkSizeHint
-
-try:
-    from setu.utils.parsing import parse_num_bytes as _parse_size
-except ImportError:
-    from setu.bench.__main__ import _parse_size
+from setu.schedule import Schedule
+from setu.utils.parsing import parse_num_bytes as _parse_size
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cluster-info", type=str, required=True)
@@ -57,7 +53,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-cluster_info = _connect_prespawned(args.cluster_info)
+cluster_info = connect_prespawned(args.cluster_info)
 print(cluster_info)
 
 # Select GPU group: 0 = devices 0-3, 1 = devices 4-7
@@ -72,31 +68,35 @@ pipeline_chunk_size_hints = (
     else []
 )
 
-hints = [
-    BandwidthHint(
-        src=Participant(node_id, devices[base]),
-        dst=Participant(node_id, devices[base + 3]),
-        paths=[
-            RoutePath(
-                hops=[
-                    Participant(node_id, devices[base]),
-                    Participant(node_id, devices[base + 3]),
-                ],
-                links=[Link(0.0, 1.0)],
-            ),
-            RoutePath(
-                hops=[
-                    Participant(node_id, devices[base]),
-                    Participant(node_id, devices[base + 1]),
-                    Participant(node_id, devices[base + 2]),
-                    Participant(node_id, devices[base + 3]),
-                ],
-                links=[Link(0.0, 1.0), Link(0.0, 1.0)],
-            ),
-        ],
-        weights=[0.5, 0.5],
-    )
-]
+schedule_baseline = Schedule(hints=pipeline_chunk_size_hints)
+schedule_relay = Schedule(
+    hints=[
+        BandwidthHint(
+            src=Participant(node_id, devices[base]),
+            dst=Participant(node_id, devices[base + 3]),
+            paths=[
+                RoutePath(
+                    hops=[
+                        Participant(node_id, devices[base]),
+                        Participant(node_id, devices[base + 3]),
+                    ],
+                    links=[Link(0.0, 1.0)],
+                ),
+                RoutePath(
+                    hops=[
+                        Participant(node_id, devices[base]),
+                        Participant(node_id, devices[base + 1]),
+                        Participant(node_id, devices[base + 2]),
+                        Participant(node_id, devices[base + 3]),
+                    ],
+                    links=[Link(0.0, 1.0), Link(0.0, 1.0)],
+                ),
+            ],
+            weights=[0.5, 0.5],
+        )
+    ]
+    + pipeline_chunk_size_hints
+)
 
 for size_str in args.size:
     tensor_bytes = _parse_size(size_str)
@@ -104,8 +104,8 @@ for size_str in args.size:
 
     src_spec = [f"0:{base}"]
     dst_spec = [f"0:{base + 3}"]
-    src = _build_sharded_tensor("src_t", cluster_info, tensor_bytes, src_spec)
-    dst = _build_sharded_tensor("dst_t", cluster_info, tensor_bytes, dst_spec)
+    src = build_sharded_tensor("src_t", cluster_info, tensor_bytes, src_spec)
+    dst = build_sharded_tensor("dst_t", cluster_info, tensor_bytes, dst_spec)
 
     for run_idx in range(args.runs):
         run_dir = os.path.join(size_dir, str(run_idx))
@@ -124,7 +124,7 @@ for size_str in args.size:
             n_warmup_rounds=1,
             blocking=False,
             metrics_http_url=cluster_info.metrics_http_url,
-            hints=pipeline_chunk_size_hints,
+            hints=schedule_baseline.hints,
         )
         print("="*10, "Without Hints", "="*10)
         print(result.pretty_print())
@@ -141,7 +141,7 @@ for size_str in args.size:
             n_warmup_rounds=1,
             blocking=False,
             metrics_http_url=cluster_info.metrics_http_url,
-            hints=hints + pipeline_chunk_size_hints,
+            hints=schedule_relay.hints,
         )
         print("="*10, "With Hints", "="*10)
         print(result.pretty_print())

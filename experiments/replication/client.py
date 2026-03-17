@@ -8,16 +8,13 @@ import torch
 
 from setu._commons.datatypes import TensorDim, TensorDimSpec, TensorShardSpec
 from setu._coordinator import Participant, ReplicationHint, ReplicationStrategy
-from setu.bench.__main__ import _connect_prespawned
+from setu.bench.cluster_setup import connect_prespawned
 from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
 from setu.cluster.info import ClusterInfo
 from setu.cluster.mesh import Mesh
-
-try:
-    from setu.utils.parsing import parse_num_bytes as _parse_size
-except ImportError:
-    from setu.bench.__main__ import _parse_size
+from setu.schedule import Schedule
+from setu.utils.parsing import parse_num_bytes as _parse_size
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +168,7 @@ assert len(src_gpus) == len(dst_gpus), (
 )
 
 # Connect to cluster
-cluster_info = _connect_prespawned(args.cluster_info)
+cluster_info = connect_prespawned(args.cluster_info)
 print(cluster_info)
 
 tensor_bytes = _parse_size(args.size)
@@ -192,9 +189,9 @@ for run_idx in range(args.runs):
     print(f"\n{'='*10} Run {run_idx} | src={src_gpus} dst={dst_gpus} {'='*10}")
 
     # --- Naive strategy ---
-    hints_naive = [
-        ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.Naive)
-    ]
+    schedule_naive = Schedule(
+        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.Naive)]
+    )
     result = run_experiment(
         cluster_info=cluster_info,
         src=src,
@@ -205,16 +202,16 @@ for run_idx in range(args.runs):
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
         metrics_http_url=cluster_info.metrics_http_url,
-        hints=hints_naive,
+        hints=schedule_naive.hints,
     )
     print("=" * 10, "Naive Strategy", "=" * 10)
     print(result.pretty_print())
     result.dump_csv(os.path.join(run_dir, "naive"))
 
     # --- AllGather strategy ---
-    hints_allgather = [
-        ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.AllGather)
-    ]
+    schedule_allgather = Schedule(
+        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.AllGather)]
+    )
     result = run_experiment(
         cluster_info=cluster_info,
         src=src,
@@ -225,7 +222,7 @@ for run_idx in range(args.runs):
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
         metrics_http_url=cluster_info.metrics_http_url,
-        hints=hints_allgather,
+        hints=schedule_allgather.hints,
     )
     print("=" * 10, "AllGather Strategy", "=" * 10)
     print(result.pretty_print())

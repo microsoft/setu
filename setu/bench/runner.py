@@ -44,6 +44,8 @@ def _source_body(
     n_copy_rounds,
     blocking,
     hints=None,
+    schedule=None,
+    cluster_info=None,
 ):
     """Register a source shard, fill with init_value, then run N copy rounds.
 
@@ -91,14 +93,26 @@ def _source_body(
 
     barrier.wait()  # all registered
 
-    def _submit_source_copy():
+    def _submit_source_copy(round_index=-1):
+        effective_hints = hints
+        if schedule is not None and cluster_info is not None:
+            from setu.bench.schedule import CopyContext
+
+            ctx = CopyContext(
+                src_name=shard_spec.name,
+                dst_name=dst_name,
+                cluster_info=cluster_info,
+                total_bytes=shard_spec.dims[0].size * shard_spec.dtype.itemsize,
+                round_index=round_index,
+            )
+            effective_hints = schedule(ctx).hints
         src_selection = client.select(shard_spec.name)
         dst_selection = client.select(dst_name)
         if selections is not None:
             for dim_name, indices in selections.items():
                 src_selection = src_selection.where(dim_name, indices)
                 dst_selection = dst_selection.where(dim_name, indices)
-        op_id = client.copy(src_selection, dst_selection, hints=hints)
+        op_id = client.copy(src_selection, dst_selection, hints=effective_hints)
         assert op_id is not None, "Copy operation returned None"
         return op_id
 
@@ -109,7 +123,7 @@ def _source_body(
         barrier.wait()  # round start
         t_round = time.monotonic()
         if copy_mode == CopyMode.COPY:
-            client.wait(_submit_source_copy())
+            client.wait(_submit_source_copy(round_index=-1))
         elapsed = time.monotonic() - t_round
         barrier.wait()  # round end
         warmup_times.append(elapsed)
@@ -122,7 +136,7 @@ def _source_body(
             barrier.wait()  # round start
             t_round = time.monotonic()
             if copy_mode == CopyMode.COPY:
-                op_id = _submit_source_copy()
+                op_id = _submit_source_copy(round_index=round_i)
                 logger.debug(
                     "%s: round %d, submitted copy op %s, waiting...",
                     tag,
@@ -142,7 +156,7 @@ def _source_body(
         op_ids = []
         if copy_mode == CopyMode.COPY:
             for round_i in range(n_copy_rounds):
-                op_ids.append(_submit_source_copy())
+                op_ids.append(_submit_source_copy(round_index=round_i))
                 logger.debug("%s: round %d, submitted (non-blocking)", tag, round_i)
         for op_id in op_ids:
             client.wait(op_id)
@@ -181,6 +195,8 @@ def _dest_body(
     n_copy_rounds,
     blocking,
     hints=None,
+    schedule=None,
+    cluster_info=None,
 ):
     """Register a dest shard, then run N copy rounds with verification on the last.
 
@@ -209,7 +225,19 @@ def _dest_body(
 
     barrier.wait()  # all registered
 
-    def _submit_dest_copy():
+    def _submit_dest_copy(round_index=-1):
+        effective_hints = hints
+        if schedule is not None and cluster_info is not None:
+            from setu.bench.schedule import CopyContext
+
+            ctx = CopyContext(
+                src_name=src_name,
+                dst_name=shard_spec.name,
+                cluster_info=cluster_info,
+                total_bytes=shard_spec.dims[0].size * shard_spec.dtype.itemsize,
+                round_index=round_index,
+            )
+            effective_hints = schedule(ctx).hints
         src_selection = client.select(src_name)
         dst_selection = client.select(shard_spec.name)
         if selections is not None:
@@ -217,9 +245,9 @@ def _dest_body(
                 src_selection = src_selection.where(dim_name, indices)
                 dst_selection = dst_selection.where(dim_name, indices)
         if copy_mode == CopyMode.PULL:
-            op_id = client.pull(src_selection, dst_selection, hints=hints)
+            op_id = client.pull(src_selection, dst_selection, hints=effective_hints)
         else:
-            op_id = client.copy(src_selection, dst_selection, hints=hints)
+            op_id = client.copy(src_selection, dst_selection, hints=effective_hints)
         assert op_id is not None, "Copy operation returned None"
         return op_id
 
@@ -228,7 +256,7 @@ def _dest_body(
     for round_i in range(n_warmup_rounds):
         barrier.wait()  # round start
         t_round = time.monotonic()
-        client.wait(_submit_dest_copy())
+        client.wait(_submit_dest_copy(round_index=-1))
         elapsed = time.monotonic() - t_round
         barrier.wait()  # round end
         warmup_times.append(elapsed)
@@ -240,7 +268,7 @@ def _dest_body(
         for round_i in range(n_copy_rounds):
             barrier.wait()  # round start
             t_round = time.monotonic()
-            op_id = _submit_dest_copy()
+            op_id = _submit_dest_copy(round_index=round_i)
             logger.debug(
                 "%s: round %d, submit %s op %s, waiting...",
                 tag,
@@ -257,7 +285,9 @@ def _dest_body(
         # Non-blocking: queue all copies, sync once at the end.
         barrier.wait()  # all ranks start together
         t_all = time.monotonic()
-        op_ids = [_submit_dest_copy() for round_i in range(n_copy_rounds)]
+        op_ids = [
+            _submit_dest_copy(round_index=round_i) for round_i in range(n_copy_rounds)
+        ]
         logger.debug(
             "%s: submitted %d %s ops (non-blocking)",
             tag,
@@ -368,6 +398,7 @@ def run_experiment(
     blocking: bool = True,
     metrics_http_url: str = "",
     hints: Optional[List] = None,
+    schedule=None,
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -478,6 +509,8 @@ def run_experiment(
                 n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
                 hints=hints,
+                schedule=schedule,
+                cluster_info=cluster_info,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1
@@ -496,6 +529,8 @@ def run_experiment(
                 n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
                 hints=hints,
+                schedule=schedule,
+                cluster_info=cluster_info,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1
