@@ -17,38 +17,33 @@
 #include "node_manager/worker/Worker.h"
 //==============================================================================
 #include "commons/Logging.h"
-#include "commons/utils/Comm.h"
 #include "commons/utils/ThreadingUtils.h"
-#include "messaging/Messages.h"
 //==============================================================================
 namespace setu::node_manager::worker {
-//==============================================================================
-using setu::commons::RequestId;
-using setu::commons::enums::ErrorCode;
-using setu::commons::messages::ExecuteProgramRequest;
-using setu::commons::messages::ExecuteProgramResponse;
-using setu::commons::messages::SubmitCopyResponse;
-using setu::commons::messages::WaitForCopyResponse;
-using setu::commons::utils::Comm;
-using setu::commons::utils::ZmqHelper;
-using setu::planner::ir::llc::Instruction;
 //==============================================================================
 Worker::Worker(NodeId node_id, Device device)
     : node_id_(node_id), device_(device), worker_running_{false} {}
 
-Worker::~Worker() {
-  Stop();
-  CloseZmqSockets();
+Worker::~Worker() { Stop(); }
+
+void Worker::Bind(Queue<WorkerTask>& input_queue,
+                  Queue<WorkerCompletion>& completion_queue) {
+  input_queue_ = &input_queue;
+  completion_queue_ = &completion_queue;
 }
 
 void Worker::Start() {
-  if (worker_running_) return;
+  if (worker_running_.load()) return;
 
-  if (!worker_running_.load()) {
-    worker_running_ = true;
-    worker_thread_ = std::thread(
-        SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
-  }
+  ASSERT_VALID_RUNTIME(input_queue_ != nullptr,
+                       "Worker must be bound to an input queue before Start()");
+  ASSERT_VALID_RUNTIME(
+      completion_queue_ != nullptr,
+      "Worker must be bound to a completion queue before Start()");
+
+  worker_running_ = true;
+  worker_thread_ = std::thread(
+      SETU_LAUNCH_THREAD([this]() { WorkerLoop(); }, "WorkerLoop"));
 }
 
 void Worker::Stop() {
@@ -61,24 +56,6 @@ void Worker::Stop() {
   }
 }
 
-void Worker::Connect(ZmqContextPtr zmq_context, std::string endpoint) {
-  ASSERT_VALID_POINTER_ARGUMENT(zmq_context);
-  zmq_context_ = std::move(zmq_context);
-  endpoint_ = std::move(endpoint);
-  InitZmqSockets();
-}
-
-void Worker::InitZmqSockets() {
-  socket_ =
-      std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::rep);
-  socket_->set(zmq::sockopt::linger, 0);
-  socket_->bind(endpoint_);
-}
-
-void Worker::CloseZmqSockets() {
-  if (socket_) socket_->close();
-}
-
 void Worker::SetMetricsSink(MetricsSinkPtr sink) {
   metrics_sink_ = std::move(sink);
 }
@@ -88,25 +65,25 @@ void Worker::WorkerLoop() {
 
   this->Setup();
   while (worker_running_) {
-    // Receive ExecuteProgramRequest from NodeAgent
-    auto request = Comm::Recv<ExecuteProgramRequest>(socket_);
-    current_copy_op_id_ = request.copy_op_id;
-    const auto& program = request.program;
+    try {
+      auto task = input_queue_->pull();
+      current_copy_op_id_ = task.copy_op_id;
 
-    auto t0 = std::chrono::steady_clock::now();
+      auto t0 = std::chrono::steady_clock::now();
 
-    // Execute each instruction in the program
-    this->Execute(program);
+      this->Execute(task.program);
 
-    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
-                  std::chrono::steady_clock::now() - t0)
-                  .count();
-    LOG_DEBUG("Worker[{}]: Execute took {}us, {} instructions", device_, dt,
-              program.size());
+      auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count();
+      LOG_DEBUG("Worker[{}]: Execute took {}us, {} instructions", device_, dt,
+                task.program.size());
 
-    // Send acknowledgment back to NodeAgent
-    ExecuteProgramResponse response(RequestId{}, ErrorCode::kSuccess);
-    Comm::Send(socket_, response);
+      completion_queue_->push(
+          WorkerCompletion{task.copy_op_id, device_.LocalDeviceIndex()});
+    } catch (const boost::concurrent::sync_queue_is_closed&) {
+      return;
+    }
   }
 }
 //==============================================================================

@@ -20,17 +20,9 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/CUDAUtils.h"
-#include "commons/utils/Comm.h"
-#include "commons/utils/ThreadingUtils.h"
-#include "messaging/Messages.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
-using setu::commons::enums::ErrorCode;
-using setu::commons::messages::ExecuteProgramRequest;
-using setu::commons::messages::ExecuteProgramResponse;
-using setu::commons::utils::Comm;
-using setu::commons::utils::ZmqHelper;
 using setu::planner::Participant;
 
 //==============================================================================

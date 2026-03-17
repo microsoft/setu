@@ -90,13 +90,46 @@ using setu::commons::utils::ring::CompletionEntry;
 using setu::commons::utils::ring::CompletionRingProducer;
 using setu::commons::utils::ring::ShmRing;
 using setu::node_manager::worker::Worker;
+using setu::node_manager::worker::WorkerCompletion;
+using setu::node_manager::worker::WorkerTask;
 using setu::planner::Plan;
 using setu::planner::ir::llc::Program;
+using setu::planner::ir::llc::ShardAccessMap;
 using setu::planner::ir::ref::BufferRef;
 using setu::planner::ir::ref::RegisterRef;
 using setu::planner::ir::ref::ShardRef;
 
 using RegisterResolver = std::function<DevicePtr(const RegisterRef&)>;
+//==============================================================================
+
+/// @brief Tracks a single in-flight copy operation dispatched to workers.
+struct InFlightEntry {
+  std::int32_t remaining_workers;
+  ShardAccessMap shard_access_map;
+  std::chrono::steady_clock::time_point dispatched_at;
+};
+
+/// @brief Shared state between Dispatcher and Poller threads.
+struct AsyncExecutorState {
+  /// Per-worker input queues (Dispatcher pushes, Worker pulls).
+  std::unordered_map<DeviceRank, Queue<WorkerTask>> worker_queues;
+
+  /// Completion queue (Workers push, Poller pulls).
+  Queue<WorkerCompletion> completion_queue;
+
+  /// In-flight tracking and shard ref counts.
+  /// Protected by in_flight_mutex. Only held briefly for counter ops.
+  std::mutex in_flight_mutex;
+  std::unordered_map<CopyOperationId, InFlightEntry> in_flight;
+
+  /// Per-shard ref count: number of in-flight plans touching this shard.
+  /// Dispatcher increments, Poller decrements.
+  std::unordered_map<ShardId, std::int32_t> shard_ref_counts;
+
+  /// Notified when any shard ref count reaches zero.
+  std::condition_variable shard_ref_zero_cv;
+};
+
 //==============================================================================
 class NodeAgent {
  public:
@@ -115,11 +148,10 @@ class NodeAgent {
 
  private:
   //============================================================================
-  // Handler and Executor are private structs that each own a component running
-  // in a separate thread. Since ZMQ sockets are not thread-safe, each struct is
-  // responsible for creating its own sockets from a shared ZMQ context (which
-  // is thread-safe). This design prevents accidental sharing of sockets across
-  // threads and keeps socket lifecycle management clean and localized.
+  // Handler, Dispatcher, and Poller are private structs that each own a
+  // component running in a separate thread. Since ZMQ sockets are not
+  // thread-safe, each struct that uses ZMQ is responsible for creating its own
+  // sockets from a shared ZMQ context (which is thread-safe).
   //============================================================================
 
   //============================================================================
@@ -133,7 +165,8 @@ class NodeAgent {
             std::string lock_base_dir,
             std::unordered_map<setu::planner::Participant,
                                setu::planner::RegisterSet>
-                register_sets);
+                register_sets,
+            AsyncExecutorState& async_executor_state);
     ~Handler();
 
     void Start();
@@ -187,6 +220,9 @@ class NodeAgent {
     void HandleSubmitCopyResponse(const SubmitCopyResponse& response);
 
     void AllocateTensor(const TensorShardMetadata& shard_metadata);
+
+    /// Wait until all in-flight worker operations on the given shards complete.
+    void WaitForShardRefCountZero(const std::vector<ShardId>& shard_ids);
 
     NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
@@ -256,19 +292,48 @@ class NodeAgent {
     std::unordered_map<CopyOperationId, std::vector<Identity>,
                        boost::hash<CopyOperationId>>
         copy_op_to_clients_;
+
+    AsyncExecutorState& async_executor_state_;
   };
 
   //============================================================================
-  // Executor: Executes plans by dispatching to workers
+  // Dispatcher: Embellishes programs and dispatches them to worker queues.
+  // Does not wait for workers to finish — fires and moves on.
   //============================================================================
-  struct Executor {
-    Executor(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
-             const std::string& coordinator_endpoint,
-             const std::vector<Device>& devices,
-             Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
-             TensorShardsConcurrentMap const& shard_id_to_tensor,
-             RegisterResolver register_resolver);
-    ~Executor();
+  struct Dispatcher {
+    Dispatcher(NodeId node_id,
+               Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
+               TensorShardsConcurrentMap const& shard_id_to_tensor,
+               RegisterResolver register_resolver,
+               AsyncExecutorState& state);
+    ~Dispatcher();
+
+    void Start();
+    void Stop();
+
+   private:
+    void Loop();
+    void EmbellishProgram(Program& program);
+
+    NodeId node_id_;
+    Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
+    TensorShardsConcurrentMap const& shard_id_to_tensor_;
+    RegisterResolver register_resolver_;
+    AsyncExecutorState& state_;
+
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+  };
+
+  //============================================================================
+  // Poller: Drains the completion queue and notifies the coordinator when
+  // all workers for a copy operation have finished.
+  //============================================================================
+  struct Poller {
+    Poller(NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
+           const std::string& coordinator_endpoint,
+           AsyncExecutorState& state);
+    ~Poller();
 
     void Start();
     void Stop();
@@ -277,21 +342,15 @@ class NodeAgent {
     void InitSockets();
     void CloseSockets();
     void Loop();
-    void EmbellishProgram(Program& program);
 
     NodeId node_id_;
     std::shared_ptr<zmq::context_t> zmq_context_;
     std::string coordinator_endpoint_;
-    std::vector<Device> devices_;
-    Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
+    AsyncExecutorState& state_;
 
     ZmqSocketPtr async_socket_;  // DEALER socket for async send to coordinator
-    std::unordered_map<DeviceRank, ZmqSocketPtr> worker_sockets_;
-
     std::thread thread_;
     std::atomic<bool> running_{false};
-    TensorShardsConcurrentMap const& shard_id_to_tensor_;
-    RegisterResolver register_resolver_;
   };
 
   NodeId node_id_;
@@ -308,7 +367,10 @@ class NodeAgent {
   Queue<std::pair<CopyOperationId, Plan>> executor_queue_;
 
   std::unique_ptr<Handler> handler_;
-  std::unique_ptr<Executor> executor_;
+
+  AsyncExecutorState async_executor_state_;
+  std::unique_ptr<Dispatcher> dispatcher_;
+  std::unique_ptr<Poller> poller_;
 
   TensorShardsConcurrentMap shard_id_to_tensor_;
   std::string lock_base_dir_;  ///< Directory for file-based locks (IPC)

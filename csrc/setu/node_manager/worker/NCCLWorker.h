@@ -23,7 +23,6 @@
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
-#include "commons/utils/ZmqHelper.h"
 #include "node_manager/worker/RegisterFile.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"

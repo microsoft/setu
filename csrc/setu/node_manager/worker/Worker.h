@@ -16,12 +16,12 @@
 //==============================================================================
 #pragma once
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
 //==============================================================================
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
-#include "commons/utils/ZmqHelper.h"
 #include "planner/ir/llc/Instruction.h"
 #include "planner/ir/ref/RegisterRef.h"
 #include "telemetry/MetricsSink.h"
@@ -30,28 +30,44 @@ namespace setu::node_manager::worker {
 //==============================================================================
 using setu::commons::CopyOperationId;
 using setu::commons::DevicePtr;
+using setu::commons::DeviceRank;
 using setu::commons::NodeId;
+using setu::commons::Queue;
 using setu::commons::datatypes::Device;
 using setu::commons::enums::ErrorCode;
-using setu::commons::utils::ZmqContextPtr;
-using setu::commons::utils::ZmqSocketPtr;
 using setu::planner::ir::llc::Program;
 using setu::planner::ir::ref::RegisterRef;
 using setu::telemetry::MetricsSinkPtr;
+//==============================================================================
+
+/// @brief Work item dispatched to a worker's input queue.
+struct WorkerTask {
+  CopyOperationId copy_op_id;
+  Program program;
+};
+
+/// @brief Completion notification pushed by a worker after executing a task.
+struct WorkerCompletion {
+  CopyOperationId copy_op_id;
+  DeviceRank device_rank;
+};
+
 //==============================================================================
 class Worker {
  public:
   Worker(NodeId node_id, Device device);
   ~Worker();
 
-  void Connect(ZmqContextPtr zmq_context, std::string endpoint);
+  /// Bind this worker to an input queue (for receiving tasks) and a
+  /// completion queue (for signaling done). Must be called before Start().
+  void Bind(Queue<WorkerTask>& input_queue,
+            Queue<WorkerCompletion>& completion_queue);
 
   void Start();
   void Stop();
 
   [[nodiscard]] bool IsRunning() const { return worker_running_.load(); }
   [[nodiscard]] const Device& GetDevice() const { return device_; }
-  [[nodiscard]] const std::string& GetEndpoint() const { return endpoint_; }
 
   virtual void Execute(const Program& program) = 0;
   virtual void Setup() = 0;
@@ -64,17 +80,13 @@ class Worker {
   void SetMetricsSink(MetricsSinkPtr sink);
 
  protected:
-  void InitZmqSockets();
-  void CloseZmqSockets();
-
   void WorkerLoop();
 
   NodeId node_id_;
   Device device_;
 
-  std::string endpoint_;
-  ZmqContextPtr zmq_context_;
-  ZmqSocketPtr socket_;
+  Queue<WorkerTask>* input_queue_ = nullptr;
+  Queue<WorkerCompletion>* completion_queue_ = nullptr;
 
   std::atomic<bool> worker_running_;
 

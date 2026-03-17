@@ -94,55 +94,6 @@ using setu::planner::ir::llc::ShardAccessMode;
 //==============================================================================
 constexpr std::int32_t kPollTimeoutMs = 100;
 //==============================================================================
-
-/// @brief Holds all acquired shard lock handles for a plan execution.
-/// Handles are released automatically when this struct goes out of scope.
-struct ProgramLockGuard {
-  std::vector<TensorShardReadHandlePtr> read_handles;
-  std::vector<TensorShardWriteHandlePtr> write_handles;
-};
-
-/// @brief Acquires read/write lock handles for all shards referenced across
-/// all programs in a plan.
-[[nodiscard]] static ProgramLockGuard AcquirePlanLocks(
-    const setu::planner::Plan& plan,
-    const TensorShardsConcurrentMap& shard_map) {
-  // Merge shard access across all programs in the plan
-  ShardAccessMap plan_access_map;
-  for (const auto& [participant, program] : plan.program) {
-    for (const auto& [shard_id, mode] : GetShardAccess(program)) {
-      if (mode == ShardAccessMode::kWrite) {
-        plan_access_map[shard_id] = ShardAccessMode::kWrite;
-      } else {
-        plan_access_map.try_emplace(shard_id, ShardAccessMode::kRead);
-      }
-    }
-  }
-
-  // Acquire locks in sorted order (ShardAccessMap is sorted by ShardId)
-  ProgramLockGuard guard;
-  for (const auto& [shard_id, mode] : plan_access_map) {
-    TensorShardPtr shard_ptr = nullptr;
-    bool found = shard_map.visit(shard_id, [&shard_ptr](const auto& entry) {
-      shard_ptr = entry.second;
-    });
-    ASSERT_VALID_RUNTIME(found, "AcquirePlanLocks: shard {} not found in map",
-                         shard_id);
-
-    if (mode == ShardAccessMode::kWrite) {
-      guard.write_handles.push_back(
-          std::make_shared<TensorShardWriteHandle>(shard_ptr));
-    } else {
-      guard.read_handles.push_back(
-          std::make_shared<TensorShardReadHandle>(shard_ptr));
-    }
-  }
-
-  LOG_DEBUG("Acquired {} read + {} write shard locks for plan",
-            guard.read_handles.size(), guard.write_handles.size());
-  return guard;
-}
-//==============================================================================
 // NodeAgent Implementation
 //==============================================================================
 NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
@@ -158,14 +109,21 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
       lock_base_dir_(std::move(lock_base_dir)),
       metrics_endpoint_(std::move(metrics_endpoint)),
       register_size_(register_size) {
-  // Create workers and connect them via inproc sockets on the shared context
+  // Create per-worker input queues
   for (const auto& device : devices_) {
     auto device_rank = device.LocalDeviceIndex();
-    auto endpoint =
-        std::format("inproc://node_{}_worker_{}", node_id_, device_rank);
+    async_executor_state_.worker_queues.emplace(
+        std::piecewise_construct, std::forward_as_tuple(device_rank),
+        std::forward_as_tuple());
+  }
+
+  // Create workers and bind them to queues
+  for (const auto& device : devices_) {
+    auto device_rank = device.LocalDeviceIndex();
     auto worker = std::make_unique<worker::NCCLWorker>(
         node_id_, device, RegisterSet::Uniform(1, register_size_));
-    worker->Connect(zmq_context_, endpoint);
+    worker->Bind(async_executor_state_.worker_queues.at(device_rank),
+                 async_executor_state_.completion_queue);
 
     // Set up telemetry sink for each worker (each gets its own ZMQ socket)
     if (!metrics_endpoint_.empty()) {
@@ -186,12 +144,13 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
                                       RegisterSet::Uniform(1, register_size_));
   }
 
-  handler_ = std::make_unique<Handler>(node_id_, zmq_context_, port_,
-                                       coordinator_endpoint_, executor_queue_,
-                                       shard_id_to_tensor_, lock_base_dir_,
-                                       std::move(participant_register_sets));
+  handler_ = std::make_unique<Handler>(
+      node_id_, zmq_context_, port_, coordinator_endpoint_, executor_queue_,
+      shard_id_to_tensor_, lock_base_dir_,
+      std::move(participant_register_sets), async_executor_state_);
+
   // Build register resolver from workers — captures workers_ by reference,
-  // safe because NodeAgent outlives the Executor.
+  // safe because NodeAgent outlives the Dispatcher.
   RegisterResolver register_resolver =
       [this](const RegisterRef& ref) -> DevicePtr {
     ASSERT_VALID_RUNTIME(ref.participant.has_value(),
@@ -203,9 +162,13 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
     return it->second->ResolveRegister(ref);
   };
 
-  executor_ = std::make_unique<Executor>(
-      node_id_, zmq_context_, coordinator_endpoint_, devices_, executor_queue_,
-      shard_id_to_tensor_, std::move(register_resolver));
+  dispatcher_ = std::make_unique<Dispatcher>(
+      node_id_, executor_queue_, shard_id_to_tensor_,
+      std::move(register_resolver), async_executor_state_);
+
+  poller_ = std::make_unique<Poller>(node_id_, zmq_context_,
+                                     coordinator_endpoint_,
+                                     async_executor_state_);
 }
 
 NodeAgent::~NodeAgent() {
@@ -221,18 +184,37 @@ void NodeAgent::Start() {
     worker->Start();
   }
   handler_->Start();
-  executor_->Start();
+  dispatcher_->Start();
+  poller_->Start();
 }
 
 void NodeAgent::Stop() {
   LOG_DEBUG("Stopping NodeAgent");
 
+  // 1. Close the executor queue so Dispatcher exits its pull() loop
   executor_queue_.close();
+
+  // 2. Stop Handler (no more new work)
   handler_->Stop();
-  executor_->Stop();
-  for (auto& [device_rank, worker] : workers_) {
+
+  // 3. Stop Dispatcher (it has already exited due to queue close)
+  dispatcher_->Stop();
+
+  // 4. Close all worker input queues so workers exit their pull() loops
+  for (auto& [rank, queue] : async_executor_state_.worker_queues) {
+    queue.close();
+  }
+
+  // 5. Stop workers (they exit when input queue closes)
+  for (auto& [rank, worker] : workers_) {
     worker->Stop();
   }
+
+  // 6. Close completion queue so Poller exits
+  async_executor_state_.completion_queue.close();
+
+  // 7. Stop Poller
+  poller_->Stop();
 }
 
 //==============================================================================
@@ -244,7 +226,8 @@ NodeAgent::Handler::Handler(
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
     TensorShardsConcurrentMap& shard_id_to_tensor, std::string lock_base_dir,
     std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
-        register_sets)
+        register_sets,
+    AsyncExecutorState& async_executor_state)
     : node_id_(node_id),
       zmq_context_(zmq_context),
       port_(port),
@@ -252,7 +235,8 @@ NodeAgent::Handler::Handler(
       executor_queue_(executor_queue),
       shard_id_to_tensor_(shard_id_to_tensor),
       lock_base_dir_(std::move(lock_base_dir)),
-      register_sets_(std::move(register_sets)) {
+      register_sets_(std::move(register_sets)),
+      async_executor_state_(async_executor_state) {
   InitSockets();
 }
 
@@ -719,12 +703,25 @@ void NodeAgent::Handler::HandleDeregisterShardsResponse(
   auto original_requests =
       pending_deregistrations_.Resolve(response.request_id);
 
+  // Collect all shard IDs being deregistered
+  std::vector<ShardId> shard_ids;
+  for (const auto& original_request : original_requests) {
+    for (const auto& [tensor_name, ids] : original_request.shards_by_tensor) {
+      shard_ids.insert(shard_ids.end(), ids.begin(), ids.end());
+    }
+  }
+
+  // Wait for all in-flight GPU work on these shards to complete before
+  // cleaning up. This blocks the Handler thread, but deregister is infrequent
+  // and the wait is bounded by current in-flight GPU execution time.
+  WaitForShardRefCountZero(shard_ids);
+
   // Clean up local state now that the Coordinator has confirmed all pending
   // copies are complete and the shards are deregistered
   for (const auto& original_request : original_requests) {
-    for (const auto& [tensor_name, shard_ids] :
+    for (const auto& [tensor_name, shard_ids_for_tensor] :
          original_request.shards_by_tensor) {
-      for (const auto& shard_id : shard_ids) {
+      for (const auto& shard_id : shard_ids_for_tensor) {
         shard_id_to_tensor_.erase(shard_id);
         tensor_shard_metadata_map_.erase(shard_id);
         pending_shard_allocs_.RemoveBlocker(shard_id);
@@ -771,144 +768,120 @@ void NodeAgent::Handler::HandleConnectRequest(const Identity& client_identity,
             shm_name, client_identity);
 }
 
+void NodeAgent::Handler::WaitForShardRefCountZero(
+    const std::vector<ShardId>& shard_ids) {
+  std::unique_lock<std::mutex> lock(async_executor_state_.in_flight_mutex);
+  async_executor_state_.shard_ref_zero_cv.wait(lock, [&]() {
+    for (const auto& shard_id : shard_ids) {
+      auto it = async_executor_state_.shard_ref_counts.find(shard_id);
+      if (it != async_executor_state_.shard_ref_counts.end() &&
+          it->second > 0) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 //==============================================================================
-// Executor Implementation
+// Dispatcher Implementation
 //==============================================================================
-NodeAgent::Executor::Executor(
-    NodeId node_id, std::shared_ptr<zmq::context_t> zmq_context,
-    const std::string& coordinator_endpoint, const std::vector<Device>& devices,
+NodeAgent::Dispatcher::Dispatcher(
+    NodeId node_id,
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue,
     TensorShardsConcurrentMap const& shard_id_to_tensor,
-    RegisterResolver register_resolver)
+    RegisterResolver register_resolver, AsyncExecutorState& state)
     : node_id_(node_id),
-      zmq_context_(zmq_context),
-      coordinator_endpoint_(coordinator_endpoint),
-      devices_(devices),
       executor_queue_(executor_queue),
       shard_id_to_tensor_(shard_id_to_tensor),
-      register_resolver_(std::move(register_resolver)) {
-  InitSockets();
-}
+      register_resolver_(std::move(register_resolver)),
+      state_(state) {}
 
-NodeAgent::Executor::~Executor() {
-  Stop();
-  CloseSockets();
-}
+NodeAgent::Dispatcher::~Dispatcher() { Stop(); }
 
-void NodeAgent::Executor::InitSockets() {
-  Identity identity = to_string(node_id_) + "_executor";
-  async_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
-
-  // Connect REQ sockets to each worker's inproc endpoint
-  for (const auto& device : devices_) {
-    auto device_rank = device.LocalDeviceIndex();
-    auto endpoint =
-        std::format("inproc://node_{}_worker_{}", node_id_, device_rank);
-
-    auto socket =
-        std::make_shared<zmq::socket_t>(*zmq_context_, zmq::socket_type::req);
-    socket->set(zmq::sockopt::linger, 0);
-    socket->connect(endpoint);
-
-    worker_sockets_.emplace(device_rank, std::move(socket));
-  }
-}
-
-void NodeAgent::Executor::CloseSockets() {
-  // Close worker REQ sockets
-  for (auto& [device_rank, socket] : worker_sockets_) {
-    if (socket) {
-      socket->close();
-    }
-  }
-  worker_sockets_.clear();
-
-  if (async_socket_) {
-    async_socket_->close();
-  }
-}
-
-void NodeAgent::Executor::Start() {
+void NodeAgent::Dispatcher::Start() {
   if (running_.load()) {
     return;
   }
-  thread_ = std::thread(
-      SETU_LAUNCH_THREAD([this]() { this->Loop(); }, "ExecutorLoopThread"));
+  thread_ = std::thread(SETU_LAUNCH_THREAD([this]() { this->Loop(); },
+                                            "DispatcherLoopThread"));
 }
 
-void NodeAgent::Executor::Stop() {
+void NodeAgent::Dispatcher::Stop() {
   running_ = false;
-
   if (thread_.joinable()) {
     thread_.join();
   }
 }
 
-void NodeAgent::Executor::Loop() {
+void NodeAgent::Dispatcher::Loop() {
   running_ = true;
   while (running_) {
-    // Block until we receive a (copy_op_id, plan) pair from the queue
     try {
       auto [copy_op_id, plan] = executor_queue_.pull();
       auto t_dequeued = std::chrono::steady_clock::now();
 
+      // Embellish all programs (resolve symbolic refs to device pointers)
       for (auto& [participant, program] : plan.program) {
         EmbellishProgram(program);
       }
 
-      // Acquire shard locks for all programs in the plan.
-      auto lock_guard = AcquirePlanLocks(plan, shard_id_to_tensor_);
+      // Compute merged shard access map for the entire plan
+      ShardAccessMap plan_access_map;
+      for (const auto& [participant, program] : plan.program) {
+        for (const auto& [shard_id, mode] : GetShardAccess(program)) {
+          if (mode == ShardAccessMode::kWrite) {
+            plan_access_map[shard_id] = ShardAccessMode::kWrite;
+          } else {
+            plan_access_map.try_emplace(shard_id, ShardAccessMode::kRead);
+          }
+        }
+      }
 
-      // Send programs to workers
-      std::vector<std::int32_t> sent_device_ranks;
+      // Register in-flight entry and increment shard ref counts
+      {
+        std::lock_guard<std::mutex> lock(state_.in_flight_mutex);
+        for (const auto& [shard_id, mode] : plan_access_map) {
+          state_.shard_ref_counts[shard_id]++;
+        }
+        state_.in_flight.emplace(
+            copy_op_id,
+            InFlightEntry{
+                .remaining_workers =
+                    static_cast<std::int32_t>(plan.program.size()),
+                .shard_access_map = plan_access_map,
+                .dispatched_at = t_dequeued});
+      }
+
+      // Push programs to per-worker queues
       for (auto& [participant, program] : plan.program) {
         auto device_rank = participant.LocalDeviceIndex();
-        auto it = worker_sockets_.find(device_rank);
-        ASSERT_VALID_RUNTIME(it != worker_sockets_.end(),
-                             "No socket found for device_rank: {}",
+        auto it = state_.worker_queues.find(device_rank);
+        ASSERT_VALID_RUNTIME(it != state_.worker_queues.end(),
+                             "No worker queue for device_rank: {}",
                              device_rank);
 
-        LOG_DEBUG("Embellished program: {} {}", participant, program);
-        LOG_DEBUG("Sending program with {} instructions to worker {}",
+        LOG_DEBUG("Dispatching program with {} instructions to worker {}",
                   program.size(), device_rank);
-        ExecuteProgramRequest request(copy_op_id, program);
-        Comm::Send(it->second, request);
-        sent_device_ranks.push_back(device_rank);
+        it->second.push(
+            WorkerTask{copy_op_id, std::move(program)});
       }
 
-      auto t_sent = std::chrono::steady_clock::now();
-
-      // Wait for acknowledgment from all workers
-      for (auto device_rank : sent_device_ranks) {
-        auto it = worker_sockets_.find(device_rank);
-        [[maybe_unused]] auto response =
-            Comm::Recv<ExecuteProgramResponse>(it->second);
-      }
-
-      auto t_workers_done = std::chrono::steady_clock::now();
-
-      // Notify coordinator that execution is complete
-      ExecuteResponse response(RequestId{}, copy_op_id, ErrorCode::kSuccess);
-
+      auto t_dispatched = std::chrono::steady_clock::now();
       auto to_us = [](auto d) {
         return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
       };
-      LOG_DEBUG(
-          "NodeAgent Executor: copy_op_id={}, embellish+send={}us, "
-          "worker_execution={}us, total={}us, workers={}",
-          copy_op_id, to_us(t_sent - t_dequeued),
-          to_us(t_workers_done - t_sent), to_us(t_workers_done - t_dequeued),
-          sent_device_ranks.size());
+      LOG_DEBUG("Dispatcher: copy_op_id={}, embellish+dispatch={}us, workers={}",
+                copy_op_id, to_us(t_dispatched - t_dequeued),
+                plan.program.size());
 
-      Comm::Send<NodeAgentRequest>(async_socket_, response);
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       return;
     }
   }
 }
 
-void NodeAgent::Executor::EmbellishProgram(Program& program) {
+void NodeAgent::Dispatcher::EmbellishProgram(Program& program) {
   auto const resolver = [this](const BufferRef& ref) -> DevicePtr {
     if (ref.IsShard()) {
       const auto& shard = ref.AsShard();
@@ -931,6 +904,120 @@ void NodeAgent::Executor::EmbellishProgram(Program& program) {
     instr.Embellish(resolver);
   }
 }
+
+//==============================================================================
+// Poller Implementation
+//==============================================================================
+NodeAgent::Poller::Poller(NodeId node_id,
+                          std::shared_ptr<zmq::context_t> zmq_context,
+                          const std::string& coordinator_endpoint,
+                          AsyncExecutorState& state)
+    : node_id_(node_id),
+      zmq_context_(zmq_context),
+      coordinator_endpoint_(coordinator_endpoint),
+      state_(state) {
+  InitSockets();
+}
+
+NodeAgent::Poller::~Poller() {
+  Stop();
+  CloseSockets();
+}
+
+void NodeAgent::Poller::InitSockets() {
+  Identity identity = to_string(node_id_) + "_poller";
+  async_socket_ = ZmqHelper::CreateAndConnectSocket(
+      zmq_context_, zmq::socket_type::dealer, coordinator_endpoint_, identity);
+}
+
+void NodeAgent::Poller::CloseSockets() {
+  if (async_socket_) {
+    async_socket_->close();
+  }
+}
+
+void NodeAgent::Poller::Start() {
+  if (running_.load()) {
+    return;
+  }
+  thread_ = std::thread(
+      SETU_LAUNCH_THREAD([this]() { this->Loop(); }, "PollerLoopThread"));
+}
+
+void NodeAgent::Poller::Stop() {
+  running_ = false;
+  if (thread_.joinable()) {
+    thread_.join();
+  }
+}
+
+void NodeAgent::Poller::Loop() {
+  running_ = true;
+  while (running_) {
+    try {
+      auto completion = state_.completion_queue.pull();
+
+      CopyOperationId copy_op_id = completion.copy_op_id;
+      bool all_done = false;
+      ShardAccessMap shards_to_release;
+      std::chrono::steady_clock::time_point dispatched_at;
+
+      {
+        std::lock_guard<std::mutex> lock(state_.in_flight_mutex);
+        auto it = state_.in_flight.find(copy_op_id);
+        ASSERT_VALID_RUNTIME(
+            it != state_.in_flight.end(),
+            "Poller: completion for unknown copy_op_id: {}", copy_op_id);
+
+        it->second.remaining_workers--;
+        ASSERT_VALID_RUNTIME(
+            it->second.remaining_workers >= 0,
+            "Poller: remaining_workers went negative for {}", copy_op_id);
+
+        if (it->second.remaining_workers == 0) {
+          all_done = true;
+          shards_to_release = std::move(it->second.shard_access_map);
+          dispatched_at = it->second.dispatched_at;
+          state_.in_flight.erase(it);
+        }
+      }
+
+      if (all_done) {
+        // Decrement shard ref counts
+        {
+          std::lock_guard<std::mutex> lock(state_.in_flight_mutex);
+          for (const auto& [shard_id, mode] : shards_to_release) {
+            auto& count = state_.shard_ref_counts[shard_id];
+            count--;
+            ASSERT_VALID_RUNTIME(
+                count >= 0,
+                "Poller: shard ref count went negative for shard {}",
+                shard_id);
+            if (count == 0) {
+              state_.shard_ref_counts.erase(shard_id);
+            }
+          }
+          state_.shard_ref_zero_cv.notify_all();
+        }
+
+        auto t_done = std::chrono::steady_clock::now();
+        auto total_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                t_done - dispatched_at)
+                .count();
+        LOG_DEBUG("Poller: copy_op_id={} complete, total_latency={}us",
+                  copy_op_id, total_us);
+
+        // Notify coordinator that execution is complete
+        ExecuteResponse response(RequestId{}, copy_op_id, ErrorCode::kSuccess);
+        Comm::Send<NodeAgentRequest>(async_socket_, response);
+      }
+    } catch (const boost::concurrent::sync_queue_is_closed&) {
+      return;
+    }
+  }
+}
+
 //==============================================================================
 std::string NodeAgent::GetDefaultLockBaseDir() {
   auto base = std::filesystem::temp_directory_path() / "setu" / "locks";
