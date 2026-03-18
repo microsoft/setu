@@ -56,7 +56,7 @@ struct WorkerCompletion {
 class Worker {
  public:
   Worker(NodeId node_id, Device device);
-  ~Worker();
+  virtual ~Worker();
 
   /// Bind this worker to an input queue (for receiving tasks) and a
   /// completion queue (for signaling done). Must be called before Start().
@@ -81,6 +81,18 @@ class Worker {
 
  protected:
   void WorkerLoop();
+
+  /// @brief Check and report completions for previously dispatched GPU work.
+  /// Subclasses override to query CUDA events and push to completion_queue_.
+  /// Default: no-op (synchronous workers push completion in WorkerLoop).
+  virtual void DrainCompletions() {}
+
+  /// @brief Returns true if there are in-flight programs awaiting completion.
+  [[nodiscard]] virtual bool HasPendingCompletions() const { return false; }
+
+  /// @brief Block until there is capacity to dispatch another program.
+  /// Called before Execute() to enforce max in-flight limits.
+  virtual void WaitForCapacity() {}
 
   NodeId node_id_;
   Device device_;

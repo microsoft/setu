@@ -66,22 +66,39 @@ void Worker::WorkerLoop() {
   this->Setup();
   while (worker_running_) {
     try {
-      auto task = input_queue_->pull();
+      // Drain completions for previously dispatched GPU work
+      DrainCompletions();
+
+      // Ensure we have capacity for another program
+      WaitForCapacity();
+
+      // Pull next task. If we have pending in-flight work, use non-blocking
+      // pull so we keep checking completions. Otherwise block.
+      WorkerTask task;
+      if (HasPendingCompletions()) {
+        auto status = input_queue_->try_pull(task);
+        if (status != boost::concurrent::queue_op_status::success) {
+          continue;
+        }
+      } else {
+        task = input_queue_->pull();
+      }
+
       current_copy_op_id_ = task.copy_op_id;
 
-      auto t0 = std::chrono::steady_clock::now();
+      LOG_DEBUG("Worker[{}]: Executing program with {} instructions",
+                device_, task.program.size());
 
       this->Execute(task.program);
 
-      auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::steady_clock::now() - t0)
-                    .count();
-      LOG_DEBUG("Worker[{}]: Execute took {}us, {} instructions", device_, dt,
-                task.program.size());
-
-      completion_queue_->push(
-          WorkerCompletion{task.copy_op_id, device_.LocalDeviceIndex()});
     } catch (const boost::concurrent::sync_queue_is_closed&) {
+      // Queue closed — drain any remaining in-flight completions before exit
+      while (HasPendingCompletions()) {
+        DrainCompletions();
+        if (HasPendingCompletions()) {
+          std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+      }
       return;
     }
   }

@@ -773,9 +773,9 @@ void NodeAgent::Handler::WaitForShardRefCountZero(
   std::unique_lock<std::mutex> lock(async_executor_state_.in_flight_mutex);
   async_executor_state_.shard_ref_zero_cv.wait(lock, [&]() {
     for (const auto& shard_id : shard_ids) {
-      auto it = async_executor_state_.shard_ref_counts.find(shard_id);
-      if (it != async_executor_state_.shard_ref_counts.end() &&
-          it->second > 0) {
+      auto it = async_executor_state_.shard_locks.find(shard_id);
+      if (it != async_executor_state_.shard_locks.end() &&
+          it->second.ref_count > 0) {
         return false;
       }
     }
@@ -838,11 +838,31 @@ void NodeAgent::Dispatcher::Loop() {
         }
       }
 
-      // Register in-flight entry and increment shard ref counts
+      // Register in-flight entry, acquire shard locks, increment ref counts
       {
         std::lock_guard<std::mutex> lock(state_.in_flight_mutex);
         for (const auto& [shard_id, mode] : plan_access_map) {
-          state_.shard_ref_counts[shard_id]++;
+          auto& shard_lock = state_.shard_locks[shard_id];
+          if (shard_lock.ref_count == 0) {
+            // First in-flight plan touching this shard — acquire file lock
+            TensorShardPtr shard_ptr = nullptr;
+            bool found = shard_id_to_tensor_.visit(
+                shard_id, [&shard_ptr](const auto& entry) {
+                  shard_ptr = entry.second;
+                });
+            ASSERT_VALID_RUNTIME(
+                found, "Dispatcher: shard {} not found in map", shard_id);
+
+            shard_lock.mode = mode;
+            if (mode == ShardAccessMode::kWrite) {
+              shard_lock.write_handle =
+                  std::make_shared<TensorShardWriteHandle>(shard_ptr);
+            } else {
+              shard_lock.read_handle =
+                  std::make_shared<TensorShardReadHandle>(shard_ptr);
+            }
+          }
+          shard_lock.ref_count++;
         }
         state_.in_flight.emplace(
             copy_op_id,
@@ -983,18 +1003,26 @@ void NodeAgent::Poller::Loop() {
       }
 
       if (all_done) {
-        // Decrement shard ref counts
+        // Decrement shard ref counts and release locks when reaching zero
         {
           std::lock_guard<std::mutex> lock(state_.in_flight_mutex);
           for (const auto& [shard_id, mode] : shards_to_release) {
-            auto& count = state_.shard_ref_counts[shard_id];
-            count--;
+            auto it = state_.shard_locks.find(shard_id);
             ASSERT_VALID_RUNTIME(
-                count >= 0,
+                it != state_.shard_locks.end(),
+                "Poller: shard lock not found for shard {}", shard_id);
+
+            auto& shard_lock = it->second;
+            shard_lock.ref_count--;
+            ASSERT_VALID_RUNTIME(
+                shard_lock.ref_count >= 0,
                 "Poller: shard ref count went negative for shard {}",
                 shard_id);
-            if (count == 0) {
-              state_.shard_ref_counts.erase(shard_id);
+            if (shard_lock.ref_count == 0) {
+              // Release file lock handles (RAII destructor releases the lock)
+              shard_lock.read_handle.reset();
+              shard_lock.write_handle.reset();
+              state_.shard_locks.erase(it);
             }
           }
           state_.shard_ref_zero_cv.notify_all();

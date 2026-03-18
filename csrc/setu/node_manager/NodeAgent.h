@@ -23,6 +23,7 @@
 //==============================================================================
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/TensorShard.h"
+#include "commons/datatypes/TensorShardHandle.h"
 #include "commons/datatypes/TensorShardMetadata.h"
 #include "commons/datatypes/TensorShardRef.h"
 #include "commons/datatypes/TensorShardSpec.h"
@@ -36,6 +37,7 @@
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
 #include "planner/Planner.h"
+#include "planner/ir/llc/ShardAccess.h"
 //==============================================================================
 namespace setu::node_manager {
 //==============================================================================
@@ -95,6 +97,7 @@ using setu::node_manager::worker::WorkerTask;
 using setu::planner::Plan;
 using setu::planner::ir::llc::Program;
 using setu::planner::ir::llc::ShardAccessMap;
+using setu::planner::ir::llc::ShardAccessMode;
 using setu::planner::ir::ref::BufferRef;
 using setu::planner::ir::ref::RegisterRef;
 using setu::planner::ir::ref::ShardRef;
@@ -109,6 +112,16 @@ struct InFlightEntry {
   std::chrono::steady_clock::time_point dispatched_at;
 };
 
+/// @brief Per-shard lock state: ref count + file lock handle.
+/// When ref_count transitions 0→1, the file lock is acquired.
+/// When ref_count transitions 1→0, the file lock is released.
+struct ShardLockState {
+  std::int32_t ref_count = 0;
+  ShardAccessMode mode = ShardAccessMode::kRead;
+  setu::commons::datatypes::TensorShardReadHandlePtr read_handle;
+  setu::commons::datatypes::TensorShardWriteHandlePtr write_handle;
+};
+
 /// @brief Shared state between Dispatcher and Poller threads.
 struct AsyncExecutorState {
   /// Per-worker input queues (Dispatcher pushes, Worker pulls).
@@ -117,14 +130,15 @@ struct AsyncExecutorState {
   /// Completion queue (Workers push, Poller pulls).
   Queue<WorkerCompletion> completion_queue;
 
-  /// In-flight tracking and shard ref counts.
-  /// Protected by in_flight_mutex. Only held briefly for counter ops.
+  /// In-flight tracking and shard locks.
+  /// Protected by in_flight_mutex. Only held briefly for counter ops,
+  /// except when acquiring file locks (which may block if a client holds one).
   std::mutex in_flight_mutex;
   std::unordered_map<CopyOperationId, InFlightEntry> in_flight;
 
-  /// Per-shard ref count: number of in-flight plans touching this shard.
-  /// Dispatcher increments, Poller decrements.
-  std::unordered_map<ShardId, std::int32_t> shard_ref_counts;
+  /// Per-shard lock state: ref count + file lock handle.
+  /// Dispatcher acquires locks and increments, Poller decrements and releases.
+  std::unordered_map<ShardId, ShardLockState> shard_locks;
 
   /// Notified when any shard ref count reaches zero.
   std::condition_variable shard_ref_zero_cv;

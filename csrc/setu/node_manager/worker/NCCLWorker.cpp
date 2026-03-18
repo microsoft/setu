@@ -39,8 +39,11 @@ NCCLWorker::~NCCLWorker() {
   for (auto e : event_pool_) {
     cudaEventDestroy(e);
   }
-  if (timing_start_) cudaEventDestroy(timing_start_);
-  if (timing_end_) cudaEventDestroy(timing_end_);
+  for (auto& event_set : completion_event_ring_) {
+    for (auto& e : event_set) {
+      if (e) cudaEventDestroy(e);
+    }
+  }
   for (auto& [key, entry] : comm_cache_) {
     ncclCommDestroy(entry.nccl_comm);
   }
@@ -48,12 +51,20 @@ NCCLWorker::~NCCLWorker() {
 
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
-  static constexpr std::size_t kNumStreams = 32;
   streams_.resize(kNumStreams);
   for (auto& s : streams_) {
     CUDA_CHECK(cudaStreamCreate(&s));
   }
   active_stream_ = streams_[0];
+
+  // Allocate completion event ring for async dispatch
+  completion_event_ring_.resize(kMaxInFlight);
+  for (auto& event_set : completion_event_ring_) {
+    event_set.fill(nullptr);
+    for (auto& e : event_set) {
+      CUDA_CHECK(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
+    }
+  }
 
   if (!register_file_.Empty()) {
     register_file_.Allocate();
@@ -67,6 +78,24 @@ void NCCLWorker::Setup() {
 void NCCLWorker::Execute(const Program& program) {
   auto t_start = std::chrono::high_resolution_clock::now();
 
+  //============================================================================
+  // Inter-program fence: make all streams wait on the previous program's
+  // boundary events. This ensures plans finish in GPU order and prevents
+  // concurrent NCCL spinning kernels from different communicators.
+  //============================================================================
+  if (!pending_programs_.empty()) {
+    const auto& prev = pending_programs_.back();
+    for (std::uint32_t i = 0; i < prev.num_streams_used; ++i) {
+      for (auto& s : streams_) {
+        CUDA_CHECK(cudaStreamWaitEvent(
+            s, completion_event_ring_[prev.ring_slot][i]));
+      }
+    }
+  }
+
+  //============================================================================
+  // Instruction dispatch (unchanged from synchronous version)
+  //============================================================================
   std::uint32_t group_index = 0;
   bool in_nccl_group = false;
 
@@ -169,25 +198,71 @@ void NCCLWorker::Execute(const Program& program) {
   LOG_INFO("Execute[{}]: {} ncclGroupEnd calls, total {}us", device_,
            group_end_count, total_group_end_us);
 
-  // Sync only streams that had work queued.
+  //============================================================================
+  // Record boundary events on all used streams (replaces cudaStreamSynchronize)
+  //============================================================================
   const std::size_t num_streams_used =
       std::min(static_cast<std::size_t>(group_index) + 1, streams_.size());
+
+  const std::size_t slot = ring_head_;
   for (std::size_t i = 0; i < num_streams_used; ++i) {
-    CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
+    CUDA_CHECK(cudaEventRecord(completion_event_ring_[slot][i], streams_[i]));
   }
 
+  pending_programs_.push_back(PendingProgram{
+      current_copy_op_id_,
+      static_cast<std::uint32_t>(num_streams_used),
+      slot});
+  ring_head_ = (ring_head_ + 1) % kMaxInFlight;
+
   auto t_end = std::chrono::high_resolution_clock::now();
-  double total_ms =
+  double dispatch_ms =
       std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
-  // Submit metrics if sink is available
-  if (metrics_sink_ && metrics_sink_->IsEnabled()) {
-    setu::telemetry::NCCLWorkerMetrics wm;
-    wm.copy_op_id = current_copy_op_id_;
-    wm.node_id = node_id_;
-    wm.device_rank = device_.LocalDeviceIndex();
-    wm.total_execute_ms = total_ms;
-    metrics_sink_->Submit(setu::telemetry::MetricsMessage{wm});
+  LOG_DEBUG("Execute[{}]: dispatched copy_op={}, {}ms host time, {} streams",
+            device_, current_copy_op_id_, dispatch_ms, num_streams_used);
+}
+
+//==============================================================================
+// Async completion hooks
+//==============================================================================
+
+bool NCCLWorker::HasPendingCompletions() const {
+  return !pending_programs_.empty();
+}
+
+void NCCLWorker::DrainCompletions() {
+  while (!pending_programs_.empty()) {
+    const auto& oldest = pending_programs_.front();
+
+    bool all_done = true;
+    for (std::uint32_t i = 0; i < oldest.num_streams_used; ++i) {
+      cudaError_t status =
+          cudaEventQuery(completion_event_ring_[oldest.ring_slot][i]);
+      if (status == cudaErrorNotReady) {
+        all_done = false;
+        break;
+      }
+      CUDA_CHECK(status);
+    }
+
+    if (!all_done) break;
+
+    // All streams for this program are done on the GPU
+    LOG_DEBUG("DrainCompletions[{}]: copy_op={} complete",
+              device_, oldest.copy_op_id);
+    completion_queue_->push(
+        WorkerCompletion{oldest.copy_op_id, device_.LocalDeviceIndex()});
+    pending_programs_.pop_front();
+  }
+}
+
+void NCCLWorker::WaitForCapacity() {
+  while (pending_programs_.size() >= kMaxInFlight) {
+    DrainCompletions();
+    if (pending_programs_.size() >= kMaxInFlight) {
+      std::this_thread::sleep_for(std::chrono::microseconds(10));
+    }
   }
 }
 

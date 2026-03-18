@@ -34,6 +34,7 @@
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
+using setu::commons::CopyOperationId;
 using setu::commons::DevicePtr;
 using setu::commons::DeviceRank;
 using setu::commons::NodeId;
@@ -61,13 +62,18 @@ class NCCLWorker : public Worker {
   NCCLWorker(NodeId node_id, Device device,
              RegisterSet register_set =
                  RegisterSet::Uniform(1, setu::planner::kRegisterSize));
-  ~NCCLWorker();
+  ~NCCLWorker() override;
 
   void Execute(const Program& program) override;
   void Setup() override;
 
   [[nodiscard]] DevicePtr ResolveRegister(
       const RegisterRef& ref) const override;
+
+ protected:
+  void DrainCompletions() override;
+  [[nodiscard]] bool HasPendingCompletions() const override;
+  void WaitForCapacity() override;
 
  private:
   void ExecuteInitComm(const InitComm& inst);
@@ -90,6 +96,7 @@ class NCCLWorker : public Worker {
   /// Pool of CUDA streams for overlapping independent operations.
   /// Round-robin assigned per op; independent ops naturally land on
   /// different streams without any explicit reset.
+  static constexpr std::size_t kNumStreams = 32;
   std::vector<cudaStream_t> streams_;
   cudaStream_t active_stream_ = nullptr;
 
@@ -97,15 +104,34 @@ class NCCLWorker : public Worker {
   /// Events are created on first use and reused across Execute() calls.
   std::vector<cudaEvent_t> event_pool_;
 
-  /// Two pre-allocated CUDA events for measuring total execution time.
-  cudaEvent_t timing_start_ = nullptr;
-  cudaEvent_t timing_end_ = nullptr;
-
   /// Buffered Wait ids accumulated between data ops.
   /// Flushed as cudaStreamWaitEvent calls at the start of the next data op.
   std::vector<std::uint32_t> pending_waits_;
 
   RegisterFile register_file_;
+
+  //============================================================================
+  // Async dispatch: inter-program fence and completion tracking
+  //============================================================================
+
+  /// Maximum number of programs that can be in-flight on the GPU at once.
+  static constexpr std::size_t kMaxInFlight = 8;
+
+  /// Tracks a single in-flight program on this worker.
+  struct PendingProgram {
+    CopyOperationId copy_op_id;
+    std::uint32_t num_streams_used;
+    std::size_t ring_slot;
+  };
+
+  /// Ring buffer of completion event sets. Each slot holds kNumStreams events.
+  /// Execute() records boundary events into the next slot; DrainCompletions()
+  /// queries events from the oldest slot.
+  std::vector<std::array<cudaEvent_t, kNumStreams>> completion_event_ring_;
+  std::size_t ring_head_ = 0;
+
+  /// FIFO of in-flight programs. Front is oldest (first to complete).
+  std::deque<PendingProgram> pending_programs_;
 };
 
 //==============================================================================
