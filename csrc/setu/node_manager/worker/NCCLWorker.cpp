@@ -51,7 +51,17 @@ NCCLWorker::~NCCLWorker() {
 
 void NCCLWorker::Setup() {
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
+  static const std::size_t kNumStreams = []() -> std::size_t {
+    const char* env = std::getenv("SETU_NCCL_NUM_STREAMS");
+    if (env != nullptr) {
+      auto val = std::stoul(env);
+      ASSERT_VALID_ARGUMENTS(val >= 1, "SETU_NCCL_NUM_STREAMS must be >= 1");
+      return val;
+    }
+    return 2;
+  }();
   streams_.resize(kNumStreams);
+  stream_loads_.resize(kNumStreams, 0);
   for (auto& s : streams_) {
     CUDA_CHECK(cudaStreamCreate(&s));
   }
@@ -60,7 +70,7 @@ void NCCLWorker::Setup() {
   // Allocate completion event ring for async dispatch
   completion_event_ring_.resize(kMaxInFlight);
   for (auto& event_set : completion_event_ring_) {
-    event_set.fill(nullptr);
+    event_set.resize(kNumStreams, nullptr);
     for (auto& e : event_set) {
       CUDA_CHECK(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
     }
@@ -85,7 +95,7 @@ void NCCLWorker::Execute(const Program& program) {
   //============================================================================
   if (!pending_programs_.empty()) {
     const auto& prev = pending_programs_.back();
-    for (std::uint32_t i = 0; i < prev.num_streams_used; ++i) {
+    for (std::size_t i = 0; i < prev.num_streams_used; ++i) {
       for (auto& s : streams_) {
         CUDA_CHECK(cudaStreamWaitEvent(
             s, completion_event_ring_[prev.ring_slot][i]));
@@ -94,9 +104,8 @@ void NCCLWorker::Execute(const Program& program) {
   }
 
   //============================================================================
-  // Instruction dispatch (unchanged from synchronous version)
+  // Instruction dispatch
   //============================================================================
-  std::uint32_t group_index = 0;
   bool in_nccl_group = false;
 
   auto open_nccl_group = [&]() {
@@ -122,6 +131,28 @@ void NCCLWorker::Execute(const Program& program) {
     }
   };
 
+  // Reset stream loads for this execution.
+  std::fill(stream_loads_.begin(), stream_loads_.end(), 0);
+
+  // Select the least-loaded stream and charge it with op_bytes.
+  auto select_stream = [&](std::size_t op_bytes) {
+    auto idx = LeastLoadedStream();
+    stream_loads_[idx] += op_bytes;
+    active_stream_ = streams_[idx];
+  };
+
+  auto apply_pending_waits = [&]() {
+    for (auto wait_id : pending_waits_) {
+      ASSERT_VALID_RUNTIME(
+          wait_id < event_pool_.size(),
+          "Wait references event id {} but event pool size is {}",
+          wait_id, event_pool_.size());
+      CUDA_CHECK(
+          cudaStreamWaitEvent(active_stream_, event_pool_[wait_id]));
+    }
+    pending_waits_.clear();
+  };
+
   for (const auto& instruction : program) {
     std::visit(
         [&](const auto& inst) {
@@ -130,61 +161,52 @@ void NCCLWorker::Execute(const Program& program) {
           if constexpr (std::is_same_v<T, InitComm>) {
             close_nccl_group();
             ExecuteInitComm(inst);
-          } else if constexpr (std::is_same_v<T, Copy> ||
-                               std::is_same_v<T, Send> ||
-                               std::is_same_v<T, Receive> ||
-                               std::is_same_v<T, AllGather>) {
-            active_stream_ = streams_[group_index % streams_.size()];
-
-            // Apply buffered dependency waits on this stream.
-            for (auto wait_id : pending_waits_) {
-              ASSERT_VALID_RUNTIME(
-                  wait_id < event_pool_.size(),
-                  "Wait references event id {} but event pool size is {}",
-                  wait_id, event_pool_.size());
-              CUDA_CHECK(
-                  cudaStreamWaitEvent(active_stream_, event_pool_[wait_id]));
+          } else if constexpr (std::is_same_v<T, Send>) {
+            close_nccl_group();
+            select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
+            apply_pending_waits();
+            ExecuteSend(inst);
+          } else if constexpr (std::is_same_v<T, Receive>) {
+            close_nccl_group();
+            select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
+            apply_pending_waits();
+            ExecuteReceive(inst);
+          } else if constexpr (std::is_same_v<T, Copy>) {
+            close_nccl_group();
+            std::size_t total_bytes = 0;
+            for (const auto& e : inst.entries) {
+              total_bytes += e.count * GetDTypeSizeBytes(e.dtype);
             }
-            pending_waits_.clear();
-
+            select_stream(total_bytes);
+            apply_pending_waits();
+            ExecuteCopy(inst);
+          } else if constexpr (std::is_same_v<T, AllGather>) {
+            select_stream(inst.send_count * GetDTypeSizeBytes(inst.dtype));
+            apply_pending_waits();
             open_nccl_group();
-
-            if constexpr (std::is_same_v<T, Copy>) {
-              ExecuteCopy(inst);
-            } else if constexpr (std::is_same_v<T, Send>) {
-              ExecuteSend(inst);
-            } else if constexpr (std::is_same_v<T, Receive>) {
-              ExecuteReceive(inst);
-            } else {
-              ExecuteAllGather(inst);
-            }
-
-            group_index++;
+            ExecuteAllGather(inst);
           } else if constexpr (std::is_same_v<T, Fence>) {
             close_nccl_group();
-            const std::size_t num_used = std::min(
-                static_cast<std::size_t>(group_index), streams_.size());
-            if (num_used > 0) {
-              std::vector<cudaEvent_t> fence_events(num_used);
-              for (std::size_t i = 0; i < num_used; ++i) {
-                CUDA_CHECK(cudaEventCreate(&fence_events[i]));
-                CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
-              }
-              for (std::size_t i = 0; i < num_used; ++i) {
-                for (std::size_t j = 0; j < num_used; ++j) {
-                  if (i != j) {
-                    CUDA_CHECK(
-                        cudaStreamWaitEvent(streams_[i], fence_events[j]));
-                  }
+            // Cross-synchronize all streams.
+            std::vector<cudaEvent_t> fence_events(streams_.size());
+            for (std::size_t i = 0; i < streams_.size(); ++i) {
+              CUDA_CHECK(cudaEventCreate(&fence_events[i]));
+              CUDA_CHECK(cudaEventRecord(fence_events[i], streams_[i]));
+            }
+            for (std::size_t i = 0; i < streams_.size(); ++i) {
+              for (std::size_t j = 0; j < streams_.size(); ++j) {
+                if (i != j) {
+                  CUDA_CHECK(
+                      cudaStreamWaitEvent(streams_[i], fence_events[j]));
                 }
               }
-              for (auto& e : fence_events) {
-                CUDA_CHECK(cudaEventDestroy(e));
-              }
             }
-            group_index = 0;
+            for (auto& e : fence_events) {
+              CUDA_CHECK(cudaEventDestroy(e));
+            }
+            // Reset loads after a fence.
+            std::fill(stream_loads_.begin(), stream_loads_.end(), 0);
           } else if constexpr (std::is_same_v<T, SyncPoint>) {
-            close_nccl_group();
             ExecuteSyncPoint(inst);
           } else if constexpr (std::is_same_v<T, Wait>) {
             ExecuteWait(inst);
@@ -201,12 +223,14 @@ void NCCLWorker::Execute(const Program& program) {
   //============================================================================
   // Record boundary events on all used streams (replaces cudaStreamSynchronize)
   //============================================================================
-  const std::size_t num_streams_used =
-      std::min(static_cast<std::size_t>(group_index) + 1, streams_.size());
-
+  std::size_t num_streams_used = 0;
   const std::size_t slot = ring_head_;
-  for (std::size_t i = 0; i < num_streams_used; ++i) {
-    CUDA_CHECK(cudaEventRecord(completion_event_ring_[slot][i], streams_[i]));
+  for (std::size_t i = 0; i < streams_.size(); ++i) {
+    if (stream_loads_[i] > 0) {
+      CUDA_CHECK(cudaEventRecord(completion_event_ring_[slot][num_streams_used],
+                                 streams_[i]));
+      ++num_streams_used;
+    }
   }
 
   pending_programs_.push_back(PendingProgram{
@@ -383,6 +407,16 @@ void NCCLWorker::ExecuteWait(const Wait& inst) {
 
 DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {
   return register_file_.GetPtr(ref.register_index);
+}
+
+std::size_t NCCLWorker::LeastLoadedStream() const {
+  std::size_t best = 0;
+  for (std::size_t i = 1; i < stream_loads_.size(); ++i) {
+    if (stream_loads_[i] < stream_loads_[best]) {
+      best = i;
+    }
+  }
+  return best;
 }
 
 //==============================================================================

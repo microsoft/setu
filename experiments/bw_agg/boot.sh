@@ -7,6 +7,7 @@ NSYS_ENABLED=false
 REGISTER_SIZE="2G"
 PASSES=("bandwidth_aggregation" "register_tiling" "instruction_scheduler")
 CLUSTER_YAML="cluster.yaml"
+EXTRA_ENVS=()
 
 usage() {
     cat <<EOF
@@ -21,6 +22,7 @@ Options:
   -p, --passes PASSES        Comma-separated list of passes
                              (default: bandwidth_aggregation,register_tiling,instruction_scheduler)
   -c, --cluster YAML         Cluster config file (default: $CLUSTER_YAML)
+  -e, --env KEY=VALUE        Extra environment variable (repeatable)
   -h, --help                 Show this help message
 EOF
     exit 0
@@ -38,6 +40,8 @@ while [[ $# -gt 0 ]]; do
             IFS=',' read -ra PASSES <<< "$2"; shift 2 ;;
         -c|--cluster)
             CLUSTER_YAML="$2"; shift 2 ;;
+        -e|--env)
+            EXTRA_ENVS+=("$2"); shift 2 ;;
         -h|--help)
             usage ;;
         *)
@@ -64,6 +68,11 @@ CMD=(python -m setu.cluster.ray
     --env "NCCL_DEBUG_FILE=${OUTPUT_DIR}/nccl.log"
     --env "NCCL_TOPO_DUMP_FILE=${OUTPUT_DIR}/topo.xml"
 )
+
+# Append extra env vars
+for env_var in "${EXTRA_ENVS[@]}"; do
+    CMD+=(--env "$env_var")
+done
 
 # Wrap with nsys if enabled
 if [[ "$NSYS_ENABLED" == true ]]; then

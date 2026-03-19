@@ -94,11 +94,15 @@ class NCCLWorker : public Worker {
   std::unordered_map<CommId, CommCacheEntry, CommIdHash> comm_cache_;
 
   /// Pool of CUDA streams for overlapping independent operations.
-  /// Round-robin assigned per op; independent ops naturally land on
-  /// different streams without any explicit reset.
-  static constexpr std::size_t kNumStreams = 32;
+  /// Assigned per-op via least-loaded scheduling (by estimated queued
+  /// bytes) to prevent head-of-line blocking while keeping the stream
+  /// count low for minimal overhead.
   std::vector<cudaStream_t> streams_;
+  std::vector<std::size_t> stream_loads_;  ///< Estimated queued bytes per stream
   cudaStream_t active_stream_ = nullptr;
+
+  /// Return the index of the stream with the least queued bytes.
+  [[nodiscard]] std::size_t LeastLoadedStream() const;
 
   /// Lazily grown pool of CUDA events, indexed by SyncPoint id.
   /// Events are created on first use and reused across Execute() calls.
@@ -115,7 +119,7 @@ class NCCLWorker : public Worker {
   //============================================================================
 
   /// Maximum number of programs that can be in-flight on the GPU at once.
-  static constexpr std::size_t kMaxInFlight = 8;
+  static constexpr std::size_t kMaxInFlight = 1;
 
   /// Tracks a single in-flight program on this worker.
   struct PendingProgram {
@@ -124,10 +128,10 @@ class NCCLWorker : public Worker {
     std::size_t ring_slot;
   };
 
-  /// Ring buffer of completion event sets. Each slot holds kNumStreams events.
+  /// Ring buffer of completion event sets. Each slot holds one event per stream.
   /// Execute() records boundary events into the next slot; DrainCompletions()
   /// queries events from the oldest slot.
-  std::vector<std::array<cudaEvent_t, kNumStreams>> completion_event_ring_;
+  std::vector<std::vector<cudaEvent_t>> completion_event_ring_;
   std::size_t ring_head_ = 0;
 
   /// FIFO of in-flight programs. Front is oldest (first to complete).
