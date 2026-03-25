@@ -106,30 +106,6 @@ void NCCLWorker::Execute(const Program& program) {
   //============================================================================
   // Instruction dispatch
   //============================================================================
-  bool in_nccl_group = false;
-
-  auto open_nccl_group = [&]() {
-    if (!in_nccl_group) {
-      NCCL_CHECK(ncclGroupStart());
-      in_nccl_group = true;
-    }
-  };
-
-  std::int64_t total_group_end_us = 0;
-  std::uint32_t group_end_count = 0;
-
-  auto close_nccl_group = [&]() {
-    if (in_nccl_group) {
-      auto t0 = std::chrono::steady_clock::now();
-      NCCL_CHECK(ncclGroupEnd());
-      auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::steady_clock::now() - t0)
-                    .count();
-      total_group_end_us += dt;
-      group_end_count++;
-      in_nccl_group = false;
-    }
-  };
 
   // Reset stream loads for this execution.
   std::fill(stream_loads_.begin(), stream_loads_.end(), 0);
@@ -159,20 +135,16 @@ void NCCLWorker::Execute(const Program& program) {
           using T = std::decay_t<decltype(inst)>;
 
           if constexpr (std::is_same_v<T, InitComm>) {
-            close_nccl_group();
             ExecuteInitComm(inst);
           } else if constexpr (std::is_same_v<T, Send>) {
-            close_nccl_group();
             select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
             apply_pending_waits();
             ExecuteSend(inst);
           } else if constexpr (std::is_same_v<T, Receive>) {
-            close_nccl_group();
             select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
             apply_pending_waits();
             ExecuteReceive(inst);
           } else if constexpr (std::is_same_v<T, Copy>) {
-            close_nccl_group();
             std::size_t total_bytes = 0;
             for (const auto& e : inst.entries) {
               total_bytes += e.count * GetDTypeSizeBytes(e.dtype);
@@ -183,10 +155,8 @@ void NCCLWorker::Execute(const Program& program) {
           } else if constexpr (std::is_same_v<T, AllGather>) {
             select_stream(inst.send_count * GetDTypeSizeBytes(inst.dtype));
             apply_pending_waits();
-            open_nccl_group();
             ExecuteAllGather(inst);
           } else if constexpr (std::is_same_v<T, Fence>) {
-            close_nccl_group();
             // Cross-synchronize all streams.
             std::vector<cudaEvent_t> fence_events(streams_.size());
             for (std::size_t i = 0; i < streams_.size(); ++i) {
@@ -214,11 +184,6 @@ void NCCLWorker::Execute(const Program& program) {
         },
         instruction.instr);
   }
-
-  close_nccl_group();
-
-  LOG_INFO("Execute[{}]: {} ncclGroupEnd calls, total {}us", device_,
-           group_end_count, total_group_end_us);
 
   //============================================================================
   // Record boundary events on all used streams (replaces cudaStreamSynchronize)
