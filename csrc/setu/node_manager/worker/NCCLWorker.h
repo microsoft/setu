@@ -23,6 +23,7 @@
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
+#include "node_manager/worker/EventPool.h"
 #include "node_manager/worker/RegisterFile.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
@@ -104,13 +105,13 @@ class NCCLWorker : public Worker {
   /// Return the index of the stream with the least queued bytes.
   [[nodiscard]] std::size_t LeastLoadedStream() const;
 
-  /// Lazily grown pool of CUDA events, indexed by SyncPoint id.
-  /// Events are created on first use and reused across Execute() calls.
-  std::vector<cudaEvent_t> event_pool_;
+  /// Maps logical SyncPoint IDs to physical CUDA events.
+  /// Recycles events via scavenging on pool pressure.
+  EventPool event_pool_;
 
-  /// Buffered Wait ids accumulated between data ops.
+  /// Buffered physical events accumulated from Wait instructions.
   /// Flushed as cudaStreamWaitEvent calls at the start of the next data op.
-  std::vector<std::uint32_t> pending_waits_;
+  std::vector<cudaEvent_t> pending_waits_;
 
   RegisterFile register_file_;
 

@@ -36,9 +36,6 @@ NCCLWorker::~NCCLWorker() {
   for (auto s : streams_) {
     cudaStreamDestroy(s);
   }
-  for (auto e : event_pool_) {
-    cudaEventDestroy(e);
-  }
   for (auto& event_set : completion_event_ring_) {
     for (auto& e : event_set) {
       if (e) cudaEventDestroy(e);
@@ -117,14 +114,12 @@ void NCCLWorker::Execute(const Program& program) {
     active_stream_ = streams_[idx];
   };
 
+  // Reset event pool mappings for this program.
+  event_pool_.Reset();
+
   auto apply_pending_waits = [&]() {
-    for (auto wait_id : pending_waits_) {
-      ASSERT_VALID_RUNTIME(
-          wait_id < event_pool_.size(),
-          "Wait references event id {} but event pool size is {}",
-          wait_id, event_pool_.size());
-      CUDA_CHECK(
-          cudaStreamWaitEvent(active_stream_, event_pool_[wait_id]));
+    for (auto event : pending_waits_) {
+      CUDA_CHECK(cudaStreamWaitEvent(active_stream_, event));
     }
     pending_waits_.clear();
   };
@@ -343,31 +338,19 @@ void NCCLWorker::ExecuteAllGather(const AllGather& inst) {
 }
 
 void NCCLWorker::ExecuteSyncPoint(const SyncPoint& inst) {
-  // Grow the event pool lazily to accommodate this id.
-  if (event_pool_.size() <= inst.id) {
-    auto t0 = std::chrono::steady_clock::now();
-    while (event_pool_.size() <= inst.id) {
-      cudaEvent_t e;
-      CUDA_CHECK(cudaEventCreate(&e));
-      event_pool_.push_back(e);
-    }
-    auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
-                  std::chrono::steady_clock::now() - t0)
-                  .count();
-    LOG_INFO("SyncPoint({}): grew event pool to {} events in {}us", inst.id,
-             event_pool_.size(), dt);
-  }
-  // Record on the stream that just ran the preceding write op.
-  // active_stream_ is still set to that op's stream at this point.
-  CUDA_CHECK(cudaEventRecord(event_pool_[inst.id], active_stream_));
+  auto event = event_pool_.Acquire(inst.id);
+  CUDA_CHECK(cudaEventRecord(event, active_stream_));
   LOG_DEBUG("SyncPoint({}): recorded event on stream", inst.id);
 }
 
 void NCCLWorker::ExecuteWait(const Wait& inst) {
-  // Buffer the id; the dependency will be applied to the next data op's
-  // stream when that op sets active_stream_.
-  pending_waits_.push_back(inst.id);
-  LOG_DEBUG("Wait({}): buffered dependency", inst.id);
+  auto event = event_pool_.Get(inst.id);
+  if (event != nullptr) {
+    pending_waits_.push_back(event);
+    LOG_DEBUG("Wait({}): buffered dependency", inst.id);
+  } else {
+    LOG_DEBUG("Wait({}): skipped, event already completed", inst.id);
+  }
 }
 
 DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {
