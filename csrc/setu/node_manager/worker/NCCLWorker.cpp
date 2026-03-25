@@ -18,6 +18,9 @@
 
 #include "node_manager/worker/Worker.h"
 //==============================================================================
+#include <nvtx3/nvToolsExt.h>
+#include <nvtx3/nvToolsExtCudaRt.h>
+//==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/CUDAUtils.h"
 //==============================================================================
@@ -73,6 +76,17 @@ void NCCLWorker::Setup() {
     }
   }
 
+  // Name CUDA streams and this thread for NVTX profiling.
+  for (std::size_t i = 0; i < streams_.size(); ++i) {
+    auto name =
+        std::format("setu::worker[gpu{}]::stream{}",
+                    device_.LocalDeviceIndex(), i);
+    nvtxNameCudaStreamA(streams_[i], name.c_str());
+  }
+  nvtxNameOsThread(
+      pthread_self(),
+      std::format("setu::worker[gpu{}]", device_.LocalDeviceIndex()).c_str());
+
   if (!register_file_.Empty()) {
     register_file_.Allocate();
     LOG_DEBUG("Allocated {} registers on device {}",
@@ -83,6 +97,17 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
+  auto nvtx_label = std::format("CopyOp:{} dev:{}",
+      boost::uuids::to_string(current_copy_op_id_), device_);
+  nvtxEventAttributes_t nvtx_attr = {};
+  nvtx_attr.version = NVTX_VERSION;
+  nvtx_attr.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+  nvtx_attr.messageType = NVTX_MESSAGE_TYPE_ASCII;
+  nvtx_attr.message.ascii = nvtx_label.c_str();
+  nvtx_attr.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
+  nvtx_attr.payload.ullValue = program.size();
+  nvtxRangePushEx(&nvtx_attr);
+
   auto t_start = std::chrono::high_resolution_clock::now();
 
   //============================================================================
@@ -205,6 +230,8 @@ void NCCLWorker::Execute(const Program& program) {
 
   LOG_DEBUG("Execute[{}]: dispatched copy_op={}, {}ms host time, {} streams",
             device_, current_copy_op_id_, dispatch_ms, num_streams_used);
+
+  nvtxRangePop();
 }
 
 //==============================================================================
@@ -233,6 +260,9 @@ void NCCLWorker::DrainCompletions() {
     if (!all_done) break;
 
     // All streams for this program are done on the GPU
+    nvtxMarkA(std::format("complete::{}",
+                          boost::uuids::to_string(oldest.copy_op_id))
+                  .c_str());
     LOG_DEBUG("DrainCompletions[{}]: copy_op={} complete",
               device_, oldest.copy_op_id);
     completion_queue_->push(
