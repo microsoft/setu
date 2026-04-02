@@ -29,8 +29,26 @@ set(ZMQ_BUILD_TESTS
 set(ZMQ_BUILD_DRAFT_API
     OFF
     CACHE BOOL "Build ZeroMQ draft API" FORCE)
+set(ENABLE_CURVE
+    OFF
+    CACHE BOOL "Disable CURVE encryption (removes libsodium dependency)" FORCE)
+set(WITH_TLS
+    OFF
+    CACHE BOOL "Disable TLS/WebSocket support (removes gnutls dependency)" FORCE)
 
 FetchContent_MakeAvailable(googletest Boost zmq cppzmq)
+
+# Linking policy for wheel portability:
+#   Static:  Small libraries that users are unlikely to have (backtrace, etc.)
+#   Dynamic: System libs (libc, libm, libdl, libstdc++, libgomp), CUDA, PyTorch, NCCL, Python
+# Static-linked libs are found below; dynamic deps are expected at runtime.
+
+find_library(
+  BACKTRACE_LIBRARY libbacktrace.a
+  HINTS
+    $ENV{CONDA_PREFIX}/lib
+    ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}
+  REQUIRED)
 
 # NCCL
 if(DEFINED SETU_PYTHON_EXECUTABLE)

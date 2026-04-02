@@ -115,6 +115,12 @@ build/native_test_incremental: ## build native tests (incremental)
 build/wheel: ## build python wheel and sdist
 	$(SCRIPTS_DIR)/wheel.sh
 
+validate/wheel: ## validate wheel .so dependencies against allowlist
+	$(SCRIPTS_DIR)/validate_build.sh setu wheel
+
+validate/dev: ## validate dev build .so dependencies against allowlist
+	$(SCRIPTS_DIR)/validate_build.sh setu dev
+
 build/editable: ## build project (install editable package) - legacy
 	$(SCRIPTS_DIR)/build.sh editable
 

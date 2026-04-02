@@ -172,7 +172,7 @@ build_wheel() {
     rm -rf dist/ build/ *.egg-info/
 
     # Export environment variables for setup.py
-    export CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
+    export CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
     export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(get_parallel_jobs)}"
     export VERBOSE="${VERBOSE:-0}"
 
@@ -185,6 +185,10 @@ build_wheel() {
 
     # Build wheel and sdist with logging
     python -m build "${build_args[@]}" 2>&1 | tee "logs/wheel_build_${timestamp}.log"
+
+    # Validate that no unexpected dynamic dependencies leaked in
+    source "$(dirname "$0")/validate_build.sh"
+    validate_so_deps setu wheel
 
     log_success "Wheel and sdist built successfully"
     ls -la dist/

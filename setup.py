@@ -40,7 +40,7 @@ def get_build_directory(root_dir, debug=False, base_temp_dir=None):
         Path to the build directory
     """
     # Determine build configuration
-    default_cfg = "Debug" if debug else "RelWithDebInfo"
+    default_cfg = "Debug" if debug else "Release"
     cfg = os.getenv("CMAKE_BUILD_TYPE", default_cfg).lower()
 
     if is_git_repo(root_dir):
@@ -164,13 +164,11 @@ class cmake_build_ext(build_ext):
 
         # Select the build type.
         # Note: optimization level + debug info are set by the build type
-        # Use Debug as default when in git repo for development, otherwise RelWithDebInfo
+        # Use Debug as default when in git repo for development, otherwise Release
         if is_git_repo(ROOT_DIR):
             default_cfg = "Debug"  # Always Debug for git repo development
         else:
-            default_cfg = (
-                "Debug" if self.debug else "RelWithDebInfo"
-            )  # RelWithDebInfo for packages
+            default_cfg = "Debug" if self.debug else "Release"  # Release for packages
         cfg = os.getenv("CMAKE_BUILD_TYPE", default_cfg)
 
         # where .so files will be written, should be the same for all extensions
@@ -219,7 +217,6 @@ class cmake_build_ext(build_ext):
         setu_src_dir = os.path.join(ROOT_DIR, "setu")
         for ext in self.extensions:
             ext_target_name = remove_prefix(ext.name, "setu.")
-            # Find the pre-built .so file in the source tree
             pattern = os.path.join(setu_src_dir, f"{ext_target_name}*.so")
             matches = glob.glob(pattern)
             if not matches:
@@ -228,7 +225,6 @@ class cmake_build_ext(build_ext):
                     f"Run 'make build' first to compile the C++ extensions."
                 )
             src_so = matches[0]
-            # Copy to where setuptools expects it
             dest_dir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
             os.makedirs(dest_dir, exist_ok=True)
             dest_so = os.path.join(dest_dir, os.path.basename(src_so))
@@ -299,6 +295,13 @@ class cmake_build_ext(build_ext):
                 print(f"Fixing RPATH on {os.path.basename(ext_path)}")
                 subprocess.check_call(["patchelf", "--set-rpath", "$ORIGIN", ext_path])
 
+    def copy_extensions_to_source(self):
+        """Override to skip copying when we skipped the C++ build."""
+        if os.getenv("SETU_SKIP_CPP_BUILD", "0") == "1":
+            print("Skipping copy_extensions_to_source since C++ build was skipped")
+            return
+        super().copy_extensions_to_source()
+
 
 def _is_cuda() -> bool:
     return torch.version.cuda is not None
@@ -352,11 +355,8 @@ def get_package_name() -> str:
 
 ext_modules = []
 
-ext_modules.append(CMakeExtension(name="setu._kernels"))
 ext_modules.append(CMakeExtension(name="setu._commons"))
 ext_modules.append(CMakeExtension(name="setu._client"))
-ext_modules.append(CMakeExtension(name="setu._node_manager"))
-ext_modules.append(CMakeExtension(name="setu._coordinator"))
 
 
 setup(
@@ -372,7 +372,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
-    packages=find_packages(exclude=("csrc", "test", "test.*")),
+    packages=find_packages(exclude=("csrc")),
     python_requires=">=3.12",
     install_requires=get_requirements(),
     entry_points={

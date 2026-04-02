@@ -15,7 +15,7 @@ target_link_libraries(
             Boost::interprocess
             libzmq-static
             dl
-            backtrace
+            ${BACKTRACE_LIBRARY}
             setu_python)
 
 # Add NCCL support (required)

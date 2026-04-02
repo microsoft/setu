@@ -1,7 +1,8 @@
 # Define common interface library for tests
 add_library(setu_test_common INTERFACE)
 target_include_directories(setu_test_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/csrc/setu)
-target_link_libraries(setu_test_common INTERFACE setu_common gtest gtest_main)
+target_link_libraries(setu_test_common INTERFACE setu_common setu_python_embed gtest
+                      gtest_main)
 
 # Function to configure common test target properties
 function(setu_test_config target_name)

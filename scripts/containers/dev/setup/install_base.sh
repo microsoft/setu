@@ -12,6 +12,8 @@ apt-get install -y \
     wget \
     zsh \
     vim \
+    neovim \
+    tmux \
     nano \
     less \
     openssh-client \

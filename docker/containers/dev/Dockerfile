@@ -23,6 +23,9 @@ RUN /tmp/repo/scripts/containers/dev/setup_env.sh
 # Install ZSH and related components
 RUN /tmp/repo/scripts/containers/dev/setup/install_zsh.sh
 
+# Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
 # Clean up
 RUN rm -rf /tmp/repo
 
@@ -36,4 +39,3 @@ LABEL org.opencontainers.image.description="CUDA ${CUDA_VERSION} with PyTorch ${
 LABEL org.opencontainers.image.vendor="Vajra Team"
 LABEL org.opencontainers.image.cuda.version="${CUDA_VERSION}"
 LABEL org.opencontainers.image.pytorch.version="${PYTORCH_VERSION}"
-

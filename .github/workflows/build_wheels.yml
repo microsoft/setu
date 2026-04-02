@@ -60,6 +60,11 @@ jobs:
               setu-builder-${{ github.run_id }} \
               make build/wheel
         timeout-minutes: 120
+      - name: Validate wheel dependencies
+        run: |
+          docker exec \
+              setu-builder-${{ github.run_id }} \
+              make validate/wheel
       - name: "Stop Docker container"
         id: stop_docker_container
         if: always()

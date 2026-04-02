@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - backtrace
   - clang-tools
   - cmake>=4.0
   - cpplint
@@ -15,7 +16,6 @@ dependencies:
   - shellcheck
   - graphviz # For Doxygen diagrams
   - gxx
-  - libsodium
   - make
   - ninja
   - pip
@@ -24,6 +24,7 @@ dependencies:
   - rust
   - mold
   - ccache
+  - nccl
   - yamlfmt
   - cmake_format
   - cmakelint

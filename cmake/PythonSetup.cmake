@@ -5,14 +5,22 @@ endif()
 message(STATUS "SETU_PYTHON_EXECUTABLE: ${SETU_PYTHON_EXECUTABLE}")
 
 find_python_from_executable(${SETU_PYTHON_EXECUTABLE} "${PYTHON_SUPPORTED_VERSIONS}")
-find_package(Python REQUIRED COMPONENTS Development.Embed)
+find_package(Python REQUIRED COMPONENTS Development.Module Development.Embed)
 
 message(STATUS "Python version: ${Python_VERSION}")
 message(STATUS "Python include dirs: ${Python_INCLUDE_DIRS}")
 
+# Python::Module — for extension .so files (no libpython link; symbols come
+#   from the host interpreter at load time).
+# Python::Python — for standalone executables (test binaries) that embed the
+#   interpreter and therefore need libpython.
 add_library(setu_python INTERFACE)
 target_include_directories(setu_python INTERFACE ${Python_INCLUDE_DIRS})
-target_link_libraries(setu_python INTERFACE Python::Python)
+target_link_libraries(setu_python INTERFACE Python::Module)
+
+add_library(setu_python_embed INTERFACE)
+target_include_directories(setu_python_embed INTERFACE ${Python_INCLUDE_DIRS})
+target_link_libraries(setu_python_embed INTERFACE Python::Python)
 
 # If using a conda environment, sometimes we need to explicitly add the lib path
 if(DEFINED ENV{CONDA_PREFIX})
