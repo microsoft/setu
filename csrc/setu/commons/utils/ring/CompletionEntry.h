@@ -31,9 +31,10 @@ using setu::commons::enums::ErrorCode;
 /// @brief Entry written by the NodeAgent into the completion ring when a copy
 /// operation finishes.
 struct CompletionEntry {
-  CopyOperationId copy_op_id;  // 16 bytes (boost::uuid)
+  CopyOperationId copy_op_id;  // 16 bytes (boost::uuid) — global coordinator ID
+  std::uint64_t local_id;      // 8 bytes — client-generated monotonic ID
   ErrorCode error_code;        // 4 bytes
-  std::uint32_t _pad;          // 4 bytes — pad to 24 bytes
+  std::uint32_t _pad;          // 4 bytes — total 32 bytes
 };
 
 static_assert(std::is_trivially_copyable_v<CompletionEntry>,

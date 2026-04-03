@@ -301,11 +301,23 @@ class NodeAgent {
     };
     std::unordered_map<Identity, ClientRingInfo> client_ring_info_;
 
-    /// Maps copy operation to the client(s) that initiated it.
-    /// Multiple clients may share the same copy_op_id (collective ops).
-    std::unordered_map<CopyOperationId, std::vector<Identity>,
+    /// Tracks which client + local_id to notify per copy operation.
+    struct ClientLocalId {
+      Identity canonical_client_id;
+      std::uint64_t local_id;
+    };
+    std::unordered_map<CopyOperationId, std::vector<ClientLocalId>,
                        boost::hash<CopyOperationId>>
         copy_op_to_clients_;
+
+    /// Maps request_id → local_id for in-flight submit requests.
+    std::unordered_map<RequestId, std::uint64_t, boost::hash<RequestId>>
+        request_id_to_local_id_;
+
+    /// Extracts the canonical client ID by stripping the socket suffix
+    /// (_query, _submit) from a ZMQ identity.
+    [[nodiscard]] static Identity ResolveCanonicalClientId(
+        const Identity& identity);
 
     AsyncExecutorState& async_executor_state_;
   };

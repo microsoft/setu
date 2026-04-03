@@ -228,11 +228,9 @@ def _dest_pull_and_verify(
         dst_sel = TensorSelection(dst_tensor_name, dim_map)
         copy_spec = CopySpec(src_tensor_name, dst_tensor_name, src_sel, dst_sel)
 
-        copy_op_id = client.submit_pull(copy_spec)
-        if copy_op_id is None:
-            raise RuntimeError("Failed to submit pull")
+        local_id = client.submit_pull(copy_spec)
 
-        client.wait_for_copy(copy_op_id)
+        client.wait_for_copy(local_id)
 
         # Verify
         tensor_ipc_spec, _, _ = client.get_tensor_handle(shard_ref)
@@ -465,9 +463,7 @@ def _register_lock_pull_release(
         copy_spec = CopySpec(src_tensor_name, dst_tensor_name, src_sel, dst_sel)
 
         start_time = time.time()
-        copy_op_id = client.submit_pull(copy_spec)
-        if copy_op_id is None:
-            raise RuntimeError("Failed to submit pull")
+        local_id = client.submit_pull(copy_spec)
 
         # Hold lock — executor is blocked waiting for it
         time.sleep(hold_seconds)
@@ -476,7 +472,7 @@ def _register_lock_pull_release(
         del write_handle
 
         # Wait for copy to complete (should finish quickly after lock release)
-        client.wait_for_copy(copy_op_id)
+        client.wait_for_copy(local_id)
         elapsed = time.time() - start_time
 
         result_queue.put({"success": True, "elapsed": elapsed})

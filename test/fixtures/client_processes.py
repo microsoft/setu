@@ -157,18 +157,16 @@ def run_polling_dest_client(
         )
 
         print(f"[PollingDest {client_id}] Submitting pull...", flush=True)
-        copy_op_id = client.submit_pull(copy_spec)
-        if copy_op_id is None:
-            raise RuntimeError("Failed to submit pull")
+        local_id = client.submit_pull(copy_spec)
 
         # Poll for completion instead of blocking wait
-        pending = {copy_op_id}
+        pending = {local_id}
         poll_iterations = 0
         max_iterations = 10000
         while pending and poll_iterations < max_iterations:
             completed = client.poll_completions()
-            for op_id in completed:
-                pending.discard(op_id)
+            for lid, _gid in completed:
+                pending.discard(lid)
             poll_iterations += 1
             if pending:
                 time.sleep(0.001)
@@ -289,11 +287,9 @@ def run_dest_client(
         )
 
         print(f"[Dest {client_id}] Submitting pull...", flush=True)
-        copy_op_id = client.submit_pull(copy_spec)
-        if copy_op_id is None:
-            raise RuntimeError("Failed to submit pull")
+        local_id = client.submit_pull(copy_spec)
 
-        client.wait_for_copy(copy_op_id)
+        client.wait_for_copy(local_id)
         print(f"[Dest {client_id}] Copy complete!", flush=True)
 
         tensor_ipc_spec, _, _ = client.get_tensor_handle(shard_ref)

@@ -178,9 +178,12 @@ class Client:
         src: TensorSelection,
         dst: TensorSelection,
         hints: Optional[List[CompilerHint]] = None,
-    ) -> Optional[CopyOperationId]:
+    ) -> int:
         """
         Copy data from source selection to destination selection.
+
+        Submits asynchronously and returns immediately with a local ID.
+        Use ``wait()`` to block until the operation completes.
 
         Args:
             src: Source tensor selection
@@ -190,42 +193,35 @@ class Client:
                 identical hints.
 
         Returns:
-            CopyOperationId that can be passed to ``wait()``.
-
-        Raises:
-            ValueError: If selections are incompatible (different dimensions/sizes)
-            RuntimeError: If copy operation fails
+            Local ID (int) that can be passed to ``wait()``.
 
         Example:
             >>> src = client.select("kv_cache_src").where("page", [1, 2, 3])
             >>> dst = client.select("kv_cache_dst").where("page", [4, 5, 6])
-            >>> op_id = client.copy(src, dst)
-            >>> client.wait(op_id)
+            >>> local_id = client.copy(src, dst)
+            >>> client.wait(local_id)
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
-
-        copy_op_id = self._client.submit_copy(copy_spec, hints=hints or [])
-
-        if copy_op_id is None:
-            raise RuntimeError("Copy operation submission failed")
-
+        local_id = self._client.submit_copy(copy_spec, hints=hints or [])
         logger.debug(
-            "Submitted copy operation %d: %s -> %s", copy_op_id, src.name, dst.name
+            "Submitted copy local_id=%d: %s -> %s", local_id, src.name, dst.name
         )
-        return copy_op_id
+        return local_id
 
     def pull(
         self,
         src: TensorSelection,
         dst: TensorSelection,
         hints: Optional[List[CompilerHint]] = None,
-    ) -> Optional[CopyOperationId]:
+    ) -> int:
         """
         One-sided pull: copy data from a remote source into a local destination.
 
         Unlike ``copy``, which is two-sided, ``pull`` is initiated entirely by
         the destination.  Every destination shard that needs data must call this
         method; no action is required on the source side.
+
+        Submits asynchronously and returns immediately with a local ID.
 
         Args:
             src: Source tensor selection (may reside on a remote node).
@@ -235,53 +231,49 @@ class Client:
                 identical hints.
 
         Returns:
-            CopyOperationId that can be passed to ``wait()`` to block until
+            Local ID (int) that can be passed to ``wait()`` to block until
             the transfer completes.
-
-        Raises:
-            RuntimeError: If the pull submission fails.
 
         Example:
             >>> src = client.select("remote_kv_cache").where("page", [0, 1, 2])
             >>> dst = client.select("local_kv_cache").where("page", [0, 1, 2])
-            >>> op_id = client.pull(src, dst)
-            >>> client.wait(op_id)
+            >>> local_id = client.pull(src, dst)
+            >>> client.wait(local_id)
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
-
-        copy_op_id = self._client.submit_pull(copy_spec, hints=hints or [])
-
-        if copy_op_id is None:
-            raise RuntimeError("Copy operation submission failed")
-
+        local_id = self._client.submit_pull(copy_spec, hints=hints or [])
         logger.debug(
-            "Submitted copy operation %d: %s -> %s", copy_op_id, src.name, dst.name
+            "Submitted pull local_id=%d: %s -> %s", local_id, src.name, dst.name
         )
-        return copy_op_id
+        return local_id
 
-    def poll_completions(self) -> List[CopyOperationId]:
+    def poll_completions(self) -> List[tuple[int, CopyOperationId]]:
         """Non-blocking poll for completed copy operations.
 
-        Returns a (possibly empty) list of CopyOperationIds that have
-        completed since the last call. Each ID appears at most once across
-        all calls.
+        Returns a (possibly empty) list of (local_id, CopyOperationId) tuples
+        that have completed since the last call. Each entry appears at most
+        once across all calls.
         """
         return self._client.poll_completions()
 
-    def wait(self, copy_op_id: CopyOperationId) -> None:
+    def wait(self, local_id: int) -> CopyOperationId:
         """
         Wait for a copy operation to complete.
 
         Args:
-            copy_op_id: The copy operation ID returned by copy(blocking=False)
+            local_id: The local ID returned by ``copy()`` or ``pull()``.
+
+        Returns:
+            The global CopyOperationId assigned by the coordinator.
 
         Example:
-            >>> op_id = client.copy(src, dst, blocking=False)
+            >>> local_id = client.copy(src, dst)
             >>> # ... do other work ...
-            >>> client.wait(op_id)
+            >>> global_id = client.wait(local_id)
         """
-        self._client.wait_for_copy(copy_op_id)
-        logger.debug("Copy operation %d completed", copy_op_id)
+        global_id = self._client.wait_for_copy(local_id)
+        logger.debug("Copy operation local_id=%d completed (global=%s)", local_id, global_id)
+        return global_id
 
     def _get_tensor_shard(self, shard_ref: TensorShardRef) -> TensorShard:
         """Get a cached TensorShard, or fetch and cache on first access.

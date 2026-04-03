@@ -52,12 +52,13 @@ void InitClientPybindClass(py::module_& m) {
            "Register a tensor shard and return a reference to it")
       .def("submit_copy", &Client::SubmitCopy, py::arg("copy_spec"),
            py::arg("hints") = std::vector<CompilerHint>{},
-           "Submit a copy operation and return an operation ID")
+           "Submit a copy operation and return a local ID (uint64)")
       .def("submit_pull", &Client::SubmitPull, py::arg("copy_spec"),
            py::arg("hints") = std::vector<CompilerHint>{},
-           "Submit a pull operation and return an operation ID")
-      .def("wait_for_copy", &Client::WaitForCopy, py::arg("copy_op_id"),
-           "Wait for a copy operation to complete")
+           "Submit a pull operation and return a local ID (uint64)")
+      .def("wait_for_copy", &Client::WaitForCopy, py::arg("local_id"),
+           "Wait for a copy operation by local ID, returns global "
+           "CopyOperationId")
       .def("wait_for_shard_allocation", &Client::WaitForShardAllocation,
            py::arg("shard_id"), "Wait for a tensor shard to be allocated")
       .def(
@@ -75,8 +76,18 @@ void InitClientPybindClass(py::module_& m) {
            "Get all registered tensor shard references")
       .def("select", &Client::Select, py::arg("name"),
            "Get a TensorSelection covering the full tensor dimensions")
-      .def("poll_completions", &Client::PollCompletions,
-           "Non-blocking poll for completed copy operations");
+      .def(
+          "poll_completions",
+          [](Client& self) {
+            auto completions = self.PollCompletions();
+            py::list result;
+            for (const auto& c : completions) {
+              result.append(py::make_tuple(c.local_id, c.copy_op_id));
+            }
+            return result;
+          },
+          "Non-blocking poll for completed copy operations. Returns "
+          "list of (local_id, copy_op_id) tuples.");
 }
 //==============================================================================
 void InitEnumsPybindClass(py::module_& m) {

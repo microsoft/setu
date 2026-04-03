@@ -246,16 +246,14 @@ def _run_dest_client_pull(
         )
 
         # Submit pull operation
-        copy_op_id = client.submit_pull(copy_spec)
-        if copy_op_id is None:
-            raise RuntimeError("Failed to submit pull operation")
+        local_id = client.submit_pull(copy_spec)
 
         # Signal that pull was submitted — main test can now trigger disconnect
         if pull_submitted_event is not None:
             pull_submitted_event.set()
 
         # Wait for copy to complete
-        client.wait_for_copy(copy_op_id)
+        client.wait_for_copy(local_id)
 
         # Verify data
         tensor_ipc_spec, _, _ = client.get_tensor_handle(shard_ref)

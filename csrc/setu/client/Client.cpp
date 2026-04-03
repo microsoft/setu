@@ -18,6 +18,7 @@
 //==============================================================================
 #include <sys/mman.h>
 //==============================================================================
+#include "commons/BoostCommon.h"
 #include "commons/Logging.h"
 #include "commons/utils/Comm.h"
 #include "commons/utils/ZmqHelper.h"
@@ -38,10 +39,7 @@ using setu::commons::messages::GetTensorSelectionResponse;
 using setu::commons::messages::RegisterTensorShardNodeAgentResponse;
 using setu::commons::messages::RegisterTensorShardRequest;
 using setu::commons::messages::SubmitCopyRequest;
-using setu::commons::messages::SubmitCopyResponse;
 using setu::commons::messages::SubmitPullRequest;
-using setu::commons::messages::WaitForCopyRequest;
-using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::Comm;
@@ -50,7 +48,9 @@ using setu::commons::utils::ring::CompletionEntry;
 using setu::commons::utils::ring::CompletionRingConsumer;
 using setu::commons::utils::ring::ShmRing;
 //==============================================================================
-Client::Client() { zmq_context_ = std::make_shared<zmq::context_t>(); }
+Client::Client()
+    : zmq_context_(std::make_shared<zmq::context_t>()),
+      client_id_(to_string(setu::commons::GenerateUUID())) {}
 
 Client::~Client() {
   if (is_connected_) {
@@ -67,16 +67,21 @@ void Client::Connect(const std::string& endpoint) {
                          endpoint_);
   ASSERT_VALID_ARGUMENTS(!endpoint.empty(), "Endpoint cannot be empty");
 
-  request_socket_ = ZmqHelper::CreateAndConnectSocket(
-      zmq_context_, zmq::socket_type::req, endpoint);
+  const auto query_identity = client_id_ + "_query";
+  query_socket_ = ZmqHelper::CreateAndConnectSocket(
+      zmq_context_, zmq::socket_type::req, endpoint, query_identity);
+
+  const auto submit_identity = client_id_ + "_submit";
+  submit_socket_ = ZmqHelper::CreateAndConnectSocket(
+      zmq_context_, zmq::socket_type::dealer, endpoint, submit_identity);
 
   endpoint_ = endpoint;
   is_connected_ = true;
 
   // Send ConnectRequest to set up the shared-memory completion ring
   ClientRequest connect_req = ConnectRequest();
-  Comm::Send(request_socket_, connect_req);
-  auto connect_resp = Comm::Recv<ConnectResponse>(request_socket_);
+  Comm::Send(query_socket_, connect_req);
+  auto connect_resp = Comm::Recv<ConnectResponse>(query_socket_);
 
   ASSERT_VALID_RUNTIME(connect_resp.IsSuccess(),
                        "ConnectRequest failed with error_code: {}",
@@ -120,9 +125,13 @@ void Client::Disconnect() {
   completion_ring_shm_name_.clear();
   completed_ops_.clear();
 
-  if (request_socket_) {
-    request_socket_->close();
-    request_socket_.reset();
+  if (submit_socket_) {
+    submit_socket_->close();
+    submit_socket_.reset();
+  }
+  if (query_socket_) {
+    query_socket_->close();
+    query_socket_.reset();
   }
 
   endpoint_.clear();
@@ -144,9 +153,9 @@ bool Client::DeregisterShards() {
   }
 
   ClientRequest request = DeregisterShardsRequest(std::move(shards_by_tensor));
-  Comm::Send(request_socket_, request);
+  Comm::Send(query_socket_, request);
 
-  auto ready = Comm::PollForRead({request_socket_}, kDeregisterTimeoutMs);
+  auto ready = Comm::PollForRead({query_socket_}, kDeregisterTimeoutMs);
   if (ready.empty()) {
     LOG_WARNING(
         "Deregister shards timed out after {}ms, proceeding with disconnect",
@@ -154,7 +163,7 @@ bool Client::DeregisterShards() {
     return false;
   }
 
-  auto response = Comm::Recv<DeregisterShardsResponse>(request_socket_);
+  auto response = Comm::Recv<DeregisterShardsResponse>(query_socket_);
 
   LOG_DEBUG("Deregister shards completed with error code: {}",
             response.error_code);
@@ -168,10 +177,10 @@ const std::string& Client::GetEndpoint() const { return endpoint_; }
 std::optional<TensorShardRef> Client::RegisterTensorShard(
     const TensorShardSpec& shard_spec) {
   ClientRequest request = RegisterTensorShardRequest(shard_spec);
-  Comm::Send(request_socket_, request);
+  Comm::Send(query_socket_, request);
 
   auto response =
-      Comm::Recv<RegisterTensorShardNodeAgentResponse>(request_socket_);
+      Comm::Recv<RegisterTensorShardNodeAgentResponse>(query_socket_);
 
   LOG_DEBUG("Client received response for tensor shard: {} with error code: {}",
             shard_spec.name, response.error_code);
@@ -193,8 +202,8 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   return response.shard_ref;
 }
 
-std::optional<CopyOperationId> Client::SubmitCopy(
-    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints) {
+std::uint64_t Client::SubmitCopy(const CopySpec& copy_spec,
+                                 const std::vector<CompilerHint>& hints) {
   // Find all shards owned by this client that are involved in the copy
   // (either as source or destination)
   std::vector<ShardId> involved_shards;
@@ -215,102 +224,84 @@ std::optional<CopyOperationId> Client::SubmitCopy(
                        "Client has no shards for src {} or dst {}",
                        copy_spec.src_name, copy_spec.dst_name);
 
-  // Compute fingerprint once for all shard submissions
+  const auto local_id = next_local_id_.fetch_add(1);
   const auto fingerprint = setu::planner::hints::Fingerprint(hints);
 
-  // Submit a request for each involved shard
-  std::optional<CopyOperationId> copy_op_id;
+  // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_id : involved_shards) {
     ClientRequest request =
-        SubmitCopyRequest(shard_id, copy_spec, hints, fingerprint);
-    Comm::Send(request_socket_, request);
-
-    auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
-
-    LOG_DEBUG("Client received copy operation ID: {} for shard {}",
-              response.copy_operation_id, shard_id);
-
-    if (response.error_code != ErrorCode::kSuccess) {
-      return std::nullopt;
-    }
-
-    copy_op_id = response.copy_operation_id;
+        SubmitCopyRequest(shard_id, copy_spec, hints, fingerprint, local_id);
+    Comm::Send(submit_socket_, request);
   }
 
-  return copy_op_id;
+  LOG_DEBUG("Client submitted copy with local_id={} for {} shards", local_id,
+            involved_shards.size());
+  return local_id;
 }
 
-std::optional<CopyOperationId> Client::SubmitPull(
-    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints) {
+std::uint64_t Client::SubmitPull(const CopySpec& copy_spec,
+                                 const std::vector<CompilerHint>& hints) {
   // For Pull: only destination shards submit (one-sided operation)
   auto it = tensor_shards_.find(copy_spec.dst_name);
   ASSERT_VALID_RUNTIME(it != tensor_shards_.end(),
                        "Client has no shards for dst {}", copy_spec.dst_name);
 
-  // Compute fingerprint once for all shard submissions
+  const auto local_id = next_local_id_.fetch_add(1);
   const auto fingerprint = setu::planner::hints::Fingerprint(hints);
 
-  // Submit a request for each destination shard
-  std::optional<CopyOperationId> copy_op_id;
+  // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_ref : it->second) {
-    const auto shard_id = shard_ref->shard_id;
-
-    ClientRequest request =
-        SubmitPullRequest(shard_id, copy_spec, hints, fingerprint);
-    Comm::Send(request_socket_, request);
-
-    auto response = Comm::Recv<SubmitCopyResponse>(request_socket_);
-
-    LOG_DEBUG("Client received pull operation ID: {} for shard {}",
-              response.copy_operation_id, shard_id);
-
-    if (response.error_code != ErrorCode::kSuccess) {
-      return std::nullopt;
-    }
-
-    copy_op_id = response.copy_operation_id;
+    ClientRequest request = SubmitPullRequest(shard_ref->shard_id, copy_spec,
+                                              hints, fingerprint, local_id);
+    Comm::Send(submit_socket_, request);
   }
 
-  return copy_op_id;
+  LOG_DEBUG("Client submitted pull with local_id={} for {} shards", local_id,
+            it->second.size());
+  return local_id;
 }
 
-void Client::WaitForCopy(CopyOperationId copy_op_id) {
+CopyOperationId Client::WaitForCopy(std::uint64_t local_id) {
   // Check if already completed from a prior PollCompletions call
-  if (completed_ops_.erase(copy_op_id) > 0) {
-    LOG_DEBUG("Client: copy_op_id {} already completed (cached)", copy_op_id);
-    return;
+  auto it = completed_ops_.find(local_id);
+  if (it != completed_ops_.end()) {
+    auto global_id = it->second;
+    completed_ops_.erase(it);
+    LOG_DEBUG("Client: local_id {} already completed (cached), global_id={}",
+              local_id, global_id);
+    return global_id;
   }
 
   // Spin-poll the completion ring
   while (true) {
     auto completed = PollCompletions();
-    for (const auto& id : completed) {
-      if (id == copy_op_id) {
-        LOG_DEBUG("Client finished waiting for copy operation ID: {}",
-                  copy_op_id);
-        return;
+    for (const auto& entry : completed) {
+      if (entry.local_id == local_id) {
+        LOG_DEBUG("Client finished waiting for local_id={}, global_id={}",
+                  local_id, entry.copy_op_id);
+        return entry.copy_op_id;
       }
     }
     std::this_thread::yield();
   }
 }
 
-std::vector<CopyOperationId> Client::PollCompletions() {
+std::vector<Client::Completion> Client::PollCompletions() {
   ASSERT_VALID_RUNTIME(completion_ring_ != nullptr,
                        "PollCompletions called before Connect");
 
   std::vector<CompletionEntry> entries;
   [[maybe_unused]] auto count = completion_ring_->Poll(entries, kMaxPollBatch);
 
-  std::vector<CopyOperationId> result;
+  std::vector<Completion> result;
   result.reserve(entries.size());
   for (const auto& entry : entries) {
     ASSERT_VALID_RUNTIME(
         entry.error_code == setu::commons::enums::ErrorCode::kSuccess,
-        "Completion ring entry has error_code={} for copy_op_id={}",
-        entry.error_code, entry.copy_op_id);
-    result.push_back(entry.copy_op_id);
-    completed_ops_.insert(entry.copy_op_id);
+        "Completion ring entry has error_code={} for copy_op_id={}, local_id={}",
+        entry.error_code, entry.copy_op_id, entry.local_id);
+    result.push_back(Completion{entry.local_id, entry.copy_op_id});
+    completed_ops_[entry.local_id] = entry.copy_op_id;
   }
 
   return result;
@@ -318,9 +309,9 @@ std::vector<CopyOperationId> Client::PollCompletions() {
 
 void Client::WaitForShardAllocation(ShardId shard_id) {
   ClientRequest request = WaitForShardAllocationRequest(shard_id);
-  Comm::Send(request_socket_, request);
+  Comm::Send(query_socket_, request);
 
-  auto response = Comm::Recv<WaitForShardAllocationResponse>(request_socket_);
+  auto response = Comm::Recv<WaitForShardAllocationResponse>(query_socket_);
 
   LOG_DEBUG(
       "Client finished waiting for shard allocation: {} with error code: {}",
@@ -330,9 +321,9 @@ void Client::WaitForShardAllocation(ShardId shard_id) {
 GetTensorHandleResponse Client::GetTensorHandle(
     const TensorShardRef& shard_ref) {
   ClientRequest request = GetTensorHandleRequest(shard_ref.shard_id);
-  Comm::Send(request_socket_, request);
+  Comm::Send(query_socket_, request);
 
-  auto response = Comm::Recv<GetTensorHandleResponse>(request_socket_);
+  auto response = Comm::Recv<GetTensorHandleResponse>(query_socket_);
 
   LOG_DEBUG(
       "Client received tensor handle response for shard: {} with error code: "
@@ -353,9 +344,9 @@ GetTensorHandleResponse Client::GetTensorHandle(
 
 TensorSelectionPtr Client::Select(const TensorName& name) {
   ClientRequest request = GetTensorSelectionRequest(name);
-  Comm::Send(request_socket_, request);
+  Comm::Send(query_socket_, request);
 
-  auto response = Comm::Recv<GetTensorSelectionResponse>(request_socket_);
+  auto response = Comm::Recv<GetTensorSelectionResponse>(query_socket_);
 
   ASSERT_VALID_RUNTIME(response.error_code == ErrorCode::kSuccess,
                        "Failed to get tensor selection for tensor {}", name);

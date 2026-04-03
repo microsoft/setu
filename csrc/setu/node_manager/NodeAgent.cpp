@@ -252,6 +252,24 @@ NodeAgent::Handler::~Handler() {
   client_ring_info_.clear();
 }
 
+Identity NodeAgent::Handler::ResolveCanonicalClientId(
+    const Identity& identity) {
+  // Strip _query or _submit suffix to get the canonical client UUID
+  static constexpr std::string_view kQuerySuffix = "_query";
+  static constexpr std::string_view kSubmitSuffix = "_submit";
+  if (identity.size() > kQuerySuffix.size() &&
+      identity.compare(identity.size() - kQuerySuffix.size(),
+                       kQuerySuffix.size(), kQuerySuffix) == 0) {
+    return identity.substr(0, identity.size() - kQuerySuffix.size());
+  }
+  if (identity.size() > kSubmitSuffix.size() &&
+      identity.compare(identity.size() - kSubmitSuffix.size(),
+                       kSubmitSuffix.size(), kSubmitSuffix) == 0) {
+    return identity.substr(0, identity.size() - kSubmitSuffix.size());
+  }
+  return identity;
+}
+
 void NodeAgent::Handler::InitSockets() {
   client_socket_ = ZmqHelper::CreateAndBindSocket(
       zmq_context_, zmq::socket_type::router, port_);
@@ -427,6 +445,7 @@ void NodeAgent::Handler::HandleRegisterTensorShardRequest(
 void NodeAgent::Handler::HandleSubmitCopyRequest(
     const Identity& client_identity, const SubmitCopyRequest& request) {
   request_router_.TrackRequest(request.request_id, client_identity);
+  request_id_to_local_id_[request.request_id] = request.local_id;
 
   // Async: send via DEALER with delimiter, response comes later
   Comm::Send<NodeAgentRequest>(async_socket_, request);
@@ -435,6 +454,7 @@ void NodeAgent::Handler::HandleSubmitCopyRequest(
 void NodeAgent::Handler::HandleSubmitPullRequest(
     const Identity& client_identity, const SubmitPullRequest& request) {
   request_router_.TrackRequest(request.request_id, client_identity);
+  request_id_to_local_id_[request.request_id] = request.local_id;
 
   // Async: send via DEALER with delimiter, response comes later
   Comm::Send<NodeAgentRequest>(async_socket_, request);
@@ -614,9 +634,10 @@ void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
   // Push completion to every client's shared-memory ring
   auto clients_it = copy_op_to_clients_.find(request.copy_operation_id);
   if (clients_it != copy_op_to_clients_.end()) {
-    CompletionEntry entry{request.copy_operation_id, ErrorCode::kSuccess, 0};
-    for (const auto& client_id : clients_it->second) {
-      auto ring_it = client_rings_.find(client_id);
+    for (const auto& client_local : clients_it->second) {
+      CompletionEntry entry{request.copy_operation_id, client_local.local_id,
+                            ErrorCode::kSuccess, 0};
+      auto ring_it = client_rings_.find(client_local.canonical_client_id);
       if (ring_it != client_rings_.end()) {
         ring_it->second->Push(entry);
       }
@@ -624,7 +645,7 @@ void NodeAgent::Handler::HandleCopyOperationFinishedRequest(
     copy_op_to_clients_.erase(clients_it);
   }
 
-  // Still resolve pending_copies_ for any legacy ZMQ waiters
+  // Resolve pending_copies_ for any legacy ZMQ waiters
   auto waiters = pending_copies_.Resolve(request.copy_operation_id);
   for (const auto& client_id : waiters) {
     WaitForCopyResponse response(RequestId{}, ErrorCode::kSuccess);
@@ -646,12 +667,29 @@ void NodeAgent::Handler::HandleSubmitCopyResponse(
     return;
   }
 
+  // Look up and consume the local_id for this request
+  auto local_id_it = request_id_to_local_id_.find(response.request_id);
+  ASSERT_VALID_RUNTIME(local_id_it != request_id_to_local_id_.end(),
+                       "No local_id tracked for request_id: {}",
+                       response.request_id);
+  const auto local_id = local_id_it->second;
+  request_id_to_local_id_.erase(local_id_it);
+
+  const auto canonical_id = ResolveCanonicalClientId(*client_identity);
+
   if (response.error_code == ErrorCode::kSuccess) {
     pending_copies_.RegisterBlocker(response.copy_operation_id);
-    copy_op_to_clients_[response.copy_operation_id].push_back(*client_identity);
+    copy_op_to_clients_[response.copy_operation_id].push_back(
+        ClientLocalId{canonical_id, local_id});
+  } else {
+    // Push error to completion ring so the client can detect it
+    auto ring_it = client_rings_.find(canonical_id);
+    if (ring_it != client_rings_.end()) {
+      CompletionEntry entry{CopyOperationId{}, local_id,
+                            response.error_code, 0};
+      ring_it->second->Push(entry);
+    }
   }
-
-  Comm::Send<SubmitCopyResponse>(client_socket_, *client_identity, response);
 }
 
 void NodeAgent::Handler::AllocateTensor(
@@ -750,22 +788,22 @@ void NodeAgent::Handler::HandleDeregisterShardsResponse(
 
 void NodeAgent::Handler::HandleConnectRequest(const Identity& client_identity,
                                               const ConnectRequest& request) {
-  auto shm_name = ShmRing::GenerateShmName("setu_cring", client_identity);
+  const auto canonical_id = ResolveCanonicalClientId(client_identity);
+  auto shm_name = ShmRing::GenerateShmName("setu_cring", canonical_id);
   const auto capacity = kCompletionRingCapacity;
   const auto mmap_size = ShmRing::ComputeSize<CompletionEntry>(capacity);
 
   void* ptr = ShmRing::Create<CompletionEntry>(shm_name, capacity);
 
-  client_rings_[client_identity] =
-      std::make_unique<CompletionRingProducer>(ptr);
-  client_ring_info_[client_identity] = ClientRingInfo{shm_name, ptr, mmap_size};
+  client_rings_[canonical_id] = std::make_unique<CompletionRingProducer>(ptr);
+  client_ring_info_[canonical_id] = ClientRingInfo{shm_name, ptr, mmap_size};
 
   ConnectResponse response(request.request_id, ErrorCode::kSuccess, shm_name,
                            capacity);
   Comm::Send<ConnectResponse>(client_socket_, client_identity, response);
 
   LOG_DEBUG("HandleConnectRequest: created completion ring '{}' for client {}",
-            shm_name, client_identity);
+            shm_name, canonical_id);
 }
 
 void NodeAgent::Handler::WaitForShardRefCountZero(

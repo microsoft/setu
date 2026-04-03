@@ -64,13 +64,13 @@ class Client {
   std::optional<TensorShardRef> RegisterTensorShard(
       const TensorShardSpec& shard_spec);
 
-  std::optional<CopyOperationId> SubmitCopy(
-      const CopySpec& copy_spec, const std::vector<CompilerHint>& hints = {});
+  std::uint64_t SubmitCopy(const CopySpec& copy_spec,
+                          const std::vector<CompilerHint>& hints = {});
 
-  std::optional<CopyOperationId> SubmitPull(
-      const CopySpec& copy_spec, const std::vector<CompilerHint>& hints = {});
+  std::uint64_t SubmitPull(const CopySpec& copy_spec,
+                           const std::vector<CompilerHint>& hints = {});
 
-  void WaitForCopy(CopyOperationId copy_op_id);
+  CopyOperationId WaitForCopy(std::uint64_t local_id);
 
   void WaitForShardAllocation(ShardId shard_id);
 
@@ -82,7 +82,12 @@ class Client {
 
   /// @brief Non-blocking poll for completed copy operations.
   /// Drains entries from the shared-memory completion ring.
-  [[nodiscard]] std::vector<CopyOperationId> PollCompletions();
+  /// Returns (local_id, global CopyOperationId) pairs.
+  struct Completion {
+    std::uint64_t local_id;
+    CopyOperationId copy_op_id;
+  };
+  [[nodiscard]] std::vector<Completion> PollCompletions();
 
  private:
   static constexpr std::int32_t kDeregisterTimeoutMs = 300000;
@@ -92,7 +97,12 @@ class Client {
 
   // Zmq context and sockets
   ZmqContextPtr zmq_context_;
-  ZmqSocketPtr request_socket_;
+  std::string client_id_;
+  ZmqSocketPtr query_socket_;
+  ZmqSocketPtr submit_socket_;
+
+  // Monotonic local ID counter for async submit operations
+  std::atomic<std::uint64_t> next_local_id_{1};
 
   // Map from tensor name to list of shard refs owned by this client
   std::map<TensorName, std::vector<TensorShardRefPtr>> tensor_shards_;
@@ -105,8 +115,7 @@ class Client {
   std::size_t completion_ring_size_{0};
   std::string completion_ring_shm_name_;
   std::unique_ptr<CompletionRingConsumer> completion_ring_;
-  std::unordered_set<CopyOperationId, boost::hash<CopyOperationId>>
-      completed_ops_;
+  std::unordered_map<std::uint64_t, CopyOperationId> completed_ops_;
 };
 //==============================================================================
 }  // namespace setu::client
