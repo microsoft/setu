@@ -60,6 +60,7 @@ class Client:
         self._client.connect(endpoint)
         self._endpoint = endpoint
         self._tensor_shard_cache: Dict[uuid.UUID, TensorShard] = {}
+        self._select_cache: Dict[TensorName, TensorSelection] = {}
         logger.debug("Client connected to %s", endpoint)
 
     @property
@@ -83,6 +84,7 @@ class Client:
         if self._client.is_connected():
             self._client.disconnect()
             self._tensor_shard_cache.clear()
+            self._select_cache.clear()
             logger.debug("Client disconnected from %s", self._endpoint)
 
     def register_tensor_shard(self, spec: TensorShardSpec) -> Optional[TensorShardRef]:
@@ -163,8 +165,13 @@ class Client:
             ...     .where("page", {0, 1, 2}) \\
             ...     .where("head", 5)  # Single index
         """
+        cached = self._select_cache.get(name)
+        if cached is not None:
+            return cached
         native_selection = self._client.select(name)
-        return TensorSelection(native_selection)
+        selection = TensorSelection(native_selection)
+        self._select_cache[name] = selection
+        return selection
 
     def copy(
         self,
