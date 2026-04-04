@@ -357,6 +357,9 @@ ext_modules = []
 
 ext_modules.append(CMakeExtension(name="setu._commons"))
 ext_modules.append(CMakeExtension(name="setu._client"))
+ext_modules.append(CMakeExtension(name="setu._coordinator"))
+ext_modules.append(CMakeExtension(name="setu._node_manager"))
+ext_modules.append(CMakeExtension(name="setu._kernels"))
 
 
 setup(
