@@ -23,10 +23,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # ── Defaults ────────────────────────────────────────────────────────
 RAY_ADDRESS=""
 OUTPUT_DIR=""
-SRC_SPECS=()
-DST_SPECS=()
-BEGIN_SIZE="32"
-END_SIZE="8G"
+SRC_SPECS=("0:0")
+DST_SPECS=("0:1")
+BEGIN_SIZE="4M"
+END_SIZE="4G"
 FACTOR=2
 NCCL_SOCKET_IFNAME=""
 ENV_ARGS=()
