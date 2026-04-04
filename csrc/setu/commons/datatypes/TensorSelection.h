@@ -180,6 +180,31 @@ struct TensorSelection {
   }
 
   /**
+   * @brief Create a new TensorSelection with specified indices for a dimension
+   *        (sorted vector fast path)
+   *
+   * @param dim_name The name of the dimension to select from
+   * @param sorted_indices Sorted, deduplicated vector of indices to select
+   * @return New TensorSelection with the specified indices for the dimension
+   */
+  [[nodiscard]] TensorSelectionPtr Where(
+      const TensorDimName& dim_name,
+      const std::vector<TensorIndex>& sorted_indices) const {
+    ASSERT_VALID_ARGUMENTS(indices.find(dim_name) != indices.end(),
+                           "Dimension {} not found in selection", dim_name);
+
+    TensorIndicesMap new_indices = indices;
+
+    const auto& current = indices.at(dim_name);
+    auto from_vec =
+        TensorIndices::FromSortedVector(current.Size(), sorted_indices);
+
+    new_indices[dim_name] = current.Intersect(from_vec);
+
+    return std::make_shared<TensorSelection>(name, new_indices);
+  }
+
+  /**
    * @brief Create a new TensorSelection with specified slice for a dimension
    *
    * @param dim_name The name of the dimension to select from

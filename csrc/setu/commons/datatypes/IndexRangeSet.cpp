@@ -42,6 +42,9 @@ IndexRangeSet IndexRangeSet::FromIndices(
 
   std::vector<IndexRange> result;
   auto it = indices.begin();
+  ASSERT_VALID_ARGUMENTS(*it >= 0 && static_cast<std::size_t>(*it) < dim_size,
+                         "Index {} is out of bounds for dimension of size {}",
+                         *it, dim_size);
   std::int64_t range_start = *it;
   std::int64_t range_end = *it + 1;
   ++it;
@@ -58,6 +61,40 @@ IndexRangeSet IndexRangeSet::FromIndices(
       result.push_back({range_start, range_end});
       range_start = *it;
       range_end = *it + 1;
+    }
+  }
+  result.push_back({range_start, range_end});
+
+  return IndexRangeSet(dim_size, std::move(result));
+}
+//==============================================================================
+IndexRangeSet IndexRangeSet::FromSortedVector(
+    std::size_t dim_size, const std::vector<std::int64_t>& sorted_indices) {
+  if (sorted_indices.empty()) {
+    return MakeEmpty(dim_size);
+  }
+
+  std::vector<IndexRange> result;
+  ASSERT_VALID_ARGUMENTS(
+      sorted_indices[0] >= 0 &&
+          static_cast<std::size_t>(sorted_indices[0]) < dim_size,
+      "Index {} is out of bounds for dimension of size {}",
+      sorted_indices[0], dim_size);
+  std::int64_t range_start = sorted_indices[0];
+  std::int64_t range_end = sorted_indices[0] + 1;
+
+  for (std::size_t i = 1; i < sorted_indices.size(); ++i) {
+    ASSERT_VALID_ARGUMENTS(
+        sorted_indices[i] >= 0 &&
+            static_cast<std::size_t>(sorted_indices[i]) < dim_size,
+        "Index {} is out of bounds for dimension of size {}",
+        sorted_indices[i], dim_size);
+    if (sorted_indices[i] == range_end) {
+      ++range_end;
+    } else {
+      result.push_back({range_start, range_end});
+      range_start = sorted_indices[i];
+      range_end = sorted_indices[i] + 1;
     }
   }
   result.push_back({range_start, range_end});

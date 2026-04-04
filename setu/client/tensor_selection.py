@@ -75,9 +75,8 @@ class TensorSelection:
             >>> sel.where("head", {0, 1, 2, 3})
         """
         if isinstance(indices, int):
-            # Single integer: convert to set
-            index_set = {indices}
-            new_native = self._native.where(dim_name, index_set)
+            # Single integer: pass as single-element list (vector fast path)
+            new_native = self._native.where(dim_name, [indices])
         elif isinstance(indices, slice):
             # Python slice: convert to TensorSlice
             start = indices.start if indices.start is not None else 0
@@ -94,9 +93,8 @@ class TensorSelection:
             tensor_slice = TensorSlice(dim_name, start, stop)
             new_native = self._native.where(dim_name, tensor_slice)
         elif isinstance(indices, (list, tuple)):
-            # List/tuple: convert to set
-            index_set = set(indices)
-            new_native = self._native.where(dim_name, index_set)
+            # List/tuple: pass directly as list (vector fast path)
+            new_native = self._native.where(dim_name, list(indices))
         elif isinstance(indices, set):
             # Already a set
             new_native = self._native.where(dim_name, indices)

@@ -90,6 +90,12 @@ struct IndexRangeSet {
   [[nodiscard]] static IndexRangeSet FromIndices(
       std::size_t dim_size, const std::set<std::int64_t>& indices);
 
+  /** @brief Create from a sorted, deduplicated vector of indices.
+   *  Precondition: sorted in ascending order with no duplicates.
+   *  Undefined behavior otherwise. */
+  [[nodiscard]] static IndexRangeSet FromSortedVector(
+      std::size_t dim_size, const std::vector<std::int64_t>& sorted_indices);
+
   // ---- Predicates ----
 
   /** @brief Check if all indices are selected */

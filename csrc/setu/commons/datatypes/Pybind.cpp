@@ -153,6 +153,18 @@ void InitTensorSelectionPybind(py::module_& m) {
               &TensorSelection::Where, py::const_),
           py::arg("dim_name"), py::arg("index_set"),
           "Create new selection with specified indices for a dimension")
+      .def(
+          "where",
+          [](const TensorSelection& self, const TensorDimName& dim_name,
+             std::vector<TensorIndex> indices) -> TensorSelectionPtr {
+            std::sort(indices.begin(), indices.end());
+            indices.erase(std::unique(indices.begin(), indices.end()),
+                          indices.end());
+            return self.Where(dim_name, indices);
+          },
+          py::arg("dim_name"), py::arg("index_list"),
+          "Create new selection with specified indices for a dimension "
+          "(list fast path)")
       .def("where",
            py::overload_cast<const TensorDimName&, TensorSlicePtr>(
                &TensorSelection::Where, py::const_),
