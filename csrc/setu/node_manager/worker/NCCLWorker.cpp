@@ -23,6 +23,7 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/utils/CUDAUtils.h"
+#include "commons/utils/EnvUtils.h"
 //==============================================================================
 namespace setu::node_manager::worker {
 //==============================================================================
@@ -50,27 +51,32 @@ NCCLWorker::~NCCLWorker() {
 }
 
 void NCCLWorker::Setup() {
+  using setu::commons::utils::GetEnv;
   CUDA_CHECK(cudaSetDevice(device_.LocalDeviceIndex()));
-  static const std::size_t kNumStreams = []() -> std::size_t {
-    const char* env = std::getenv("SETU_NCCL_NUM_STREAMS");
-    if (env != nullptr) {
-      auto val = std::stoul(env);
-      ASSERT_VALID_ARGUMENTS(val >= 1, "SETU_NCCL_NUM_STREAMS must be >= 1");
-      return val;
-    }
-    return 2;
-  }();
-  streams_.resize(kNumStreams);
-  stream_loads_.resize(kNumStreams, 0);
+
+  const auto num_streams =
+      GetEnv<std::size_t>("SETU_WORKER_NUM_STREAMS", kDefaultNumStreams);
+  ASSERT_VALID_ARGUMENTS(num_streams >= 1, "SETU_WORKER_NUM_STREAMS must be >= 1");
+
+  max_in_flight_ =
+      GetEnv<std::size_t>("SETU_WORKER_MAX_INFLIGHT_PLANS", kDefaultMaxInFlight);
+  ASSERT_VALID_ARGUMENTS(max_in_flight_ >= 1,
+                         "SETU_WORKER_MAX_INFLIGHT_PLANS must be >= 1");
+
+  LOG_INFO("NCCLWorker[{}]: num_streams={}, max_in_flight={}",
+           device_, num_streams, max_in_flight_);
+
+  streams_.resize(num_streams);
+  stream_loads_.resize(num_streams, 0);
   for (auto& s : streams_) {
     CUDA_CHECK(cudaStreamCreate(&s));
   }
   active_stream_ = streams_[0];
 
   // Allocate completion event ring for async dispatch
-  completion_event_ring_.resize(kMaxInFlight);
+  completion_event_ring_.resize(max_in_flight_);
   for (auto& event_set : completion_event_ring_) {
-    event_set.resize(kNumStreams, nullptr);
+    event_set.resize(num_streams, nullptr);
     for (auto& e : event_set) {
       CUDA_CHECK(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
     }
@@ -222,7 +228,7 @@ void NCCLWorker::Execute(const Program& program) {
       current_copy_op_id_,
       static_cast<std::uint32_t>(num_streams_used),
       slot});
-  ring_head_ = (ring_head_ + 1) % kMaxInFlight;
+  ring_head_ = (ring_head_ + 1) % max_in_flight_;
 
   auto t_end = std::chrono::high_resolution_clock::now();
   double dispatch_ms =
@@ -272,9 +278,9 @@ void NCCLWorker::DrainCompletions() {
 }
 
 void NCCLWorker::WaitForCapacity() {
-  while (pending_programs_.size() >= kMaxInFlight) {
+  while (pending_programs_.size() >= max_in_flight_) {
     DrainCompletions();
-    if (pending_programs_.size() >= kMaxInFlight) {
+    if (pending_programs_.size() >= max_in_flight_) {
       std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
   }

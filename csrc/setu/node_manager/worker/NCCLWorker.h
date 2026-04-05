@@ -119,8 +119,12 @@ class NCCLWorker : public Worker {
   // Async dispatch: inter-program fence and completion tracking
   //============================================================================
 
+  static constexpr std::size_t kDefaultNumStreams = 2;
+  static constexpr std::size_t kDefaultMaxInFlight = 1;
+
   /// Maximum number of programs that can be in-flight on the GPU at once.
-  static constexpr std::size_t kMaxInFlight = 1;
+  /// Configurable via SETU_WORKER_MAX_INFLIGHT_PLANS.
+  std::size_t max_in_flight_ = kDefaultMaxInFlight;
 
   /// Tracks a single in-flight program on this worker.
   struct PendingProgram {
