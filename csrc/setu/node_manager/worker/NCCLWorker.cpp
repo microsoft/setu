@@ -103,6 +103,13 @@ void NCCLWorker::Setup() {
 }
 
 void NCCLWorker::Execute(const Program& program) {
+  if (has_last_execute_end_) {
+    auto gap_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - last_execute_end_).count();
+    LOG_DEBUG("PIPELINE[{}]: inter_execute_gap={}us copy_op={}",
+              device_, gap_us, current_copy_op_id_);
+  }
+
   auto nvtx_label = std::format("CopyOp:{} dev:{}",
       boost::uuids::to_string(current_copy_op_id_), device_);
   nvtxEventAttributes_t nvtx_attr = {};
@@ -236,6 +243,9 @@ void NCCLWorker::Execute(const Program& program) {
 
   LOG_DEBUG("Execute[{}]: dispatched copy_op={}, {}ms host time, {} streams",
             device_, current_copy_op_id_, dispatch_ms, num_streams_used);
+
+  last_execute_end_ = std::chrono::steady_clock::now();
+  has_last_execute_end_ = true;
 
   nvtxRangePop();
 }

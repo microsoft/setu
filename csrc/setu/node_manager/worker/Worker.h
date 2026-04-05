@@ -44,6 +44,7 @@ using setu::telemetry::MetricsSinkPtr;
 struct WorkerTask {
   CopyOperationId copy_op_id;
   Program program;
+  std::chrono::steady_clock::time_point enqueued_at;
 };
 
 /// @brief Completion notification pushed by a worker after executing a task.

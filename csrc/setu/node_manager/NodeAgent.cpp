@@ -922,7 +922,8 @@ void NodeAgent::Dispatcher::Loop() {
         LOG_DEBUG("Dispatching program with {} instructions to worker {}",
                   program.size(), device_rank);
         it->second.push(
-            WorkerTask{copy_op_id, std::move(program)});
+            WorkerTask{copy_op_id, std::move(program),
+                       std::chrono::steady_clock::now()});
       }
 
       auto t_dispatched = std::chrono::steady_clock::now();

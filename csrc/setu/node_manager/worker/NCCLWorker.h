@@ -141,6 +141,12 @@ class NCCLWorker : public Worker {
 
   /// FIFO of in-flight programs. Front is oldest (first to complete).
   std::deque<PendingProgram> pending_programs_;
+
+  //============================================================================
+  // Pipeline telemetry: inter-execute gap tracking
+  //============================================================================
+  std::chrono::steady_clock::time_point last_execute_end_;
+  bool has_last_execute_end_ = false;
 };
 
 //==============================================================================

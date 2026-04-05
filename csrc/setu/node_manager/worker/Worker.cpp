@@ -63,33 +63,62 @@ void Worker::SetMetricsSink(MetricsSinkPtr sink) {
 void Worker::WorkerLoop() {
   LOG_DEBUG("WorkerLoop started on device {}", device_);
 
+  auto to_us = [](auto d) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
+  };
+
   this->Setup();
   while (worker_running_) {
     try {
+      auto t_loop_start = std::chrono::steady_clock::now();
+
       // Drain completions for previously dispatched GPU work
       DrainCompletions();
+      auto t_after_drain = std::chrono::steady_clock::now();
 
       // Ensure we have capacity for another program
       WaitForCapacity();
+      auto t_after_capacity = std::chrono::steady_clock::now();
 
       // Pull next task. If we have pending in-flight work, use non-blocking
       // pull so we keep checking completions. Otherwise block.
       WorkerTask task;
+      bool got_task_immediately = false;
       if (HasPendingCompletions()) {
         auto status = input_queue_->try_pull(task);
         if (status != boost::concurrent::queue_op_status::success) {
+          LOG_DEBUG("PIPELINE[{}]: starved, drain={}us capacity={}us pending={}",
+                    device_,
+                    to_us(t_after_drain - t_loop_start),
+                    to_us(t_after_capacity - t_after_drain),
+                    HasPendingCompletions());
           continue;
         }
+        got_task_immediately = true;
       } else {
         task = input_queue_->pull();
       }
+      auto t_after_pull = std::chrono::steady_clock::now();
 
       current_copy_op_id_ = task.copy_op_id;
 
-      LOG_DEBUG("Worker[{}]: Executing program with {} instructions",
-                device_, task.program.size());
+      auto queue_latency_us = to_us(t_after_pull - task.enqueued_at);
+      auto queue_depth = input_queue_->size();
 
       this->Execute(task.program);
+      auto t_after_execute = std::chrono::steady_clock::now();
+
+      LOG_DEBUG("PIPELINE[{}]: copy_op={} drain={}us capacity_wait={}us "
+                "pull_wait={}us dispatch={}us queue_latency={}us "
+                "queue_depth={} queue_had_task={}",
+                device_, current_copy_op_id_,
+                to_us(t_after_drain - t_loop_start),
+                to_us(t_after_capacity - t_after_drain),
+                to_us(t_after_pull - t_after_capacity),
+                to_us(t_after_execute - t_after_pull),
+                queue_latency_us,
+                queue_depth,
+                got_task_immediately);
 
     } catch (const boost::concurrent::sync_queue_is_closed&) {
       // Queue closed — drain any remaining in-flight completions before exit
