@@ -170,8 +170,16 @@ cir::Program RegisterTiling::Run(cir::Program program, const PassContext& ctx) {
               if (groups[d].size() == 1) {
                 dst_out = rw.Target().EmitCopy(groups[d][0], mapped_dst);
               } else {
-                dst_out =
-                    rw.Target().EmitPack(std::move(groups[d]), mapped_dst);
+                std::size_t offset = 0;
+                for (auto& piece : groups[d]) {
+                  auto piece_size =
+                      rw.Target().GetValueInfo(piece).size_elements;
+                  auto dst_slice = rw.Target().EmitSlice(
+                      mapped_dst, cir::Slice{offset, piece_size});
+                  (void)rw.Target().EmitCopy(piece, dst_slice);
+                  offset += piece_size;
+                }
+                dst_out = rw.Target().EmitConsume(mapped_dst);
               }
               rw.MapValue(concrete.dst_outs[d], dst_out);
             }

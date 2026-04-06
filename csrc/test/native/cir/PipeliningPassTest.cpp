@@ -390,6 +390,152 @@ TEST_F(CIRPipeliningTest, Idempotent) {
   EXPECT_NO_THROW(Linearity::Check(result2));
 }
 
+//==============================================================================
+// Pack → Copy → Unpack pipelining tests
+//==============================================================================
+
+/// Build a Pack → Copy → Unpack program (mimics PackUnpackCopies output).
+///
+/// Creates N source views on src_dev, N destination views on dst_dev,
+/// then: alloc_tmp(src) → pack(srcs, tmp) → alloc_tmp(dst) →
+///       copy(packed, tmp) → unpack(copied, dsts).
+Program MakePackCopyUnpackProgram(
+    Device src_dev, Device dst_dev, torch::Dtype dtype,
+    const std::vector<std::size_t>& piece_sizes) {
+  Program p;
+  auto shard = MakePipeEmptyShardRef();
+
+  std::vector<Value> src_views;
+  std::vector<Value> dst_views;
+  std::size_t total_elements = 0;
+
+  for (std::size_t piece_size : piece_sizes) {
+    src_views.push_back(p.EmitView(src_dev, shard, Slice{0, piece_size}, dtype));
+    dst_views.push_back(p.EmitView(dst_dev, shard, Slice{0, piece_size}, dtype));
+    total_elements += piece_size;
+  }
+
+  auto src_tmp = p.EmitAllocTmp(src_dev, total_elements, dtype);
+  auto packed = p.EmitPack(src_views, src_tmp);
+
+  auto dst_tmp = p.EmitAllocTmp(dst_dev, total_elements, dtype);
+  auto copied = p.EmitCopy(packed, dst_tmp);
+
+  (void)p.EmitUnpack(copied, dst_views);
+  return p;
+}
+
+TEST_F(CIRPipeliningTest, PackCopyUnpack_SmallPayload_Unchanged) {
+  auto dev0 = MakePipeDevice(n0, 0);
+  auto dev1 = MakePipeDevice(n1, 0);
+
+  // 4 pieces × 64 elements = 256 total.  Chunk size = 512 elements.
+  // Everything fits in one chunk → no pipelining.
+  auto program = MakePackCopyUnpackProgram(dev0, dev1, dt, {64, 64, 64, 64});
+  auto before = program.Dump();
+
+  Pipelining pass(512 * torch::elementSize(dt));
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  EXPECT_EQ(result.Dump(), before);
+}
+
+TEST_F(CIRPipeliningTest, PackCopyUnpack_TwoChunks_Wavefront) {
+  auto dev0 = MakePipeDevice(n0, 0);
+  auto dev1 = MakePipeDevice(n1, 0);
+
+  // 4 pieces × 128 elements = 512 total.  Chunk size = 256 elements.
+  // → 2 chunks of 2 pieces each.
+  auto program = MakePackCopyUnpackProgram(dev0, dev1, dt, {128, 128, 128, 128});
+
+  // chunk_size_bytes = 256 elements × 2 bytes (float16) = 512 bytes
+  Pipelining pass(256 * torch::elementSize(dt));
+  auto result = pass.Run(std::move(program), DefaultCtx());
+
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // Count operations by type.
+  std::size_t num_packs = 0, num_copies = 0, num_unpacks = 0, num_allocs = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    auto type = result.Operations()[i].Type();
+    if (type == setu::planner::ir::cir::OpType::kPack) num_packs++;
+    if (type == setu::planner::ir::cir::OpType::kCopy) num_copies++;
+    if (type == setu::planner::ir::cir::OpType::kUnpack) num_unpacks++;
+    if (type == setu::planner::ir::cir::OpType::kAllocTmp) num_allocs++;
+  }
+
+  // 2 chunks → 2 packs, 2 copies, 2 unpacks, 4 alloc_tmps (2 src + 2 dst).
+  EXPECT_EQ(num_packs, 2);
+  EXPECT_EQ(num_copies, 2);
+  EXPECT_EQ(num_unpacks, 2);
+  EXPECT_EQ(num_allocs, 4);
+}
+
+TEST_F(CIRPipeliningTest, PackCopyUnpack_CoexistsWithCopyChain) {
+  auto dev_a = MakePipeDevice(n0, 0);
+  auto dev_b = MakePipeDevice(n0, 1);
+  auto dev_c = MakePipeDevice(n1, 0);
+
+  // Build a program with both: a 2-hop CopyChain AND a PackCopyUnpack.
+  Program p;
+  auto shard = MakePipeEmptyShardRef();
+
+  // --- 2-hop relay chain: dev_a → dev_b → dev_c, 512 elements ---
+  auto relay_src = p.EmitView(dev_a, shard, Slice{0, 512}, dt);
+  auto relay_dst = p.EmitView(dev_c, shard, Slice{0, 512}, dt);
+  auto relay_tmp = p.EmitAllocTmp(dev_b, 512 * torch::elementSize(dt), dt);
+  auto rs = p.EmitSlice(relay_src, Slice{0, 512});
+  auto rd = p.EmitSlice(relay_dst, Slice{0, 512});
+  auto rt = p.EmitSlice(relay_tmp, Slice{0, 512});
+  auto c0 = p.EmitCopy(rs, rt);
+  (void)p.EmitCopy(c0, rd);
+  (void)p.EmitConsume(relay_dst);
+
+  // --- PackCopyUnpack: dev_a → dev_c, 4 × 128 elements ---
+  std::vector<Value> pack_srcs, unpack_dsts;
+  for (std::size_t i = 0; i < 4; ++i) {
+    pack_srcs.push_back(p.EmitView(dev_a, shard, Slice{0, 128}, dt));
+    unpack_dsts.push_back(p.EmitView(dev_c, shard, Slice{0, 128}, dt));
+  }
+  auto pcu_src_tmp = p.EmitAllocTmp(dev_a, 512, dt);
+  auto packed = p.EmitPack(pack_srcs, pcu_src_tmp);
+  auto pcu_dst_tmp = p.EmitAllocTmp(dev_c, 512, dt);
+  auto copied = p.EmitCopy(packed, pcu_dst_tmp);
+  (void)p.EmitUnpack(copied, unpack_dsts);
+
+  // chunk_size = 256 elements → both should be pipelined into 2 chunks.
+  Pipelining pass(256 * torch::elementSize(dt));
+  auto result = pass.Run(std::move(p), DefaultCtx());
+
+  EXPECT_NO_THROW(Linearity::Check(result));
+
+  // Count copies: 2-hop chain with 2 chunks = 4 copies,
+  // PCU chain with 2 chunks = 2 copies.  Total = 6.
+  std::size_t num_copies = 0;
+  for (std::uint32_t i = 0; i < result.NumOperations(); ++i) {
+    if (result.Operations()[i].Type() == setu::planner::ir::cir::OpType::kCopy)
+      num_copies++;
+  }
+  EXPECT_EQ(num_copies, 6);
+}
+
+TEST_F(CIRPipeliningTest, PackCopyUnpack_Idempotent) {
+  auto dev0 = MakePipeDevice(n0, 0);
+  auto dev1 = MakePipeDevice(n1, 0);
+
+  auto program = MakePackCopyUnpackProgram(dev0, dev1, dt, {128, 128, 128, 128});
+
+  Pipelining pass(256 * torch::elementSize(dt));
+  auto result1 = pass.Run(std::move(program), DefaultCtx());
+  auto dump1 = result1.Dump();
+
+  auto result2 = pass.Run(std::move(result1), DefaultCtx());
+  auto dump2 = result2.Dump();
+
+  EXPECT_EQ(dump1, dump2);
+  EXPECT_NO_THROW(Linearity::Check(result2));
+}
+
 }  // namespace
 //==============================================================================
 }  // namespace setu::test::native
