@@ -24,6 +24,13 @@ class NodeInfo:
     node_agent_endpoint: str
     devices: List[Device]
 
+    @property
+    def control_endpoint(self) -> str:
+        """ZMQ REP control endpoint (node_agent_port + 1)."""
+        # node_agent_endpoint is "tcp://host:port"
+        prefix, _, port_str = self.node_agent_endpoint.rpartition(":")
+        return f"{prefix}:{int(port_str) + 1}"
+
 
 @dataclass(frozen=True)
 class ClusterInfo:
@@ -48,6 +55,10 @@ class ClusterInfo:
     @property
     def node_agent_endpoints(self) -> List[str]:
         return [n.node_agent_endpoint for n in self.nodes]
+
+    @property
+    def node_control_endpoints(self) -> List[str]:
+        return [n.control_endpoint for n in self.nodes]
 
     def node_info_for_participant(self, participant: Participant) -> NodeInfo:
         """Find the NodeInfo for *participant*'s node."""

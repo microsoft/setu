@@ -164,6 +164,10 @@ def _make_http_handler(server_ref: "MetricsServer") -> type:
                 else:
                     self._json_response(200, report.to_dict())
 
+            elif path == "/profiling/status":
+                results = server_ref._send_control_command("profiling_status")
+                self._json_response(200, {"nodes": results})
+
             else:
                 self._json_response(404, {"error": "not found"})
 
@@ -173,6 +177,12 @@ def _make_http_handler(server_ref: "MetricsServer") -> type:
             if path == "/reset":
                 server_ref.reset_reports()
                 self._json_response(200, {"status": "ok"})
+            elif path == "/profiling/start":
+                results = server_ref._send_control_command("start_profiling")
+                self._json_response(200, {"status": "ok", "nodes": results})
+            elif path == "/profiling/stop":
+                results = server_ref._send_control_command("stop_profiling")
+                self._json_response(200, {"status": "ok", "nodes": results})
             else:
                 self._json_response(404, {"error": "not found"})
 
@@ -202,6 +212,9 @@ class MetricsServer:
         endpoint: ZMQ bind endpoint (e.g. "tcp://*:9999").
         sinks: List of ReportSink instances for output.
         http_port: Port for the HTTP query API (0 = disabled).
+        node_control_endpoints: ZMQ REP endpoints for NodeAgent control
+            sockets (e.g. ["tcp://host1:5001", "tcp://host2:5001"]).
+            Used for dynamic profiling control.
     """
 
     def __init__(
@@ -209,10 +222,12 @@ class MetricsServer:
         endpoint: str = "tcp://*:9999",
         sinks: Optional[List[ReportSink]] = None,
         http_port: int = 0,
+        node_control_endpoints: Optional[List[str]] = None,
     ) -> None:
         self._endpoint = endpoint
         self._sinks = sinks or []
         self._http_port = http_port
+        self._node_control_endpoints = node_control_endpoints or []
         self._reports: Dict[uuid.UUID, CopySpecReport] = {}
         self._lock = threading.Lock()
         self._zmq_context: Optional[zmq.Context] = None
@@ -291,6 +306,28 @@ class MetricsServer:
         """Clear all collected reports."""
         with self._lock:
             self._reports.clear()
+
+    def _send_control_command(self, command: str) -> Dict[str, str]:
+        """Send a control command to all NodeAgent control sockets.
+
+        Returns a dict mapping endpoint → response string.
+        """
+        results: Dict[str, str] = {}
+        for endpoint in self._node_control_endpoints:
+            try:
+                sock = self._zmq_context.socket(zmq.REQ)
+                sock.setsockopt(zmq.RCVTIMEO, 5000)
+                sock.setsockopt(zmq.LINGER, 0)
+                sock.connect(endpoint)
+                sock.send_string(command)
+                results[endpoint] = sock.recv_string()
+                sock.close()
+            except zmq.ZMQError as e:
+                results[endpoint] = f"error:{e}"
+                logger.warning(
+                    "Control command '%s' to %s failed: %s", command, endpoint, e
+                )
+        return results
 
     def _listen_loop(self) -> None:
         """Background thread: receive and process metrics messages."""
@@ -410,3 +447,21 @@ class MetricsClient:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception:
             return None
+
+    def start_profiling(self) -> Dict[str, Any]:
+        """Start nsys profiling on all nodes."""
+        req = Request(f"{self._base_url}/profiling/start", method="POST")
+        with urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def stop_profiling(self) -> Dict[str, Any]:
+        """Stop nsys profiling on all nodes."""
+        req = Request(f"{self._base_url}/profiling/stop", method="POST")
+        with urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def profiling_status(self) -> Dict[str, Any]:
+        """Query profiling status on all nodes."""
+        url = f"{self._base_url}/profiling/status"
+        with urlopen(url, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
