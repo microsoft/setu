@@ -462,25 +462,23 @@ Plan NCCL::Run(const cir::Program& program) {
     }
   };
 
-  // Check if any future op reads from an overlapping region on this device.
-  auto has_future_reader = [&](const Participant& part,
-                               const ref::BufferRef& buf, std::size_t offset,
-                               std::size_t size) -> bool {
-    for (const auto& c : pending_copies) {
-      auto op_size = c.count * torch::elementSize(c.dtype);
-      if (c.src_part == part && c.src_ref == buf &&
-          c.src_offset_bytes < offset + size &&
-          offset < c.src_offset_bytes + op_size) {
-        return true;
-      }
+  // Precompute which buffers are ever read from.
+  // This lets us skip SyncPoint emission for writes to buffers that are
+  // never read, without scanning pending_copies each time.
+  struct BufferRefHash {
+    std::size_t operator()(const ref::BufferRef& b) const {
+      return hash_value(b);
     }
-    return false;
   };
+  std::unordered_set<ref::BufferRef, BufferRefHash> read_buffers;
+  for (const auto& c : pending_copies) {
+    read_buffers.insert(c.src_ref);
+  }
 
-  // Record a write.  Only emit SyncPoint if a future op reads this region.
+  // Record a write.  Only emit SyncPoint if any copy reads from this buffer.
   auto record_write = [&](const Participant& part, const ref::BufferRef& buf,
                           std::size_t offset, std::size_t size) {
-    if (!has_future_reader(part, buf, offset, size)) return;
+    if (!read_buffers.contains(buf)) return;
     auto sync_id = next_sync_id++;
     programs[part].emplace_back(llc::SyncPoint(sync_id));
     pending_writes[part].push_back({buf, offset, size, sync_id});
