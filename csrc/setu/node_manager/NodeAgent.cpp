@@ -25,6 +25,8 @@
 #include "planner/ir/llc/ShardAccess.h"
 #include "telemetry/MetricsSink.h"
 //==============================================================================
+#include <cuda_profiler_api.h>
+//==============================================================================
 namespace setu::node_manager {
 //==============================================================================
 using setu::commons::DevicePtr;
@@ -285,6 +287,13 @@ void NodeAgent::Handler::InitSockets() {
   async_socket_ =
       ZmqHelper::CreateAndConnectSocket(zmq_context_, zmq::socket_type::dealer,
                                         coordinator_endpoint_, async_identity);
+
+  // REP socket for control commands (profiling, etc.)
+  const auto control_port = port_ + 1;
+  control_socket_ = ZmqHelper::CreateAndBindSocket(
+      zmq_context_, zmq::socket_type::rep, control_port);
+  LOG_INFO("NodeAgent[{}]: control socket bound on port {}",
+           node_id_, control_port);
 }
 
 void NodeAgent::Handler::CloseSockets() {
@@ -296,6 +305,9 @@ void NodeAgent::Handler::CloseSockets() {
   }
   if (async_socket_) {
     async_socket_->close();
+  }
+  if (control_socket_) {
+    control_socket_->close();
   }
 }
 
@@ -339,8 +351,8 @@ void NodeAgent::Handler::Loop() {
   OnboardWithCoordinator();
 
   while (running_) {
-    auto ready =
-        Comm::PollForRead({client_socket_, async_socket_}, kPollTimeoutMs);
+    auto ready = Comm::PollForRead(
+        {client_socket_, async_socket_, control_socket_}, kPollTimeoutMs);
 
     for (const auto& socket : ready) {
       if (socket == client_socket_) {
@@ -350,9 +362,45 @@ void NodeAgent::Handler::Loop() {
       } else if (socket == async_socket_) {
         auto message = Comm::Recv<CoordinatorMessage>(async_socket_);
         HandleAsyncCoordinatorMessage(message);
+      } else if (socket == control_socket_) {
+        HandleControlMessage();
       }
     }
   }
+}
+
+void NodeAgent::Handler::HandleControlMessage() {
+  // Simple string-based protocol on REP socket
+  zmq::message_t msg;
+  auto result = control_socket_->recv(msg, zmq::recv_flags::none);
+  ASSERT_VALID_RUNTIME(result.has_value(), "Control socket recv failed");
+
+  std::string command(static_cast<char*>(msg.data()), msg.size());
+  std::string response;
+
+  if (command == "start_profiling") {
+    if (!profiling_active_) {
+      cudaProfilerStart();
+      profiling_active_ = true;
+      LOG_INFO("NodeAgent[{}]: profiling started", node_id_);
+    }
+    response = "ok";
+  } else if (command == "stop_profiling") {
+    if (profiling_active_) {
+      cudaProfilerStop();
+      profiling_active_ = false;
+      LOG_INFO("NodeAgent[{}]: profiling stopped", node_id_);
+    }
+    response = "ok";
+  } else if (command == "profiling_status") {
+    response = profiling_active_ ? "active" : "inactive";
+  } else {
+    response = "error:unknown_command";
+    LOG_WARNING("NodeAgent[{}]: unknown control command: {}",
+                node_id_, command);
+  }
+
+  control_socket_->send(zmq::buffer(response), zmq::send_flags::none);
 }
 
 void NodeAgent::Handler::HandleClientMessage(const Identity& client_identity,

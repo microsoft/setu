@@ -157,6 +157,9 @@ class NodeAgent {
   void Start();
   void Stop();
 
+  [[nodiscard]] std::size_t GetPort() const { return port_; }
+  [[nodiscard]] std::size_t GetControlPort() const { return port_ + 1; }
+
   /// Returns a per-user default lock directory under the system temp path.
   [[nodiscard]] static std::string GetDefaultLockBaseDir();
 
@@ -190,6 +193,9 @@ class NodeAgent {
     void InitSockets();
     void CloseSockets();
     void Loop();
+
+    // Control message dispatch (profiling toggle, etc.)
+    void HandleControlMessage();
 
     // Client message dispatch
     void HandleClientMessage(const Identity& client_identity,
@@ -245,11 +251,13 @@ class NodeAgent {
     Queue<std::pair<CopyOperationId, Plan>>& executor_queue_;
 
     ZmqSocketPtr client_socket_;
-    ZmqSocketPtr sync_socket_;   // REQ socket for sync request-response
-    ZmqSocketPtr async_socket_;  // DEALER socket for async send/receive
+    ZmqSocketPtr sync_socket_;    // REQ socket for sync request-response
+    ZmqSocketPtr async_socket_;   // DEALER socket for async send/receive
+    ZmqSocketPtr control_socket_; // REP socket for control commands (port+1)
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    bool profiling_active_ = false;  ///< Handler-thread only, no atomic needed
 
     // Routes coordinator responses back to the client that initiated the
     // request

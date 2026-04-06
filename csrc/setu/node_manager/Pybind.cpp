@@ -75,7 +75,9 @@ void InitNodeAgentPybindClass(py::module_& m) {
           "devices, lock directory, optional metrics endpoint, and register "
           "size")
       .def("start", &NodeAgent::Start, "Start the NodeAgent handler loop")
-      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop");
+      .def("stop", &NodeAgent::Stop, "Stop the NodeAgent handler loop")
+      .def_property_readonly("control_port", &NodeAgent::GetControlPort,
+           "Port of the ZMQ REP control socket");
 }
 //==============================================================================
 }  // namespace setu::node_manager
