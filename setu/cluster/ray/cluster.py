@@ -199,21 +199,11 @@ class Cluster(ClusterProto):
         if self._started:
             raise RuntimeError("SetuCluster is already started")
 
-        # Start metrics server before actors so the ZMQ endpoint is ready.
-        # The server binds to the endpoint (may use "*"); actors need a
-        # connect-friendly endpoint with a real IP.
-        metrics_http_url = ""
+        # Derive metrics connect endpoint so actors know where to push
+        # telemetry.  MetricsServer itself starts after actors so it can
+        # receive their control endpoints.
         metrics_connect_endpoint = ""
         if self._metrics_endpoint:
-            http_port = _find_free_port()
-            self._metrics_server = MetricsServer(
-                endpoint=self._metrics_endpoint,
-                http_port=http_port,
-            )
-            self._metrics_server.start()
-            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
-
-            # Replace "*" with the node's actual IP so remote actors can connect.
             head_ip = ray.util.get_node_ip_address()
             metrics_connect_endpoint = self._metrics_endpoint.replace("*", head_ip)
 
@@ -301,6 +291,19 @@ class Cluster(ClusterProto):
             )
             for result in node_agent_results
         ]
+
+        # Start metrics server after actors so we can pass their control
+        # endpoints for profiling support.
+        metrics_http_url = ""
+        if self._metrics_endpoint:
+            http_port = _find_free_port()
+            self._metrics_server = MetricsServer(
+                endpoint=self._metrics_endpoint,
+                http_port=http_port,
+                node_control_endpoints=[n.control_endpoint for n in nodes],
+            )
+            self._metrics_server.start()
+            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
 
         # Record the Ray address so external processes (e.g. bench_setu)
         # can connect to the same Ray cluster.

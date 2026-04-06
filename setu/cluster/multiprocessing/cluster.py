@@ -340,20 +340,12 @@ class Cluster(ClusterProto):
         return self._metrics_server
 
     def start(self) -> ClusterInfo:
-        """Start coordinator and all node agents, build ClusterInfo."""
-        # Start metrics server before child processes so the ZMQ endpoint is ready.
-        # The server binds to the endpoint (may use "*"); child processes need a
-        # connect-friendly endpoint with a real address.
-        metrics_http_url = ""
+        """Start coordinator, node agents, and metrics server."""
+        # Derive metrics connect endpoint (if enabled) so child processes
+        # know where to push telemetry.  The MetricsServer itself starts
+        # after node agents so it can receive their control endpoints.
         metrics_connect_endpoint = ""
         if self._metrics_endpoint:
-            http_port = _find_free_port()
-            self._metrics_server = MetricsServer(
-                endpoint=self._metrics_endpoint,
-                http_port=http_port,
-            )
-            self._metrics_server.start()
-            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
             metrics_connect_endpoint = self._metrics_endpoint.replace("*", "localhost")
 
         coordinator_ready = self._ctx.Event()
@@ -405,6 +397,19 @@ class Cluster(ClusterProto):
                     devices=devices,
                 )
             )
+
+        # Start metrics server after node agents so we can pass their
+        # control endpoints for profiling support.
+        metrics_http_url = ""
+        if self._metrics_endpoint:
+            http_port = _find_free_port()
+            self._metrics_server = MetricsServer(
+                endpoint=self._metrics_endpoint,
+                http_port=http_port,
+                node_control_endpoints=[n.control_endpoint for n in nodes],
+            )
+            self._metrics_server.start()
+            metrics_http_url = f"http://localhost:{self._metrics_server.http_port}"
 
         time.sleep(self._settle_time)
 
