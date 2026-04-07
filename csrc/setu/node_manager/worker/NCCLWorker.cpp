@@ -327,7 +327,7 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
 
   const std::size_t count = inst.entries.size();
 
-  std::vector<void*> srcs(count);
+  std::vector<const void*> srcs(count);
   std::vector<void*> dsts(count);
   std::vector<std::size_t> sizes(count);
 
@@ -338,12 +338,21 @@ void NCCLWorker::ExecuteCopy(const Copy& inst) {
     sizes[i] = e.count * GetDTypeSizeBytes(e.dtype);
   }
 
-  for (std::size_t i = 0; i < count; ++i) {
-    CUDA_CHECK(cudaMemcpyAsync(dsts[i], srcs[i], sizes[i],
-                               cudaMemcpyDeviceToDevice, active_stream_));
-  }
+  cudaMemcpyAttributes attrs = {};
+  attrs.srcAccessOrder = cudaMemcpySrcAccessOrderStream;
+  std::size_t fail_idx = 0;
+#if CUDART_VERSION >= 13000
+  // CUDA 13+: 8-arg signature with (attrs*, attrsIdxs*, numAttrs, stream)
+  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
+                                  &attrs, &fail_idx,
+                                  static_cast<std::size_t>(1), active_stream_));
+#else
+  // CUDA 12.x: 7-arg template with (attrs_by_value, failIdxs*, stream)
+  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
+                                  attrs, &fail_idx, active_stream_));
+#endif
 
-  LOG_DEBUG("Copy: {} entries via cudaMemcpyAsync", count);
+  LOG_DEBUG("Copy: {} entries batched via cudaMemcpyBatchAsync", count);
 }
 
 void NCCLWorker::ExecuteSend(const Send& inst) {
