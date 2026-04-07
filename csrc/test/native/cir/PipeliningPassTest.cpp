@@ -35,6 +35,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
+using setu::planner::passes::P2PAccessMap;
 using setu::planner::passes::PassContext;
 using setu::planner::passes::Pipelining;
 
@@ -65,10 +66,12 @@ class CIRPipeliningTest : public testing::Test {
   torch::Dtype dt = torch::kFloat16;
   std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
   setu::planner::hints::HintStore empty_hints;
+  P2PAccessMap empty_p2p_access;
 
   PassContext DefaultCtx() {
     return PassContext{.hints = empty_hints,
-                       .register_sets = empty_register_sets};
+                       .register_sets = empty_register_sets,
+                       .p2p_access = empty_p2p_access};
   }
 
   /// Build a 2-hop relay program: src(devA) → tmp(devB) → dst(devC)

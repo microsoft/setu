@@ -114,12 +114,13 @@ struct PlannerTask {
 // Onboarding task
 //==============================================================================
 
-/// @brief Task to add register sets to the planner backend.
+/// @brief Task to add register sets and P2P topology to the planner backend.
 struct OnboardingTask {
   Identity node_agent_identity;
   RequestId request_id;
   std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
       register_sets;
+  std::vector<setu::commons::messages::P2PPair> p2p_pairs;
 };
 
 /// @brief Variant of tasks the Executor can process.

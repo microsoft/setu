@@ -95,8 +95,9 @@ def test_nccl_planner_shortest_path_routing():
         p_n1_g0: reg,
         p_n1_g1: reg,
     }
-    backend = NCCLBackend(register_sets)
+    backend = NCCLBackend()
     planner = Planner(backend, pass_manager)
+    planner.add_backend_register_sets(register_sets)
 
     metastore = MetaStore()
 

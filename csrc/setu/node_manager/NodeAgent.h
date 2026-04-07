@@ -183,6 +183,7 @@ class NodeAgent {
             std::unordered_map<setu::planner::Participant,
                                setu::planner::RegisterSet>
                 register_sets,
+            OnboardNodeAgentRequest::P2PPairs p2p_pairs,
             AsyncExecutorState& async_executor_state);
     ~Handler();
 
@@ -283,6 +284,9 @@ class NodeAgent {
     /// Per-device register sets to send to coordinator during onboarding.
     std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
         register_sets_;
+
+    /// Directional P2P-capable device pairs to send during onboarding.
+    OnboardNodeAgentRequest::P2PPairs p2p_pairs_;
 
     /// Tracks deregistration requests: 1 request (waiter) blocked by 1
     /// coordinator response key (blocker). WaiterId=RequestId,

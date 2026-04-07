@@ -17,8 +17,8 @@
 #pragma once
 //==============================================================================
 #include "planner/Plan.h"
-#include "planner/RegisterSet.h"
 #include "planner/ir/cir/Program.h"
+#include "planner/passes/PassContext.h"
 //==============================================================================
 namespace setu::planner::targets {
 //==============================================================================
@@ -29,14 +29,12 @@ namespace cir = setu::planner::ir::cir;
 class Backend {
  public:
   virtual ~Backend() = default;
-  [[nodiscard]] virtual Plan Run(const cir::Program& program /*[in]*/) = 0;
 
-  /// Merge additional per-device register sets into the backend.
-  /// Called during NodeAgent onboarding so the backend learns about all
-  /// devices in the cluster before any compilation occurs.
-  virtual void AddRegisterSets(
-      const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
-          register_sets /*[in]*/) = 0;
+  /// Lower a CIR program into per-device LLC programs.
+  /// The compilation context carries register sets, P2P topology, and hints.
+  [[nodiscard]] virtual Plan Run(
+      const cir::Program& program /*[in]*/,
+      const setu::planner::passes::PassContext& ctx /*[in]*/) = 0;
 };
 
 using BackendPtr = std::shared_ptr<Backend>;

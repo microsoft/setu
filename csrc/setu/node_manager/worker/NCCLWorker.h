@@ -52,6 +52,7 @@ using setu::planner::ir::llc::Fence;
 using setu::planner::ir::llc::InitComm;
 using setu::planner::ir::llc::Instruction;
 using setu::planner::ir::llc::Program;
+using setu::planner::ir::llc::Pull;
 using setu::planner::ir::llc::Receive;
 using setu::planner::ir::llc::Send;
 using setu::planner::ir::llc::SyncPoint;
@@ -81,6 +82,7 @@ class NCCLWorker : public Worker {
   void ExecuteCopy(const Copy& inst);
   void ExecuteSend(const Send& inst);
   void ExecuteReceive(const Receive& inst);
+  void ExecutePull(const Pull& inst);
   void ExecuteAllGather(const AllGather& inst);
   void ExecuteSyncPoint(const SyncPoint& inst);
   void ExecuteWait(const Wait& inst);

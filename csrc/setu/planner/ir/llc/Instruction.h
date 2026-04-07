@@ -23,6 +23,7 @@
 #include "planner/ir/llc/instructions/Copy.h"
 #include "planner/ir/llc/instructions/Fence.h"
 #include "planner/ir/llc/instructions/InitComm.h"
+#include "planner/ir/llc/instructions/Pull.h"
 #include "planner/ir/llc/instructions/Receive.h"
 #include "planner/ir/llc/instructions/Send.h"
 #include "planner/ir/llc/instructions/SyncPoint.h"
@@ -65,10 +66,11 @@ enum class InstructionType : std::uint8_t {
   kAllGather = 7,
   kSyncPoint = 8,
   kWait = 9,
+  kPull = 10,
 };
 
 using InstructionVariant = std::variant<InitComm, Copy, Send, Receive, Fence,
-                                        AllGather, SyncPoint, Wait>;
+                                        AllGather, SyncPoint, Wait, Pull>;
 
 /// A single LLC instruction.  Wraps one of the five concrete instruction
 /// types in a variant.  Supports serialization for wire transfer and

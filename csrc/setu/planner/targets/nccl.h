@@ -16,7 +16,6 @@
 //==============================================================================
 #pragma once
 //==============================================================================
-#include "planner/Planner.h"
 #include "planner/RegisterSet.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/ir/llc/CommId.h"
@@ -41,24 +40,20 @@ namespace cir = setu::planner::ir::cir;
 ///   alloc_tmp — allocates a temporary register buffer (register allocation
 ///               is performed internally using pool_sizes)
 ///   slice     — creates a sub-region view of an existing value
-///   copy      — emits LLC Copy (same-device) or Send+Receive (cross-device)
+///   copy      — emits LLC Copy (same-device), Pull (same-node P2P), or
+///               Send+Receive (cross-device/cross-node)
 ///   consume   — propagates view info (marker only, no LLC emission)
 ///   pack      — concatenates sources into destination (multiple copies)
 ///   unpack    — splits source into destinations (multiple copies)
 ///   all_gather — emits LLC AllGather (N-way communicator)
 struct NCCL : public Backend {
-  explicit NCCL(std::unordered_map<cir::Device, setu::planner::RegisterSet>
-                    register_sets = {});
+  NCCL() = default;
 
-  [[nodiscard]] Plan Run(const cir::Program& program /*[in]*/) override;
-
-  void AddRegisterSets(
-      const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
-          register_sets /*[in]*/) override;
+  [[nodiscard]] Plan Run(
+      const cir::Program& program /*[in]*/,
+      const setu::planner::passes::PassContext& ctx /*[in]*/) override;
 
  private:
-  std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets_;
-
   using CommId = setu::planner::ir::llc::CommId;
 
   struct CommCacheEntry {

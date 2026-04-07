@@ -458,7 +458,8 @@ void Handler::HandleOnboardNodeAgentRequest(
   // Route to Executor thread — Planner is only accessed from Executor.
   // Executor sends the response after processing.
   planner_queue_.push(OnboardingTask{node_agent_identity, request.request_id,
-                                     request.register_sets});
+                                     request.register_sets,
+                                     request.p2p_pairs});
 }
 //==============================================================================
 }  // namespace setu::coordinator

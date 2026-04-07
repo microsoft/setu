@@ -17,7 +17,9 @@
 #pragma once
 //==============================================================================
 #include "commons/StdCommon.h"
+#include "commons/Types.h"
 //==============================================================================
+#include "planner/Participant.h"
 #include "planner/RegisterSet.h"
 #include "planner/hints/HintStore.h"
 #include "planner/ir/cir/Value.h"
@@ -25,15 +27,45 @@
 namespace setu::planner::passes {
 //==============================================================================
 
-/// Immutable context passed to every pass at run time.
+/// Represents a single directional P2P-capable device pair within a node.
+struct P2PDevicePair {
+  std::int16_t src;
+  std::int16_t dst;
+
+  bool operator<(const P2PDevicePair& other) const {
+    return std::tie(src, dst) < std::tie(other.src, other.dst);
+  }
+
+  bool operator==(const P2PDevicePair& other) const {
+    return src == other.src && dst == other.dst;
+  }
+};
+
+/// Per-node map of directional P2P-capable device pairs.
+/// Key: NodeId.  Value: set of (src_local_idx, dst_local_idx) where
+/// cudaDeviceCanAccessPeer returned true.
+using P2PAccessMap =
+    std::unordered_map<setu::commons::NodeId, std::set<P2PDevicePair>>;
+
+/// Immutable context passed to every pass and the backend at run time.
 ///
-/// Contains per-operation hints (routing, bandwidth) and global compiler
-/// configuration (register pool sizes).  Passes read what they need and
-/// ignore the rest.
+/// Contains per-operation hints (routing, bandwidth), global compiler
+/// configuration (register pool sizes), and node-level P2P topology.
+/// Passes and backends read what they need and ignore the rest.
 struct PassContext {
   const setu::planner::hints::HintStore& hints;
   const std::unordered_map<setu::planner::ir::cir::Device,
                            setu::planner::RegisterSet>& register_sets;
+  const P2PAccessMap& p2p_access;
+
+  /// Returns true if dst can directly pull from src via cudaMemcpyPeerAsync.
+  [[nodiscard]] bool HasP2PAccess(const setu::planner::Participant& src,
+                                  const setu::planner::Participant& dst) const {
+    auto it = p2p_access.find(src.node_id);
+    if (it == p2p_access.end()) return false;
+    return it->second.contains(
+        {src.LocalDeviceIndex(), dst.LocalDeviceIndex()});
+  }
 };
 
 //==============================================================================

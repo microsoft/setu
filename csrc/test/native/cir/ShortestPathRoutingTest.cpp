@@ -40,6 +40,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
+using setu::planner::passes::P2PAccessMap;
 using setu::planner::passes::PassContext;
 using setu::planner::passes::ShortestPathRouting;
 using setu::planner::topo::Link;
@@ -71,9 +72,12 @@ class CIRShortestPathRoutingTest : public testing::Test {
   NodeId n1 = MakeNodeId("00234567-89ab-cdef-0123-456789abcdef");
   torch::Dtype dt = torch::kFloat16;
   std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+  P2PAccessMap empty_p2p_access;
 
   PassContext MakeCtx(const HintStore& hints) {
-    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+    return PassContext{.hints = hints,
+                       .register_sets = empty_register_sets,
+                       .p2p_access = empty_p2p_access};
   }
 };
 

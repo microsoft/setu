@@ -104,9 +104,9 @@ def _run_coordinator_process(
     for p in resolve_passes(spec.passes, topology=spec.topology):
         pass_manager.add_pass(p)
 
-    backend = NCCLBackend(register_sets)
-
+    backend = NCCLBackend()
     planner = Planner(backend, pass_manager)
+    planner.add_backend_register_sets(register_sets)
     coordinator = Coordinator(spec.coordinator_port, planner, metrics_endpoint)
     coordinator.start()
     ready_event.set()

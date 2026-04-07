@@ -57,10 +57,7 @@ void InitTargetsPybind(py::module_& m) {
   py::class_<Backend, std::shared_ptr<Backend>>(m, "Backend");
 
   py::class_<NCCL, Backend, std::shared_ptr<NCCL>>(m, "NCCLBackend")
-      .def(py::init<>(), "Create an NCCL backend with no register sets")
-      .def(py::init<std::unordered_map<cir::Device, RegisterSet>>(),
-           py::arg("register_sets"),
-           "Create an NCCL backend with per-device register sets");
+      .def(py::init<>(), "Create an NCCL backend");
 }
 //==============================================================================
 }  // namespace setu::planner::targets

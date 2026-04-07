@@ -46,6 +46,8 @@ void Instruction::Serialize(BinaryBuffer& buffer) const {
           type = InstructionType::kSyncPoint;
         } else if constexpr (std::is_same_v<T, Wait>) {
           type = InstructionType::kWait;
+        } else if constexpr (std::is_same_v<T, Pull>) {
+          type = InstructionType::kPull;
         }
 
         writer.Write<std::uint8_t>(static_cast<std::uint8_t>(type));
@@ -75,6 +77,8 @@ Instruction Instruction::Deserialize(const BinaryRange& range) {
       return Instruction(reader.Read<SyncPoint>());
     case InstructionType::kWait:
       return Instruction(reader.Read<Wait>());
+    case InstructionType::kPull:
+      return Instruction(reader.Read<Pull>());
     default:
       RAISE_RUNTIME_ERROR("Unknown instruction type id {}", type_id);
   }

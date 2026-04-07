@@ -126,9 +126,19 @@ void Executor::HandlePlannerTask(PlannerTask task) {
 }
 
 void Executor::HandleOnboardingTask(OnboardingTask task) {
-  LOG_DEBUG("Executor processing OnboardingTask ({} devices)",
-            task.register_sets.size());
+  LOG_DEBUG("Executor processing OnboardingTask ({} devices, {} p2p pairs)",
+            task.register_sets.size(), task.p2p_pairs.size());
   planner_.AddBackendRegisterSets(task.register_sets);
+
+  if (!task.p2p_pairs.empty() && !task.register_sets.empty()) {
+    auto node_id = task.register_sets.begin()->first.node_id;
+    std::vector<setu::planner::passes::P2PDevicePair> pairs;
+    pairs.reserve(task.p2p_pairs.size());
+    for (const auto& p : task.p2p_pairs) {
+      pairs.push_back({p.src, p.dst});
+    }
+    planner_.AddP2PAccess(node_id, pairs);
+  }
 
   OnboardNodeAgentResponse response(task.request_id, ErrorCode::kSuccess);
   PushOutbox(OutboxMessage{task.node_agent_identity, response});

@@ -35,6 +35,7 @@ using setu::planner::ir::cir::Linearity;
 using setu::planner::ir::cir::Program;
 using setu::planner::ir::cir::Slice;
 using setu::planner::ir::cir::Value;
+using setu::planner::passes::P2PAccessMap;
 using setu::planner::passes::PassContext;
 using setu::planner::passes::Pipelining;
 using setu::planner::passes::RegisterTiling;
@@ -64,9 +65,12 @@ class RegisterTilingTest : public ::testing::Test {
   setu::planner::ir::ref::ShardRef shard = MakeTestShardRef();
   HintStore hints;
   std::unordered_map<Device, setu::planner::RegisterSet> empty_register_sets;
+  P2PAccessMap empty_p2p_access;
 
   PassContext DefaultCtx() {
-    return PassContext{.hints = hints, .register_sets = empty_register_sets};
+    return PassContext{.hints = hints,
+                       .register_sets = empty_register_sets,
+                       .p2p_access = empty_p2p_access};
   }
 
   // 128 bytes chunk → 64 float16 elements

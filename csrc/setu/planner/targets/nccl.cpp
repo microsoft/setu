@@ -77,21 +77,11 @@ struct PendingCopy {
 
 //==============================================================================
 
-NCCL::NCCL(
-    std::unordered_map<cir::Device, setu::planner::RegisterSet> register_sets)
-    : register_sets_(std::move(register_sets)) {}
-
-void NCCL::AddRegisterSets(
-    const std::unordered_map<cir::Device, setu::planner::RegisterSet>&
-        register_sets) {
-  for (const auto& [device, reg_set] : register_sets) {
-    register_sets_.insert_or_assign(device, reg_set);
-  }
-}
-
 //==============================================================================
 
-Plan NCCL::Run(const cir::Program& program) {
+Plan NCCL::Run(const cir::Program& program,
+               const setu::planner::passes::PassContext& ctx) {
+
   std::unordered_map<cir::Value, ViewInfo> view_map;
 
   Plan plan;
@@ -109,7 +99,7 @@ Plan NCCL::Run(const cir::Program& program) {
   if (has_alloc_tmp) {
     auto liveness = cir::LivenessInfo::Build(program);
     reg_alloc =
-        cir::RegisterAllocation::Build(program, liveness, register_sets_);
+        cir::RegisterAllocation::Build(program, liveness, ctx.register_sets);
   }
 
   // === Step 1: Walk CIR ops, collect view info and pending copies ===
@@ -462,6 +452,27 @@ Plan NCCL::Run(const cir::Program& program) {
     }
   };
 
+  // Emit cross-participant SyncPoint/Wait for P2P reads: the reader is on
+  // a different participant than the writer, so SyncPoint goes to the
+  // writer's program and Wait to the reader's program.
+  auto resolve_cross_conflicts = [&](const Participant& writer_part,
+                                     const Participant& reader_part,
+                                     const ref::BufferRef& buf,
+                                     std::size_t offset, std::size_t size) {
+    auto it = pending_writes.find(writer_part);
+    if (it == pending_writes.end()) return;
+    std::unordered_set<std::uint32_t> emitted;
+    for (const auto& w : it->second) {
+      if (w.buffer == buf && w.offset < offset + size &&
+          offset < w.offset + w.size) {
+        if (emitted.insert(w.sync_id).second) {
+          flush_copy_batches_for(reader_part);
+          programs[reader_part].emplace_back(llc::Wait(w.sync_id));
+        }
+      }
+    }
+  };
+
   // Precompute which buffers are ever read from.
   // This lets us skip SyncPoint emission for writes to buffers that are
   // never read, without scanning pending_copies each time.
@@ -493,7 +504,19 @@ Plan NCCL::Run(const cir::Program& program) {
                                             c.count, c.dtype);
       flush_copy_batches_for(c.dst_part);
       record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
+    } else if (ctx.HasP2PAccess(c.src_part, c.dst_part)) {
+      // P2P pull: receiver does cudaMemcpyPeerAsync.
+      resolve_cross_conflicts(c.src_part, c.dst_part, c.src_ref,
+                              c.src_offset_bytes, op_size);
+      flush_copy_batches_for(c.dst_part);
+
+      programs[c.dst_part].emplace_back(llc::Pull(
+          c.src_ref, c.src_offset_bytes, c.dst_ref, c.dst_offset_bytes,
+          c.count, c.dtype, c.src_part.LocalDeviceIndex()));
+
+      record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
     } else {
+      // NCCL Send/Receive.
       resolve_conflicts(c.src_part, c.src_ref, c.src_offset_bytes, op_size);
 
       Participants pair_parts;

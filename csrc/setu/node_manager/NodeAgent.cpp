@@ -18,7 +18,9 @@
 //==============================================================================
 #include "commons/Logging.h"
 #include "commons/datatypes/TensorShardHandle.h"
+#include "commons/utils/CUDAUtils.h"
 #include "commons/utils/Comm.h"
+#include "commons/utils/EnvUtils.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "node_manager/worker/NCCLWorker.h"
 #include "planner/RegisterSet.h"
@@ -81,6 +83,7 @@ using setu::commons::messages::WaitForCopyResponse;
 using setu::commons::messages::WaitForShardAllocationRequest;
 using setu::commons::messages::WaitForShardAllocationResponse;
 using setu::commons::utils::Comm;
+using setu::commons::utils::GetEnv;
 using setu::commons::utils::PrepareTensorIPCSpec;
 using setu::commons::utils::ZmqHelper;
 using setu::commons::utils::ring::CompletionEntry;
@@ -146,10 +149,30 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
                                       RegisterSet::Uniform(1, register_size_));
   }
 
+  // Probe P2P access between all device pairs when peer memcpy is requested.
+  OnboardNodeAgentRequest::P2PPairs p2p_pairs;
+  if (GetEnv<bool>("SETU_WORKER_USE_PEER_MEMCPY", false)) {
+    for (const auto& src : devices_) {
+      for (const auto& dst : devices_) {
+        if (src == dst) continue;
+        int can_access = 0;
+        CUDA_CHECK(cudaDeviceCanAccessPeer(
+            &can_access, src.LocalDeviceIndex(), dst.LocalDeviceIndex()));
+        if (can_access) {
+          p2p_pairs.push_back(
+              {src.LocalDeviceIndex(), dst.LocalDeviceIndex()});
+          LOG_INFO("NodeAgent {}: P2P access available {} -> {}", node_id_,
+                   src.LocalDeviceIndex(), dst.LocalDeviceIndex());
+        }
+      }
+    }
+  }
+
   handler_ = std::make_unique<Handler>(
       node_id_, zmq_context_, port_, coordinator_endpoint_, executor_queue_,
       shard_id_to_tensor_, lock_base_dir_,
-      std::move(participant_register_sets), async_executor_state_);
+      std::move(participant_register_sets), std::move(p2p_pairs),
+      async_executor_state_);
 
   // Build register resolver from workers — captures workers_ by reference,
   // safe because NodeAgent outlives the Dispatcher.
@@ -229,6 +252,7 @@ NodeAgent::Handler::Handler(
     TensorShardsConcurrentMap& shard_id_to_tensor, std::string lock_base_dir,
     std::unordered_map<setu::planner::Participant, setu::planner::RegisterSet>
         register_sets,
+    OnboardNodeAgentRequest::P2PPairs p2p_pairs,
     AsyncExecutorState& async_executor_state)
     : node_id_(node_id),
       zmq_context_(zmq_context),
@@ -238,6 +262,7 @@ NodeAgent::Handler::Handler(
       shard_id_to_tensor_(shard_id_to_tensor),
       lock_base_dir_(std::move(lock_base_dir)),
       register_sets_(std::move(register_sets)),
+      p2p_pairs_(std::move(p2p_pairs)),
       async_executor_state_(async_executor_state) {
   InitSockets();
 }
@@ -328,10 +353,11 @@ void NodeAgent::Handler::Stop() {
 }
 
 void NodeAgent::Handler::OnboardWithCoordinator() {
-  LOG_INFO("NodeAgent {} onboarding with coordinator ({} devices)", node_id_,
-           register_sets_.size());
+  LOG_INFO("NodeAgent {} onboarding with coordinator ({} devices, {} p2p pairs)",
+           node_id_, register_sets_.size(), p2p_pairs_.size());
 
-  OnboardNodeAgentRequest request(std::move(register_sets_));
+  OnboardNodeAgentRequest request(std::move(register_sets_),
+                                  std::move(p2p_pairs_));
   Comm::Send<NodeAgentRequest>(sync_socket_, request);
   auto coordinator_response = Comm::Recv<CoordinatorMessage>(sync_socket_);
 

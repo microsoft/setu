@@ -87,6 +87,9 @@ void InitPlannerClassPybind(py::module_& m) {
       .def(py::init<targets::BackendPtr, passes::PassManagerPtr>(),
            py::arg("backend"), py::arg("pass_manager"),
            "Create a Planner with the given backend and pass manager")
+      .def("add_backend_register_sets", &Planner::AddBackendRegisterSets,
+           py::arg("register_sets"),
+           "Accumulate per-device register sets for compilation")
       .def(
           "compile",
           [](Planner& self, const CopySpec& spec, MetaStore& metastore) {

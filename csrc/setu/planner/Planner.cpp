@@ -46,7 +46,9 @@ CompileResult Planner::Compile(
   cm.pass_timings.push_back({"CopySpecToCIR", stage1_ms});
 
   // Stage 2: Optimization passes (timed individually)
-  passes::PassContext ctx{.hints = hints, .register_sets = register_sets_};
+  passes::PassContext ctx{.hints = hints,
+                          .register_sets = register_sets_,
+                          .p2p_access = p2p_access_};
   auto [optimized_cir, pass_timings] =
       pass_manager_->RunTimed(std::move(cir), ctx, pass_names);
   cm.pass_timings.insert(cm.pass_timings.end(), pass_timings.begin(),
@@ -54,7 +56,7 @@ CompileResult Planner::Compile(
 
   // Stage 3: Backend lowering
   t0 = std::chrono::high_resolution_clock::now();
-  Plan plan = backend_->Run(optimized_cir);
+  Plan plan = backend_->Run(optimized_cir, ctx);
   double stage3_ms = std::chrono::duration<double, std::milli>(
                          std::chrono::high_resolution_clock::now() - t0)
                          .count();
@@ -75,9 +77,17 @@ CompileResult Planner::Compile(
 //==============================================================================
 void Planner::AddBackendRegisterSets(
     const std::unordered_map<ir::cir::Device, RegisterSet>& register_sets) {
-  backend_->AddRegisterSets(register_sets);
   for (const auto& [device, reg_set] : register_sets) {
     register_sets_.insert_or_assign(device, reg_set);
+  }
+}
+//==============================================================================
+void Planner::AddP2PAccess(
+    NodeId node_id,
+    const std::vector<passes::P2PDevicePair>& p2p_pairs) {
+  auto& entry = p2p_access_[node_id];
+  for (const auto& pair : p2p_pairs) {
+    entry.insert(pair);
   }
 }
 //==============================================================================

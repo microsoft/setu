@@ -24,16 +24,18 @@ using setu::commons::utils::BinaryWriter;
 
 void OnboardNodeAgentRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  writer.WriteFields(request_id, register_sets);
+  writer.WriteFields(request_id, register_sets, p2p_pairs);
 }
 
 OnboardNodeAgentRequest OnboardNodeAgentRequest::Deserialize(
     const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [request_id_val, register_sets_val] =
+  auto [request_id_val, register_sets_val, p2p_pairs_val] =
       reader.ReadFields<RequestId,
-                        std::unordered_map<Participant, RegisterSet>>();
-  return OnboardNodeAgentRequest(request_id_val, std::move(register_sets_val));
+                        std::unordered_map<Participant, RegisterSet>,
+                        P2PPairs>();
+  return OnboardNodeAgentRequest(request_id_val, std::move(register_sets_val),
+                                 std::move(p2p_pairs_val));
 }
 
 //==============================================================================

@@ -93,6 +93,28 @@ void NCCLWorker::Setup() {
       pthread_self(),
       std::format("setu::worker[gpu{}]", device_.LocalDeviceIndex()).c_str());
 
+  // Enable P2P access to all other devices when peer memcpy is requested.
+  if (GetEnv<bool>("SETU_WORKER_USE_PEER_MEMCPY", false)) {
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    for (int i = 0; i < device_count; ++i) {
+      if (i == device_.LocalDeviceIndex()) continue;
+      int can_access = 0;
+      CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access,
+                                         device_.LocalDeviceIndex(), i));
+      if (can_access) {
+        auto p2p_err = cudaDeviceEnablePeerAccess(i, 0);
+        if (p2p_err == cudaErrorPeerAccessAlreadyEnabled) {
+          cudaGetLastError();  // clear the error
+        } else {
+          CUDA_CHECK(p2p_err);
+        }
+        LOG_INFO("NCCLWorker[{}]: P2P access enabled to device {}",
+                 device_, i);
+      }
+    }
+  }
+
   if (!register_file_.Empty()) {
     register_file_.Allocate();
     LOG_DEBUG("Allocated {} registers on device {}",
@@ -209,6 +231,10 @@ void NCCLWorker::Execute(const Program& program) {
             }
             // Reset loads after a fence.
             std::fill(stream_loads_.begin(), stream_loads_.end(), 0);
+          } else if constexpr (std::is_same_v<T, Pull>) {
+            select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
+            apply_pending_waits();
+            ExecutePull(inst);
           } else if constexpr (std::is_same_v<T, SyncPoint>) {
             ExecuteSyncPoint(inst);
           } else if constexpr (std::is_same_v<T, Wait>) {
@@ -375,6 +401,18 @@ void NCCLWorker::ExecuteReceive(const Receive& inst) {
 
   LOG_DEBUG("Receive: {} elements to {} from device rank: {}", inst.count,
             inst.dst_ref.ToString(), inst.peer_rank);
+}
+
+void NCCLWorker::ExecutePull(const Pull& inst) {
+  auto* src = static_cast<const char*>(inst.src_ptr) + inst.src_offset_bytes;
+  auto* dst = static_cast<char*>(inst.dst_ptr) + inst.dst_offset_bytes;
+  auto size = inst.count * GetDTypeSizeBytes(inst.dtype);
+
+  CUDA_CHECK(cudaMemcpyPeerAsync(dst, device_.LocalDeviceIndex(), src,
+                                 inst.src_device, size, active_stream_));
+
+  LOG_DEBUG("Pull: {} bytes from device {} to local device {}", size,
+            inst.src_device, device_.LocalDeviceIndex());
 }
 
 void NCCLWorker::ExecuteAllGather(const AllGather& inst) {
