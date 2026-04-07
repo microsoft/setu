@@ -123,7 +123,7 @@ for size_str in args.size:
             n_copy_rounds=args.num_copy_rounds,
             n_warmup_rounds=1,
             blocking=False,
-            metrics_http_url=cluster_info.metrics_http_url,
+
             hints=schedule_baseline.hints,
         )
         print("="*10, "Without Hints", "="*10)
@@ -140,7 +140,7 @@ for size_str in args.size:
             n_copy_rounds=args.num_copy_rounds,
             n_warmup_rounds=1,
             blocking=False,
-            metrics_http_url=cluster_info.metrics_http_url,
+
             hints=schedule_relay.hints,
         )
         print("="*10, "With Hints", "="*10)

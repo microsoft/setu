@@ -69,8 +69,8 @@ class ExperimentResult:
               1e-5 tolerance.
         errors: Human-readable error strings collected during the experiment.
         copy_mode: The copy mode used for the experiment.
-        shard_bytes: Per-shard data size in bytes (source shards only).
-            Populated by :func:`run_experiment`.
+        total_bytes_transferred: Actual bytes transferred per copy round,
+            as reported by the coordinator (accounts for selections).
     """
 
     success: bool
@@ -80,7 +80,7 @@ class ExperimentResult:
     dest_results: List[Dict] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     copy_mode: Optional[CopyMode] = None
-    shard_bytes: List[int] = field(default_factory=list)
+    total_bytes_transferred: int = 0
     n_warmup_rounds: int = 0
     warmup_round_elapsed_s: List[float] = field(default_factory=list)
     blocking: bool = True
@@ -100,7 +100,7 @@ class ExperimentResult:
 
         console = Console(file=io.StringIO(), force_terminal=False)
         all_results = self.source_results + self.dest_results
-        total_bytes = sum(self.shard_bytes) if self.shard_bytes else 0
+        total_bytes = self.total_bytes_transferred
         n_rounds = len(self.round_elapsed_s)
 
         # -- Header --
@@ -194,22 +194,16 @@ class ExperimentResult:
                 shard_name = r.get("shard_name", "?")
                 round_times = r.get("round_elapsed_s", [])
 
-                # shard_bytes covers source shards only; dest shards mirror them.
-                n_src = len(self.source_results)
-                shard_idx = idx if idx < n_src else idx - n_src
-                nbytes = (
-                    self.shard_bytes[shard_idx]
-                    if shard_idx < len(self.shard_bytes)
-                    else 0
+                size_str = (
+                    _format_size(total_bytes) if total_bytes else "--"
                 )
-                size_str = _format_size(nbytes) if nbytes else "--"
 
                 # In PULL mode sources don't initiate copies — skip lat/BW.
                 is_idle = role == "source" and self.copy_mode == CopyMode.PULL
                 if round_times and not is_idle:
                     avg_lat = sum(round_times) / len(round_times)
                     lat_str = _format_time(avg_lat)
-                    bw_str = _format_bw(nbytes, avg_lat) if nbytes else "--"
+                    bw_str = _format_bw(total_bytes, avg_lat) if total_bytes else "--"
                 else:
                     lat_str = "--"
                     bw_str = "--"
@@ -264,7 +258,7 @@ class ExperimentResult:
         os.makedirs(output_dir, exist_ok=True)
         written: List[str] = []
 
-        total_bytes = sum(self.shard_bytes) if self.shard_bytes else 0
+        total_bytes = self.total_bytes_transferred
 
         # -- rounds.csv --
         path = os.path.join(output_dir, "rounds.csv")
@@ -288,27 +282,20 @@ class ExperimentResult:
                     "role",
                     "device",
                     "shard_name",
-                    "shard_bytes",
+                    "total_bytes_transferred",
                     "round",
                     "elapsed_s",
                 ]
             )
             all_results = self.source_results + self.dest_results
-            n_src = len(self.source_results)
-            for idx, r in enumerate(all_results):
-                shard_idx = idx if idx < n_src else idx - n_src
-                nbytes = (
-                    self.shard_bytes[shard_idx]
-                    if shard_idx < len(self.shard_bytes)
-                    else 0
-                )
+            for r in all_results:
                 for round_i, elapsed in enumerate(r.get("round_elapsed_s", [])):
                     w.writerow(
                         [
                             r.get("role", ""),
                             r.get("device", ""),
                             r.get("shard_name", ""),
-                            nbytes,
+                            total_bytes,
                             round_i,
                             f"{elapsed:.9f}",
                         ]

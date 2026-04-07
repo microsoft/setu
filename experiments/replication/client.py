@@ -201,7 +201,7 @@ for run_idx in range(args.runs):
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
-        metrics_http_url=cluster_info.metrics_http_url,
+
         hints=schedule_naive.hints,
     )
     print("=" * 10, "Naive Strategy", "=" * 10)
@@ -221,7 +221,7 @@ for run_idx in range(args.runs):
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
-        metrics_http_url=cluster_info.metrics_http_url,
+
         hints=schedule_allgather.hints,
     )
     print("=" * 10, "AllGather Strategy", "=" * 10)

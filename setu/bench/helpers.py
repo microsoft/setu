@@ -33,17 +33,6 @@ class ShardedTensor:
     def shards(self) -> List[TensorShardSpec]:
         return shard_tensor(self.name, self.dims, self.mesh, self.partition, self.dtype)
 
-    @property
-    def shard_bytes(self) -> List[int]:
-        """Per-shard data size in bytes."""
-        element_size = self.dtype.itemsize
-        result = []
-        for shard in self.shards:
-            n_elements = 1
-            for d in shard.dims:
-                n_elements *= d.get_owned_size()
-            result.append(n_elements * element_size)
-        return result
 
 
 def shard_tensor(

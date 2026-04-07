@@ -224,7 +224,7 @@ def main():
                 n_copy_rounds=args.num_copy_rounds,
                 n_warmup_rounds=args.num_warmup_rounds,
                 blocking=False,
-                metrics_http_url=cluster_info.metrics_http_url,
+
                 hints=schedule_baseline.hints,
                 pass_names=schedule_baseline.passes,
             )
@@ -243,7 +243,7 @@ def main():
                 n_copy_rounds=args.num_copy_rounds,
                 n_warmup_rounds=args.num_warmup_rounds,
                 blocking=False,
-                metrics_http_url=cluster_info.metrics_http_url,
+
                 hints=schedule_pipelined.hints,
                 pass_names=schedule_pipelined.passes,
             )

@@ -327,7 +327,15 @@ def _dest_body(
     # Verify values after all rounds complete
     t_read = time.monotonic()
     with client.read(shard_ref) as tensor:
-        actual_value = tensor.mean().item()
+        view = tensor
+        if selections is not None:
+            for dim_idx, dim in enumerate(shard_spec.dims):
+                if dim.name in selections:
+                    idx = torch.tensor(
+                        selections[dim.name], device=tensor.device
+                    )
+                    view = view.index_select(dim_idx, idx)
+        actual_value = view.mean().item()
         values_match = abs(actual_value - value_to_match) < 1e-5
     logger.debug(
         "%s: readback took %.3fs — expected=%s actual=%s match=%s",
@@ -413,7 +421,6 @@ def run_experiment(
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
     blocking: bool = True,
-    metrics_http_url: str = "",
     hints: Optional[List] = None,
     schedule=None,
     pass_names: Optional[List[str]] = None,
@@ -451,7 +458,6 @@ def run_experiment(
     handles = []
 
     n_total = len(src_shards) + len(dst_shards)
-    shard_bytes = src.shard_bytes
 
     logger.debug(
         "run_experiment: mode=%s init_value=%s selections=%s timeout=%s "
@@ -496,13 +502,17 @@ def run_experiment(
         )
 
     # Reset telemetry so only this experiment's reports are collected.
-    if metrics_http_url:
-        try:
-            from setu.telemetry.server import MetricsClient
+    metrics_http_url = cluster_info.metrics_http_url
+    assert metrics_http_url, (
+        "Cluster must have metrics enabled (--enable-metrics) "
+        "for bandwidth reporting"
+    )
+    try:
+        from setu.telemetry.server import MetricsClient
 
-            MetricsClient(metrics_http_url).reset_reports()
-        except Exception:
-            logger.warning("run_experiment: failed to reset metrics", exc_info=True)
+        MetricsClient(metrics_http_url).reset_reports()
+    except Exception:
+        logger.warning("run_experiment: failed to reset metrics", exc_info=True)
 
     t0 = time.monotonic()
 
@@ -618,21 +628,20 @@ def run_experiment(
             except Exception:
                 pass
 
-    # Collect telemetry metrics if HTTP endpoint is available.
+    # Collect telemetry metrics.
     metrics_reports = None
-    if metrics_http_url:
-        time.sleep(0.2)  # Let trailing metrics arrive at the server.
-        try:
-            from setu.telemetry.server import MetricsClient
+    time.sleep(0.2)  # Let trailing metrics arrive at the server.
+    try:
+        from setu.telemetry.server import MetricsClient
 
-            client = MetricsClient(metrics_http_url)
-            metrics_reports = client.get_all_reports()
-            logger.info(
-                "run_experiment: collected %d metrics reports",
-                len(metrics_reports) if metrics_reports else 0,
-            )
-        except Exception:
-            logger.warning("run_experiment: failed to collect metrics", exc_info=True)
+        client = MetricsClient(metrics_http_url)
+        metrics_reports = client.get_all_reports()
+        logger.info(
+            "run_experiment: collected %d metrics reports",
+            len(metrics_reports) if metrics_reports else 0,
+        )
+    except Exception:
+        logger.warning("run_experiment: failed to collect metrics", exc_info=True)
 
     elapsed = time.monotonic() - t0
     logger.debug(
@@ -641,6 +650,15 @@ def run_experiment(
         len(errors) == 0,
         errors,
     )
+    # Extract total_bytes_transferred from the first metrics report.
+    total_bytes_transferred = 0
+    if metrics_reports:
+        for report in metrics_reports.values():
+            reported = report.get("total_bytes_transferred")
+            if reported is not None:
+                total_bytes_transferred = reported
+                break
+
     return ExperimentResult(
         success=len(errors) == 0,
         elapsed_s=elapsed,
@@ -649,7 +667,7 @@ def run_experiment(
         dest_results=dest_results,
         errors=errors,
         copy_mode=copy_mode,
-        shard_bytes=shard_bytes,
+        total_bytes_transferred=total_bytes_transferred,
         n_warmup_rounds=n_warmup_rounds,
         warmup_round_elapsed_s=warmup_round_elapsed_s,
         blocking=blocking,

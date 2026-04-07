@@ -203,12 +203,10 @@ def main():
     tensor_bytes = parse_num_bytes(args.size)
     copy_mode = CopyMode(args.mode)
 
-    # Generate metrics endpoint if metrics are enabled.
-    metrics_endpoint = ""
-    if args.enable_metrics:
-        from setu.cluster.ray.actors import _find_free_port
+    # Metrics are always enabled (required for bandwidth reporting).
+    from setu.cluster.ray.actors import _find_free_port
 
-        metrics_endpoint = f"tcp://*:{_find_free_port()}"
+    metrics_endpoint = f"tcp://*:{_find_free_port()}"
 
     # Load schedule if provided.
     schedule_spec = None
@@ -253,7 +251,6 @@ def main():
             n_copy_rounds=args.rounds,
             n_warmup_rounds=args.warmup_rounds,
             blocking=args.blocking,
-            metrics_http_url=cluster_info.metrics_http_url,
             schedule=schedule_spec,
         )
         print(result.pretty_print())

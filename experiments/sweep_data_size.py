@@ -264,12 +264,6 @@ def parse_args():
         help="Block after each round (default: non-blocking).",
     )
     p.add_argument(
-        "--enable-metrics",
-        action="store_true",
-        default=False,
-        help="Enable telemetry metrics collection.",
-    )
-    p.add_argument(
         "--timeout",
         type=float,
         default=600.0,
@@ -312,11 +306,9 @@ def main():
     )
 
     # -- Connect / spawn cluster --
-    metrics_endpoint = ""
-    if args.enable_metrics:
-        from setu.cluster.ray.actors import _find_free_port
+    from setu.cluster.ray.actors import _find_free_port
 
-        metrics_endpoint = f"tcp://*:{_find_free_port()}"
+    metrics_endpoint = f"tcp://*:{_find_free_port()}"
 
     cluster = None
     if args.cluster_info:
@@ -377,14 +369,13 @@ def main():
                     n_copy_rounds=args.rounds,
                     n_warmup_rounds=args.warmup_rounds,
                     blocking=args.blocking,
-                    metrics_http_url=cluster_info.metrics_http_url,
                 )
 
                 # Dump per-point CSVs.
                 if point_dir:
                     result.dump_csv(point_dir)
 
-                total_bytes = sum(result.shard_bytes) if result.shard_bytes else 0
+                total_bytes = result.total_bytes_transferred
                 avg_elapsed = (
                     sum(result.round_elapsed_s) / len(result.round_elapsed_s)
                     if result.round_elapsed_s
