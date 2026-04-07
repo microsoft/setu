@@ -24,7 +24,6 @@
 #include "commons/datatypes/TensorShardSpec.h"
 #include "commons/utils/Pybind.h"
 #include "node_manager/NodeAgent.h"
-#include "node_manager/worker/NCCLWorker.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
 //==============================================================================
@@ -36,7 +35,6 @@ using setu::commons::datatypes::CopySpec;
 using setu::commons::datatypes::Device;
 using setu::commons::datatypes::TensorShardRef;
 using setu::commons::datatypes::TensorShardSpec;
-using setu::node_manager::worker::NCCLWorker;
 using setu::node_manager::worker::Worker;
 //==============================================================================
 void InitWorkerPybindClass(py::module_& m) {
@@ -49,16 +47,6 @@ void InitWorkerPybindClass(py::module_& m) {
       .def_property_readonly("device", &Worker::GetDevice,
                              "Get the device this worker is bound to");
 
-  py::class_<NCCLWorker, Worker, std::shared_ptr<NCCLWorker>>(m, "NCCLWorker")
-      .def(py::init<NodeId, Device>(), py::arg("node_id"), py::arg("device"),
-           "Create an NCCL worker for the given node ID and device")
-      .def("setup", &NCCLWorker::Setup,
-           py::call_guard<py::gil_scoped_release>(),
-           "Initialize CUDA device and stream (call before execute)")
-      .def("execute", &NCCLWorker::Execute, py::arg("program"),
-           py::call_guard<py::gil_scoped_release>(),
-           "Execute a program (instructions must be embellished with device "
-           "pointers)");
 }
 //==============================================================================
 void InitNodeAgentPybindClass(py::module_& m) {

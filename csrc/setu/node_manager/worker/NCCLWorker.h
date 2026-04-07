@@ -23,8 +23,8 @@
 #include "commons/Types.h"
 #include "commons/datatypes/Device.h"
 #include "commons/enums/Enums.h"
-#include "node_manager/worker/EventPool.h"
 #include "node_manager/worker/RegisterFile.h"
+#include "node_manager/worker/SharedEventPool.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
 #include "planner/ir/llc/CommId.h"
@@ -62,6 +62,7 @@ using setu::planner::ir::llc::Wait;
 class NCCLWorker : public Worker {
  public:
   NCCLWorker(NodeId node_id, Device device,
+             SharedEventPool& shared_event_pool,
              RegisterSet register_set =
                  RegisterSet::Uniform(1, setu::planner::kRegisterSize));
   ~NCCLWorker() override;
@@ -107,9 +108,10 @@ class NCCLWorker : public Worker {
   /// Return the index of the stream with the least queued bytes.
   [[nodiscard]] std::size_t LeastLoadedStream() const;
 
-  /// Maps logical SyncPoint IDs to physical CUDA events.
-  /// Recycles events via scavenging on pool pressure.
-  EventPool event_pool_;
+  /// Shared event pool for SyncPoint/Wait (cross-worker and intra-worker).
+  /// Owned by NodeAgent, shared across all workers on the node.
+  /// Null when constructed from Python tests (no cross-worker sync).
+  SharedEventPool& shared_event_pool_;
 
   /// Buffered physical events accumulated from Wait instructions.
   /// Flushed as cudaStreamWaitEvent calls at the start of the next data op.

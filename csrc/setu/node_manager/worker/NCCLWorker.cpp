@@ -33,8 +33,12 @@ using setu::planner::Participant;
 // NCCLWorker
 //==============================================================================
 
-NCCLWorker::NCCLWorker(NodeId node_id, Device device, RegisterSet register_set)
-    : Worker(node_id, device), register_file_(std::move(register_set)) {}
+NCCLWorker::NCCLWorker(NodeId node_id, Device device,
+                       SharedEventPool& shared_event_pool,
+                       RegisterSet register_set)
+    : Worker(node_id, device),
+      shared_event_pool_(shared_event_pool),
+      register_file_(std::move(register_set)) {}
 
 NCCLWorker::~NCCLWorker() {
   for (auto s : streams_) {
@@ -115,6 +119,9 @@ void NCCLWorker::Setup() {
     }
   }
 
+  // Pre-allocate events for this device in the shared event pool.
+  shared_event_pool_.InitDevice(device_.LocalDeviceIndex(), 32);
+
   if (!register_file_.Empty()) {
     register_file_.Allocate();
     LOG_DEBUG("Allocated {} registers on device {}",
@@ -173,9 +180,6 @@ void NCCLWorker::Execute(const Program& program) {
     stream_loads_[idx] += op_bytes;
     active_stream_ = streams_[idx];
   };
-
-  // Reset event pool mappings for this program.
-  event_pool_.Reset();
 
   auto apply_pending_waits = [&]() {
     for (auto event : pending_waits_) {
@@ -431,19 +435,18 @@ void NCCLWorker::ExecuteAllGather(const AllGather& inst) {
 }
 
 void NCCLWorker::ExecuteSyncPoint(const SyncPoint& inst) {
-  auto event = event_pool_.Acquire(inst.id);
-  CUDA_CHECK(cudaEventRecord(event, active_stream_));
-  LOG_DEBUG("SyncPoint({}): recorded event on stream", inst.id);
+  shared_event_pool_.Record(current_copy_op_id_, inst.id, active_stream_,
+                            device_.LocalDeviceIndex(), inst.wait_count);
+  LOG_DEBUG("SyncPoint(id={}, wait_count={}): recorded", inst.id,
+            inst.wait_count);
 }
 
 void NCCLWorker::ExecuteWait(const Wait& inst) {
-  auto event = event_pool_.Get(inst.id);
+  auto event = shared_event_pool_.GetEvent(current_copy_op_id_, inst.id);
   if (event != nullptr) {
     pending_waits_.push_back(event);
-    LOG_DEBUG("Wait({}): buffered dependency", inst.id);
-  } else {
-    LOG_DEBUG("Wait({}): skipped, event already completed", inst.id);
   }
+  LOG_DEBUG("Wait({}): buffered dependency", inst.id);
 }
 
 DevicePtr NCCLWorker::ResolveRegister(const RegisterRef& ref) const {

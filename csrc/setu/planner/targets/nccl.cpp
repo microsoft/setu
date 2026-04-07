@@ -565,6 +565,24 @@ Plan NCCL::Run(const cir::Program& program,
     }
   }
 
+  // === Step 5: Backpatch SyncPoint wait_counts ===
+  std::unordered_map<std::uint32_t, std::uint32_t> wait_counts;
+  for (const auto& [part, prog] : programs) {
+    for (const auto& instr : prog) {
+      if (auto* w = std::get_if<llc::Wait>(&instr.instr)) {
+        wait_counts[w->id]++;
+      }
+    }
+  }
+  for (auto& [part, prog] : programs) {
+    for (auto& instr : prog) {
+      if (auto* sp = std::get_if<llc::SyncPoint>(&instr.instr)) {
+        auto it = wait_counts.find(sp->id);
+        sp->wait_count = (it != wait_counts.end()) ? it->second : 0;
+      }
+    }
+  }
+
   return plan;
 }
 

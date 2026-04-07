@@ -34,6 +34,7 @@
 #include "commons/utils/ring/CompletionEntry.h"
 #include "commons/utils/ring/ShmRing.h"
 #include "messaging/Messages.h"
+#include "node_manager/worker/SharedEventPool.h"
 #include "node_manager/worker/Worker.h"
 #include "planner/Constants.h"
 #include "planner/Planner.h"
@@ -399,6 +400,7 @@ class NodeAgent {
 
   std::shared_ptr<zmq::context_t> zmq_context_;
 
+  std::unique_ptr<worker::SharedEventPool> shared_event_pool_;
   std::unordered_map<DeviceRank, std::unique_ptr<Worker>> workers_;
 
   // Executor queue: (copy_op_id, node_plan) pairs for execution

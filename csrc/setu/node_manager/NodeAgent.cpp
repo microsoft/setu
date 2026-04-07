@@ -122,11 +122,17 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
         std::forward_as_tuple());
   }
 
+  // Create shared event pool for cross-worker SyncPoint/Wait.
+  shared_event_pool_ = std::make_unique<worker::SharedEventPool>(
+      static_cast<std::int32_t>(devices_.size()));
+
   // Create workers and bind them to queues
   for (const auto& device : devices_) {
     auto device_rank = device.LocalDeviceIndex();
     auto worker = std::make_unique<worker::NCCLWorker>(
-        node_id_, device, RegisterSet::Uniform(1, register_size_));
+        node_id_, device, *shared_event_pool_,
+
+        RegisterSet::Uniform(1, register_size_));
     worker->Bind(async_executor_state_.worker_queues.at(device_rank),
                  async_executor_state_.completion_queue);
 

@@ -20,17 +20,19 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string SyncPoint::ToString() const {
-  return std::format("SyncPoint(id={})", id);
+  return std::format("SyncPoint(id={}, wait_count={})", id, wait_count);
 }
 
 void SyncPoint::Serialize(BinaryBuffer& buffer) const {
   setu::commons::utils::BinaryWriter writer(buffer);
-  writer.Write(id);
+  writer.WriteFields(id, wait_count);
 }
 
 SyncPoint SyncPoint::Deserialize(const BinaryRange& range) {
   setu::commons::utils::BinaryReader reader(range);
-  return SyncPoint(reader.Read<std::uint32_t>());
+  auto [id_val, wait_count_val] =
+      reader.ReadFields<std::uint32_t, std::uint32_t>();
+  return SyncPoint(id_val, wait_count_val);
 }
 
 ShardAccessMap SyncPoint::GetShardAccess() const { return {}; }

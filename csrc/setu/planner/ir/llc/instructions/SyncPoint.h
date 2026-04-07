@@ -38,7 +38,9 @@ using setu::commons::utils::BinaryRange;
 /// carries no stream information.  The invariant is that SyncPoint is always
 /// placed immediately after the write op it tracks.
 struct SyncPoint {
-  explicit SyncPoint(std::uint32_t id_param) : id(id_param) {}
+  explicit SyncPoint(std::uint32_t id_param,
+                     std::uint32_t wait_count_param = 0)
+      : id(id_param), wait_count(wait_count_param) {}
 
   ~SyncPoint() = default;
   SyncPoint(const SyncPoint&) = default;
@@ -55,7 +57,8 @@ struct SyncPoint {
   /// @brief Extract shard access requirements for this instruction.
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
-  std::uint32_t id;  ///< Unique identifier within the LLC program
+  std::uint32_t id;          ///< Unique identifier within the LLC program
+  std::uint32_t wait_count;  ///< Number of Waits that reference this sync_id
 };
 
 //==============================================================================
