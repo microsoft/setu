@@ -29,19 +29,27 @@ class PassManager : public setu::commons::NonCopyable {
  public:
   PassManager() = default;
   void AddPass(PassPtr pass);
-  [[nodiscard]] cir::Program Run(cir::Program program,
-                                 const PassContext& ctx) const;
+  [[nodiscard]] cir::Program Run(
+      cir::Program program, const PassContext& ctx,
+      const std::optional<std::vector<std::string>>& pass_names =
+          std::nullopt) const;
 
-  /// @brief Run all passes with per-pass timing.
-  /// Returns the transformed program and a vector of PassTiming records.
+  /// @brief Run passes with per-pass timing.
+  /// When pass_names is nullopt, runs all passes.  When provided, runs
+  /// only the named passes (in registered order).
   [[nodiscard]] std::pair<cir::Program,
                           std::vector<setu::telemetry::PassTiming>>
-  RunTimed(cir::Program program, const PassContext& ctx) const;
+  RunTimed(
+      cir::Program program, const PassContext& ctx,
+      const std::optional<std::vector<std::string>>& pass_names =
+          std::nullopt) const;
 
   [[nodiscard]] std::size_t NumPasses() const;
 
  private:
   std::vector<PassPtr> passes_;
+  std::vector<std::string> registered_names_;
+  std::unordered_map<std::string, Pass*> pass_map_;
 };
 
 using PassManagerPtr = std::shared_ptr<PassManager>;

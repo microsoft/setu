@@ -46,6 +46,7 @@ def _source_body(
     hints=None,
     schedule=None,
     cluster_info=None,
+    pass_names=None,
 ):
     """Register a source shard, fill with init_value, then run N copy rounds.
 
@@ -95,6 +96,7 @@ def _source_body(
 
     def _submit_source_copy(round_index=-1):
         effective_hints = hints
+        effective_pass_names = pass_names
         if schedule is not None and cluster_info is not None:
             from setu.bench.schedule import CopyContext
 
@@ -105,14 +107,19 @@ def _source_body(
                 total_bytes=shard_spec.dims[0].size * shard_spec.dtype.itemsize,
                 round_index=round_index,
             )
-            effective_hints = schedule(ctx).hints
+            sched = schedule(ctx)
+            effective_hints = sched.hints
+            effective_pass_names = sched.passes
         src_selection = client.select(shard_spec.name)
         dst_selection = client.select(dst_name)
         if selections is not None:
             for dim_name, indices in selections.items():
                 src_selection = src_selection.where(dim_name, indices)
                 dst_selection = dst_selection.where(dim_name, indices)
-        op_id = client.copy(src_selection, dst_selection, hints=effective_hints)
+        op_id = client.copy(
+            src_selection, dst_selection,
+            hints=effective_hints, pass_names=effective_pass_names,
+        )
         assert op_id is not None, "Copy operation returned None"
         return op_id
 
@@ -197,6 +204,7 @@ def _dest_body(
     hints=None,
     schedule=None,
     cluster_info=None,
+    pass_names=None,
 ):
     """Register a dest shard, then run N copy rounds with verification on the last.
 
@@ -227,6 +235,7 @@ def _dest_body(
 
     def _submit_dest_copy(round_index=-1):
         effective_hints = hints
+        effective_pass_names = pass_names
         if schedule is not None and cluster_info is not None:
             from setu.bench.schedule import CopyContext
 
@@ -237,7 +246,9 @@ def _dest_body(
                 total_bytes=shard_spec.dims[0].size * shard_spec.dtype.itemsize,
                 round_index=round_index,
             )
-            effective_hints = schedule(ctx).hints
+            sched = schedule(ctx)
+            effective_hints = sched.hints
+            effective_pass_names = sched.passes
         src_selection = client.select(src_name)
         dst_selection = client.select(shard_spec.name)
         if selections is not None:
@@ -245,9 +256,15 @@ def _dest_body(
                 src_selection = src_selection.where(dim_name, indices)
                 dst_selection = dst_selection.where(dim_name, indices)
         if copy_mode == CopyMode.PULL:
-            op_id = client.pull(src_selection, dst_selection, hints=effective_hints)
+            op_id = client.pull(
+                src_selection, dst_selection,
+                hints=effective_hints, pass_names=effective_pass_names,
+            )
         else:
-            op_id = client.copy(src_selection, dst_selection, hints=effective_hints)
+            op_id = client.copy(
+                src_selection, dst_selection,
+                hints=effective_hints, pass_names=effective_pass_names,
+            )
         assert op_id is not None, "Copy operation returned None"
         return op_id
 
@@ -399,6 +416,7 @@ def run_experiment(
     metrics_http_url: str = "",
     hints: Optional[List] = None,
     schedule=None,
+    pass_names: Optional[List[str]] = None,
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -511,6 +529,7 @@ def run_experiment(
                 hints=hints,
                 schedule=schedule,
                 cluster_info=cluster_info,
+                pass_names=pass_names,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1
@@ -531,6 +550,7 @@ def run_experiment(
                 hints=hints,
                 schedule=schedule,
                 cluster_info=cluster_info,
+                pass_names=pass_names,
             )
             handles.append(backend.spawn_client(cluster_info, participant, body))
             rank += 1

@@ -43,7 +43,7 @@ class RegisterTiling : public Pass {
 
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
-  [[nodiscard]] std::string Name() const override { return "RegisterTiling"; }
+  [[nodiscard]] std::string Name() const override { return "register_tiling"; }
 
  private:
   std::size_t chunk_size_bytes_;

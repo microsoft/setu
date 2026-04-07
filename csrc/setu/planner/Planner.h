@@ -46,10 +46,10 @@ struct CompileResult {
 class Planner {
  public:
   Planner(targets::BackendPtr backend, passes::PassManagerPtr pass_manager);
-  [[nodiscard]] CompileResult Compile(const CopySpec& spec,
-                                      MetaStore& metastore,
-                                      const HintStore& hints,
-                                      CopyOperationId copy_op_id);
+  [[nodiscard]] CompileResult Compile(
+      const CopySpec& spec, MetaStore& metastore, const HintStore& hints,
+      CopyOperationId copy_op_id,
+      const std::optional<std::vector<std::string>>& pass_names = std::nullopt);
 
   /// Forward per-device register sets to the backend.
   void AddBackendRegisterSets(

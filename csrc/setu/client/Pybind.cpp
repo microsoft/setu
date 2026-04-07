@@ -52,9 +52,11 @@ void InitClientPybindClass(py::module_& m) {
            "Register a tensor shard and return a reference to it")
       .def("submit_copy", &Client::SubmitCopy, py::arg("copy_spec"),
            py::arg("hints") = std::vector<CompilerHint>{},
+           py::arg("pass_names") = std::nullopt,
            "Submit a copy operation and return a local ID (uint64)")
       .def("submit_pull", &Client::SubmitPull, py::arg("copy_spec"),
            py::arg("hints") = std::vector<CompilerHint>{},
+           py::arg("pass_names") = std::nullopt,
            "Submit a pull operation and return a local ID (uint64)")
       .def("wait_for_copy", &Client::WaitForCopy, py::arg("local_id"),
            "Wait for a copy operation by local ID, returns global "

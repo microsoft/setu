@@ -54,12 +54,14 @@ class DispatchManager {
     std::size_t expected_count;
     std::vector<setu::planner::hints::CompilerHint> hints;
     std::uint64_t hints_fingerprint;
+    std::optional<std::vector<std::string>> pass_names;
   };
 
   struct CompletedAggregation {
     CopySpec spec;
     std::vector<AggregationParticipant> participants;
     std::vector<setu::planner::hints::CompilerHint> hints;
+    std::optional<std::vector<std::string>> pass_names;
   };
 
   struct CancelledAggregation {
@@ -93,7 +95,8 @@ class DispatchManager {
     // First-writer-wins hint storage
     auto [it, inserted] = pending_hints_.try_emplace(
         key, PendingHints{std::move(submission.hints),
-                          submission.hints_fingerprint});
+                          submission.hints_fingerprint,
+                          std::move(submission.pass_names)});
     if (!inserted && submission.hints_fingerprint != it->second.fingerprint) {
       LOG_ERROR(
           "SPMD hint mismatch for {} -> {}: shard {} sent fingerprint {} "
@@ -131,7 +134,8 @@ class DispatchManager {
 
     return CompletedAggregation{std::move(result->payload),
                                 std::move(result->participants),
-                                std::move(hints_node.mapped().hints)};
+                                std::move(hints_node.mapped().hints),
+                                std::move(hints_node.mapped().pass_names)};
   }
 
   /// @brief Cancel all pending aggregation groups whose src or dst tensor
@@ -243,6 +247,7 @@ class DispatchManager {
   struct PendingHints {
     std::vector<setu::planner::hints::CompilerHint> hints;
     std::uint64_t fingerprint;
+    std::optional<std::vector<std::string>> pass_names;
   };
 
   SubmitResult CancelKey(

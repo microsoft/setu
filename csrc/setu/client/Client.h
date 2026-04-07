@@ -64,11 +64,15 @@ class Client {
   std::optional<TensorShardRef> RegisterTensorShard(
       const TensorShardSpec& shard_spec);
 
-  std::uint64_t SubmitCopy(const CopySpec& copy_spec,
-                          const std::vector<CompilerHint>& hints = {});
+  std::uint64_t SubmitCopy(
+      const CopySpec& copy_spec,
+      const std::vector<CompilerHint>& hints = {},
+      const std::optional<std::vector<std::string>>& pass_names = std::nullopt);
 
-  std::uint64_t SubmitPull(const CopySpec& copy_spec,
-                           const std::vector<CompilerHint>& hints = {});
+  std::uint64_t SubmitPull(
+      const CopySpec& copy_spec,
+      const std::vector<CompilerHint>& hints = {},
+      const std::optional<std::vector<std::string>>& pass_names = std::nullopt);
 
   CopyOperationId WaitForCopy(std::uint64_t local_id);
 

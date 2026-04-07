@@ -108,6 +108,7 @@ struct PlannerTask {
   CopySpec copy_spec;
   CopyOperationStatePtr state;  // Shared with Handler's copy_operations_ map
   HintStore hints;              // Per-operation hints (first-writer-wins)
+  std::optional<std::vector<std::string>> pass_names;  // first-writer-wins
 };
 //==============================================================================
 // Onboarding task

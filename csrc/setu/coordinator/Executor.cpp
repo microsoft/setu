@@ -87,8 +87,8 @@ void Executor::HandlePlannerTask(PlannerTask task) {
 
   LOG_DEBUG("Executor received task for copy_op_id: {}", task.copy_op_id);
 
-  auto result =
-      planner_.Compile(task.copy_spec, metastore_, task.hints, task.copy_op_id);
+  auto result = planner_.Compile(task.copy_spec, metastore_, task.hints,
+                                  task.copy_op_id, task.pass_names);
   Plan plan = std::move(result.plan);
 
   // Submit compilation metrics

@@ -45,7 +45,7 @@ class Pipelining : public Pass {
 
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
-  [[nodiscard]] std::string Name() const override { return "Pipelining"; }
+  [[nodiscard]] std::string Name() const override { return "pipelining"; }
 
  private:
   std::size_t chunk_size_bytes_;

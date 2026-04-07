@@ -22,30 +22,39 @@ namespace setu::planner::passes {
 //==============================================================================
 void PassManager::AddPass(PassPtr pass) {
   ASSERT_VALID_POINTER_ARGUMENT(pass);
+  registered_names_.push_back(pass->Name());
+  pass_map_[pass->Name()] = pass.get();
   passes_.emplace_back(std::move(pass));
 }
 //==============================================================================
-cir::Program PassManager::Run(cir::Program program,
-                              const PassContext& ctx) const {
-  for (const auto& pass : passes_) {
-    program = pass->Run(std::move(program), ctx);
-    LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
+cir::Program PassManager::Run(
+    cir::Program program, const PassContext& ctx,
+    const std::optional<std::vector<std::string>>& pass_names) const {
+  const auto& names =
+      pass_names.has_value() ? pass_names.value() : registered_names_;
+  for (const auto& name : names) {
+    program = pass_map_.at(name)->Run(std::move(program), ctx);
+    LOG_DEBUG("After pass '{}': {}", name, program.Dump());
   }
   return program;
 }
 //==============================================================================
 std::pair<cir::Program, std::vector<setu::telemetry::PassTiming>>
-PassManager::RunTimed(cir::Program program, const PassContext& ctx) const {
+PassManager::RunTimed(
+    cir::Program program, const PassContext& ctx,
+    const std::optional<std::vector<std::string>>& pass_names) const {
+  const auto& names =
+      pass_names.has_value() ? pass_names.value() : registered_names_;
   std::vector<setu::telemetry::PassTiming> timings;
-  timings.reserve(passes_.size());
-  for (const auto& pass : passes_) {
+  timings.reserve(names.size());
+  for (const auto& name : names) {
     auto t0 = std::chrono::high_resolution_clock::now();
-    program = pass->Run(std::move(program), ctx);
+    program = pass_map_.at(name)->Run(std::move(program), ctx);
     double elapsed_ms = std::chrono::duration<double, std::milli>(
                             std::chrono::high_resolution_clock::now() - t0)
                             .count();
-    timings.push_back({pass->Name(), elapsed_ms});
-    LOG_DEBUG("After pass '{}': {}", pass->Name(), program.Dump());
+    timings.push_back({name, elapsed_ms});
+    LOG_DEBUG("After pass '{}': {}", name, program.Dump());
   }
   return {std::move(program), std::move(timings)};
 }

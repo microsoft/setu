@@ -1,21 +1,24 @@
 """Core Schedule type for Setu copy operations.
 
 A Schedule describes the optimization strategy for a single copy operation.
-v1 wraps a hints list; future versions will control pass selection and
-pass parameters.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass(frozen=True)
 class Schedule:
     """Optimization strategy for a single copy operation.
 
-    v1: hints only.  Trivially picklable since hint objects have pickle support.
-    Future: passes, pass parameters, etc.
+    Args:
+        hints: Compiler hints (e.g., PipelineChunkSizeHint).
+        passes: Pass selection.  ``None`` runs all registered passes
+            (default).  An empty list ``[]`` runs no passes (ablation).
+            A list of pass names runs only those passes, in registered
+            order.  Names use the same snake_case convention as
+            ``--passes`` CLI args (e.g., ``"pipelining"``).
     """
 
     hints: List = field(default_factory=list)
-    # v2: passes: Optional[List[str]] = None
+    passes: Optional[List[str]] = None

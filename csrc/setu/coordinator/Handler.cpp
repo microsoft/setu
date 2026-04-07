@@ -199,7 +199,8 @@ void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,
       AggregationParticipant{node_agent_identity, request.request_id},
-      expected_shards, std::vector(request.hints), request.hints_fingerprint});
+      expected_shards, std::vector(request.hints), request.hints_fingerprint,
+      request.pass_names});
 }
 
 void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
@@ -227,7 +228,8 @@ void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,
       AggregationParticipant{node_agent_identity, request.request_id},
-      expected_shards, std::vector(request.hints), request.hints_fingerprint});
+      expected_shards, std::vector(request.hints), request.hints_fingerprint,
+      request.pass_names});
 }
 
 void Handler::HandleShardSubmission(
@@ -275,7 +277,8 @@ void Handler::HandleShardSubmission(
               alt.spec.src_name, alt.spec.dst_name, copy_op_id);
 
           planner_queue_.push(PlannerTask{copy_op_id, alt.spec, state,
-                                          HintStore(std::move(alt.hints))});
+                                          HintStore(std::move(alt.hints)),
+                                          std::move(alt.pass_names)});
 
           for (const auto& participant : alt.participants) {
             SubmitCopyResponse response(participant.request_id, copy_op_id,

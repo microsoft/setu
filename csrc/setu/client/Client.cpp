@@ -202,8 +202,9 @@ std::optional<TensorShardRef> Client::RegisterTensorShard(
   return response.shard_ref;
 }
 
-std::uint64_t Client::SubmitCopy(const CopySpec& copy_spec,
-                                 const std::vector<CompilerHint>& hints) {
+std::uint64_t Client::SubmitCopy(
+    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints,
+    const std::optional<std::vector<std::string>>& pass_names) {
   // Find all shards owned by this client that are involved in the copy
   // (either as source or destination)
   std::vector<ShardId> involved_shards;
@@ -229,8 +230,9 @@ std::uint64_t Client::SubmitCopy(const CopySpec& copy_spec,
 
   // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_id : involved_shards) {
-    ClientRequest request =
-        SubmitCopyRequest(shard_id, copy_spec, hints, fingerprint, local_id);
+    ClientRequest request = SubmitCopyRequest(shard_id, copy_spec, hints,
+                                                fingerprint, local_id,
+                                                pass_names);
     Comm::Send(submit_socket_, request);
   }
 
@@ -239,8 +241,9 @@ std::uint64_t Client::SubmitCopy(const CopySpec& copy_spec,
   return local_id;
 }
 
-std::uint64_t Client::SubmitPull(const CopySpec& copy_spec,
-                                 const std::vector<CompilerHint>& hints) {
+std::uint64_t Client::SubmitPull(
+    const CopySpec& copy_spec, const std::vector<CompilerHint>& hints,
+    const std::optional<std::vector<std::string>>& pass_names) {
   // For Pull: only destination shards submit (one-sided operation)
   auto it = tensor_shards_.find(copy_spec.dst_name);
   ASSERT_VALID_RUNTIME(it != tensor_shards_.end(),
@@ -251,8 +254,9 @@ std::uint64_t Client::SubmitPull(const CopySpec& copy_spec,
 
   // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_ref : it->second) {
-    ClientRequest request = SubmitPullRequest(shard_ref->shard_id, copy_spec,
-                                              hints, fingerprint, local_id);
+    ClientRequest request = SubmitPullRequest(
+        shard_ref->shard_id, copy_spec, hints, fingerprint, local_id,
+        pass_names);
     Comm::Send(submit_socket_, request);
   }
 

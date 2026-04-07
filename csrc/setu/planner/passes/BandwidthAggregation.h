@@ -44,7 +44,7 @@ class BandwidthAggregation : public Pass {
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override {
-    return "BandwidthAggregation";
+    return "bandwidth_aggregation";
   }
 
  private:

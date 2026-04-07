@@ -178,6 +178,7 @@ class Client:
         src: TensorSelection,
         dst: TensorSelection,
         hints: Optional[List[CompilerHint]] = None,
+        pass_names: Optional[List[str]] = None,
     ) -> int:
         """
         Copy data from source selection to destination selection.
@@ -202,7 +203,9 @@ class Client:
             >>> client.wait(local_id)
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
-        local_id = self._client.submit_copy(copy_spec, hints=hints or [])
+        local_id = self._client.submit_copy(
+            copy_spec, hints=hints or [], pass_names=pass_names,
+        )
         logger.debug(
             "Submitted copy local_id=%d: %s -> %s", local_id, src.name, dst.name
         )
@@ -213,6 +216,7 @@ class Client:
         src: TensorSelection,
         dst: TensorSelection,
         hints: Optional[List[CompilerHint]] = None,
+        pass_names: Optional[List[str]] = None,
     ) -> int:
         """
         One-sided pull: copy data from a remote source into a local destination.
@@ -241,7 +245,9 @@ class Client:
             >>> client.wait(local_id)
         """
         copy_spec = CopySpec(src.name, dst.name, src.native, dst.native)
-        local_id = self._client.submit_pull(copy_spec, hints=hints or [])
+        local_id = self._client.submit_pull(
+            copy_spec, hints=hints or [], pass_names=pass_names,
+        )
         logger.debug(
             "Submitted pull local_id=%d: %s -> %s", local_id, src.name, dst.name
         )

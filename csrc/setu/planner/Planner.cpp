@@ -28,9 +28,10 @@ Planner::Planner(targets::BackendPtr backend,
   ASSERT_VALID_POINTER_ARGUMENT(backend_);
 }
 //==============================================================================
-CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
-                               const HintStore& hints,
-                               CopyOperationId copy_op_id) {
+CompileResult Planner::Compile(
+    const CopySpec& spec, MetaStore& metastore, const HintStore& hints,
+    CopyOperationId copy_op_id,
+    const std::optional<std::vector<std::string>>& pass_names) {
   setu::telemetry::CompilationMetrics cm;
   cm.copy_op_id = copy_op_id;
 
@@ -47,7 +48,7 @@ CompileResult Planner::Compile(const CopySpec& spec, MetaStore& metastore,
   // Stage 2: Optimization passes (timed individually)
   passes::PassContext ctx{.hints = hints, .register_sets = register_sets_};
   auto [optimized_cir, pass_timings] =
-      pass_manager_->RunTimed(std::move(cir), ctx);
+      pass_manager_->RunTimed(std::move(cir), ctx, pass_names);
   cm.pass_timings.insert(cm.pass_timings.end(), pass_timings.begin(),
                          pass_timings.end());
 

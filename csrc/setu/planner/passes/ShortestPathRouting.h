@@ -32,7 +32,7 @@ class ShortestPathRouting : public Pass {
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override {
-    return "ShortestPathRouting";
+    return "shortest_path_routing";
   }
 
  private:

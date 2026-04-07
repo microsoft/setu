@@ -29,18 +29,20 @@ using setu::planner::hints::CompilerHint;
 void SubmitPullRequest::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
   writer.WriteFields(request_id, shard_id, copy_spec, hints, hints_fingerprint,
-                     local_id);
+                     local_id, pass_names);
 }
 
 SubmitPullRequest SubmitPullRequest::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
   auto [request_id_val, shard_id_val, copy_spec_val, hints_val,
-        fingerprint_val, local_id_val] =
+        fingerprint_val, local_id_val, pass_names_val] =
       reader.ReadFields<RequestId, ShardId, CopySpec, std::vector<CompilerHint>,
-                        std::uint64_t, std::uint64_t>();
+                        std::uint64_t, std::uint64_t,
+                        std::optional<std::vector<std::string>>>();
   return SubmitPullRequest(request_id_val, shard_id_val,
                            std::move(copy_spec_val), std::move(hints_val),
-                           fingerprint_val, local_id_val);
+                           fingerprint_val, local_id_val,
+                           std::move(pass_names_val));
 }
 
 //==============================================================================

@@ -43,7 +43,7 @@ class InstructionScheduler : public Pass {
   [[nodiscard]] cir::Program Run(cir::Program program,
                                  const PassContext& ctx) override;
   [[nodiscard]] std::string Name() const override {
-    return "InstructionScheduler";
+    return "instruction_scheduler";
   }
 };
 
