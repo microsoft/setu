@@ -36,17 +36,14 @@ using setu::planner::ir::ref::BufferRef;
 using setu::planner::ir::ref::ShardRef;
 //==============================================================================
 
-/// P2P pull (receiver-side DMA) from a remote device on the same node.
-///
-/// The executing worker calls cudaMemcpyPeerAsync to pull `count` elements
-/// of type `dtype` from `src_ref` on `src_device` into local `dst_ref`.
-/// Follows UCX/RDMA GET semantics.
-struct Pull {
-  Pull(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
-       BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
-       std::size_t count_param, torch::Dtype dtype_param,
-       std::int32_t src_device_param,
-       DevicePtr src_ptr_param = nullptr, DevicePtr dst_ptr_param = nullptr)
+/// A single entry within a batched Pull instruction.
+struct PullEntry {
+  PullEntry(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
+            BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
+            std::size_t count_param, torch::Dtype dtype_param,
+            std::int32_t src_device_param,
+            DevicePtr src_ptr_param = nullptr,
+            DevicePtr dst_ptr_param = nullptr)
       : src_ref(std::move(src_ref_param)),
         src_offset_bytes(src_offset_bytes_param),
         dst_ref(std::move(dst_ref_param)),
@@ -56,6 +53,44 @@ struct Pull {
         src_device(src_device_param),
         src_ptr(src_ptr_param),
         dst_ptr(dst_ptr_param) {}
+
+  ~PullEntry() = default;
+  PullEntry(const PullEntry&) = default;
+  PullEntry& operator=(const PullEntry&) = default;
+  PullEntry(PullEntry&&) = default;
+  PullEntry& operator=(PullEntry&&) = default;
+
+  BufferRef src_ref;
+  std::size_t src_offset_bytes;
+  BufferRef dst_ref;
+  std::size_t dst_offset_bytes;
+  std::size_t count;
+  torch::Dtype dtype;
+  std::int32_t src_device;
+
+  // Embellished pointers
+  DevicePtr src_ptr;
+  DevicePtr dst_ptr;
+};
+
+/// Batched P2P pull (receiver-side DMA) from remote devices on the same node.
+///
+/// Contains one or more PullEntry items. At execution time the worker issues
+/// a single cudaMemcpyBatchAsync call for all entries. Follows UCX/RDMA
+/// GET semantics.
+struct Pull {
+  explicit Pull(std::vector<PullEntry> entries_param)
+      : entries(std::move(entries_param)) {}
+
+  /// Convenience constructor for a single-entry pull.
+  Pull(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
+       BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
+       std::size_t count_param, torch::Dtype dtype_param,
+       std::int32_t src_device_param) {
+    entries.emplace_back(std::move(src_ref_param), src_offset_bytes_param,
+                         std::move(dst_ref_param), dst_offset_bytes_param,
+                         count_param, dtype_param, src_device_param);
+  }
 
   ~Pull() = default;
   Pull(const Pull&) = default;
@@ -73,17 +108,7 @@ struct Pull {
 
   [[nodiscard]] ShardAccessMap GetShardAccess() const;
 
-  BufferRef src_ref;
-  std::size_t src_offset_bytes;
-  BufferRef dst_ref;
-  std::size_t dst_offset_bytes;
-  std::size_t count;
-  torch::Dtype dtype;
-  std::int32_t src_device;
-
-  // Embellished pointers
-  DevicePtr src_ptr;
-  DevicePtr dst_ptr;
+  std::vector<PullEntry> entries;
 };
 
 //==============================================================================

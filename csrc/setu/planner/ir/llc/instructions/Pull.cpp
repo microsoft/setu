@@ -22,47 +22,61 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string Pull::ToString() const {
-  return std::format(
-      "Pull(src_ref={}, src_offset_bytes={}, dst_ref={}, dst_offset_bytes={}, "
-      "count={}, dtype={}, src_device={}, src_ptr={}, dst_ptr={})",
-      src_ref.ToString(), src_offset_bytes, dst_ref.ToString(),
-      dst_offset_bytes, count, static_cast<int>(dtype), src_device, src_ptr,
-      dst_ptr);
+  return std::format("Pull({} entries)", entries.size());
 }
 
 void Pull::Serialize(BinaryBuffer& buffer) const {
   BinaryWriter writer(buffer);
-  auto src_ptr_val = reinterpret_cast<std::uintptr_t>(src_ptr);
-  auto dst_ptr_val = reinterpret_cast<std::uintptr_t>(dst_ptr);
-  writer.WriteFields(src_ref, src_offset_bytes, dst_ref, dst_offset_bytes,
-                     count, dtype, src_device, src_ptr_val, dst_ptr_val);
+  writer.Write<std::size_t>(entries.size());
+  for (const auto& e : entries) {
+    auto src_ptr_val = reinterpret_cast<std::uintptr_t>(e.src_ptr);
+    auto dst_ptr_val = reinterpret_cast<std::uintptr_t>(e.dst_ptr);
+    writer.WriteFields(e.src_ref, e.src_offset_bytes, e.dst_ref,
+                       e.dst_offset_bytes, e.count, e.dtype, e.src_device,
+                       src_ptr_val, dst_ptr_val);
+  }
 }
 
 Pull Pull::Deserialize(const BinaryRange& range) {
   BinaryReader reader(range);
-  auto [src_ref, src_offset, dst_ref, dst_offset, count, dtype, src_dev,
-        src_ptr_val, dst_ptr_val] =
-      reader.ReadFields<BufferRef, std::size_t, BufferRef, std::size_t,
-                        std::size_t, torch::Dtype, std::int32_t,
-                        std::uintptr_t, std::uintptr_t>();
-  return Pull(std::move(src_ref), src_offset, std::move(dst_ref), dst_offset,
-              count, dtype, src_dev, reinterpret_cast<DevicePtr>(src_ptr_val),
-              reinterpret_cast<DevicePtr>(dst_ptr_val));
+  const auto num_entries = reader.Read<std::size_t>();
+
+  std::vector<PullEntry> entries;
+  entries.reserve(num_entries);
+  for (std::size_t i = 0; i < num_entries; ++i) {
+    auto [src_ref, src_offset, dst_ref, dst_offset, count, dtype, src_dev,
+          src_ptr_val, dst_ptr_val] =
+        reader.ReadFields<BufferRef, std::size_t, BufferRef, std::size_t,
+                          std::size_t, torch::Dtype, std::int32_t,
+                          std::uintptr_t, std::uintptr_t>();
+    entries.emplace_back(std::move(src_ref), src_offset, std::move(dst_ref),
+                         dst_offset, count, dtype, src_dev,
+                         reinterpret_cast<DevicePtr>(src_ptr_val),
+                         reinterpret_cast<DevicePtr>(dst_ptr_val));
+  }
+
+  return Pull(std::move(entries));
 }
 
 void Pull::Embellish(
     const std::function<DevicePtr(const BufferRef&)>& resolver) {
-  src_ptr = resolver(src_ref);
-  dst_ptr = resolver(dst_ref);
+  for (auto& entry : entries) {
+    entry.src_ptr = resolver(entry.src_ref);
+    entry.dst_ptr = resolver(entry.dst_ref);
+  }
 }
 
 ShardAccessMap Pull::GetShardAccess() const {
   ShardAccessMap access_map;
-  if (src_ref.IsShard()) {
-    access_map.try_emplace(src_ref.AsShard().shard_id, ShardAccessMode::kRead);
-  }
-  if (dst_ref.IsShard()) {
-    access_map.try_emplace(dst_ref.AsShard().shard_id, ShardAccessMode::kWrite);
+  for (const auto& entry : entries) {
+    if (entry.src_ref.IsShard()) {
+      access_map.try_emplace(entry.src_ref.AsShard().shard_id,
+                             ShardAccessMode::kRead);
+    }
+    if (entry.dst_ref.IsShard()) {
+      access_map.try_emplace(entry.dst_ref.AsShard().shard_id,
+                             ShardAccessMode::kWrite);
+    }
   }
   return access_map;
 }

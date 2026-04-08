@@ -236,7 +236,11 @@ void NCCLWorker::Execute(const Program& program) {
             // Reset loads after a fence.
             std::fill(stream_loads_.begin(), stream_loads_.end(), 0);
           } else if constexpr (std::is_same_v<T, Pull>) {
-            select_stream(inst.count * GetDTypeSizeBytes(inst.dtype));
+            std::size_t total_bytes = 0;
+            for (const auto& e : inst.entries) {
+              total_bytes += e.count * GetDTypeSizeBytes(e.dtype);
+            }
+            select_stream(total_bytes);
             apply_pending_waits();
             ExecutePull(inst);
           } else if constexpr (std::is_same_v<T, SyncPoint>) {
@@ -408,15 +412,35 @@ void NCCLWorker::ExecuteReceive(const Receive& inst) {
 }
 
 void NCCLWorker::ExecutePull(const Pull& inst) {
-  auto* src = static_cast<const char*>(inst.src_ptr) + inst.src_offset_bytes;
-  auto* dst = static_cast<char*>(inst.dst_ptr) + inst.dst_offset_bytes;
-  auto size = inst.count * GetDTypeSizeBytes(inst.dtype);
+  ASSERT_VALID_RUNTIME(!inst.entries.empty(),
+                       "Pull instruction must have at least one entry");
 
-  CUDA_CHECK(cudaMemcpyPeerAsync(dst, device_.LocalDeviceIndex(), src,
-                                 inst.src_device, size, active_stream_));
+  const std::size_t count = inst.entries.size();
 
-  LOG_DEBUG("Pull: {} bytes from device {} to local device {}", size,
-            inst.src_device, device_.LocalDeviceIndex());
+  std::vector<const void*> srcs(count);
+  std::vector<void*> dsts(count);
+  std::vector<std::size_t> sizes(count);
+
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto& e = inst.entries[i];
+    srcs[i] = static_cast<const char*>(e.src_ptr) + e.src_offset_bytes;
+    dsts[i] = static_cast<char*>(e.dst_ptr) + e.dst_offset_bytes;
+    sizes[i] = e.count * GetDTypeSizeBytes(e.dtype);
+  }
+
+  cudaMemcpyAttributes attrs = {};
+  attrs.srcAccessOrder = cudaMemcpySrcAccessOrderStream;
+  std::size_t fail_idx = 0;
+#if CUDART_VERSION >= 13000
+  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
+                                  &attrs, &fail_idx,
+                                  static_cast<std::size_t>(1), active_stream_));
+#else
+  CUDA_CHECK(cudaMemcpyBatchAsync(dsts.data(), srcs.data(), sizes.data(), count,
+                                  attrs, &fail_idx, active_stream_));
+#endif
+
+  LOG_DEBUG("Pull: {} entries batched via cudaMemcpyBatchAsync", count);
 }
 
 void NCCLWorker::ExecuteAllGather(const AllGather& inst) {

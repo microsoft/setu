@@ -416,6 +416,7 @@ Plan NCCL::Run(const cir::Program& program,
   std::uint32_t next_sync_id = 0;
 
   std::unordered_map<Participant, std::vector<llc::CopyEntry>> copy_batches;
+  std::unordered_map<Participant, std::vector<llc::PullEntry>> pull_batches;
 
   auto flush_copy_batches_for = [&](const Participant& part) {
     auto it = copy_batches.find(part);
@@ -425,6 +426,19 @@ Plan NCCL::Run(const cir::Program& program,
     }
   };
 
+  auto flush_pull_batches_for = [&](const Participant& part) {
+    auto it = pull_batches.find(part);
+    if (it != pull_batches.end() && !it->second.empty()) {
+      programs[part].emplace_back(llc::Pull(std::move(it->second)));
+      it->second.clear();
+    }
+  };
+
+  auto flush_batches_for = [&](const Participant& part) {
+    flush_copy_batches_for(part);
+    flush_pull_batches_for(part);
+  };
+
   auto flush_all_copy_batches = [&]() {
     for (auto& [part, batch] : copy_batches) {
       if (!batch.empty()) {
@@ -432,6 +446,12 @@ Plan NCCL::Run(const cir::Program& program,
       }
     }
     copy_batches.clear();
+    for (auto& [part, batch] : pull_batches) {
+      if (!batch.empty()) {
+        programs[part].emplace_back(llc::Pull(std::move(batch)));
+      }
+    }
+    pull_batches.clear();
   };
 
   // Emit Wait for each pending write that overlaps the read region.
@@ -445,7 +465,7 @@ Plan NCCL::Run(const cir::Program& program,
       if (w.buffer == buf && w.offset < offset + size &&
           offset < w.offset + w.size) {
         if (emitted.insert(w.sync_id).second) {
-          flush_copy_batches_for(part);
+          flush_batches_for(part);
           programs[part].emplace_back(llc::Wait(w.sync_id));
         }
       }
@@ -466,7 +486,7 @@ Plan NCCL::Run(const cir::Program& program,
       if (w.buffer == buf && w.offset < offset + size &&
           offset < w.offset + w.size) {
         if (emitted.insert(w.sync_id).second) {
-          flush_copy_batches_for(reader_part);
+          flush_batches_for(reader_part);
           programs[reader_part].emplace_back(llc::Wait(w.sync_id));
         }
       }
@@ -505,15 +525,13 @@ Plan NCCL::Run(const cir::Program& program,
       flush_copy_batches_for(c.dst_part);
       record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
     } else if (ctx.HasP2PAccess(c.src_part, c.dst_part)) {
-      // P2P pull: receiver does cudaMemcpyPeerAsync.
+      // P2P pull: batch for receiver, will use cudaMemcpyBatchAsync.
       resolve_cross_conflicts(c.src_part, c.dst_part, c.src_ref,
                               c.src_offset_bytes, op_size);
-      flush_copy_batches_for(c.dst_part);
-
-      programs[c.dst_part].emplace_back(llc::Pull(
+      pull_batches[c.dst_part].emplace_back(
           c.src_ref, c.src_offset_bytes, c.dst_ref, c.dst_offset_bytes,
-          c.count, c.dtype, c.src_part.LocalDeviceIndex()));
-
+          c.count, c.dtype, c.src_part.LocalDeviceIndex());
+      flush_pull_batches_for(c.dst_part);
       record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
     } else {
       // NCCL Send/Receive.
@@ -524,8 +542,8 @@ Plan NCCL::Run(const cir::Program& program,
       pair_parts.insert(c.dst_part);
       const auto& pair_entry = comm_cache_.at(pair_parts);
 
-      flush_copy_batches_for(c.src_part);
-      flush_copy_batches_for(c.dst_part);
+      flush_batches_for(c.src_part);
+      flush_batches_for(c.dst_part);
 
       programs[c.src_part].emplace_back(
           llc::Send(pair_entry.id, c.src_ref, c.src_offset_bytes, c.count,
