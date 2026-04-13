@@ -43,7 +43,11 @@ TensorShardMetadataPtr MetaStore::RegisterTensorShard(
   ShardId shard_id = shard_metadata->id;
 
   // Store the shard metadata
-  registered_data.shards.emplace(shard_id, shard_metadata);
+  auto [emplace_it, inserted] =
+      registered_data.shards.emplace(shard_id, shard_metadata);
+  ASSERT_VALID_RUNTIME(inserted,
+                       "MetaStore: duplicate shard_id {} for tensor {}",
+                       shard_id, shard_spec.name);
 
   // Calculate and track sizes
   std::size_t shard_num_elements = shard_spec.GetNumElements();

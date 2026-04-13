@@ -982,13 +982,18 @@ void NodeAgent::Dispatcher::Loop() {
           }
           shard_lock.ref_count++;
         }
-        state_.in_flight.emplace(
+        auto [emplace_it, inserted] = state_.in_flight.emplace(
             copy_op_id,
             InFlightEntry{
                 .remaining_workers =
                     static_cast<std::int32_t>(plan.program.size()),
                 .shard_access_map = plan_access_map,
                 .dispatched_at = t_dequeued});
+        ASSERT_VALID_RUNTIME(
+            inserted,
+            "Dispatcher: duplicate copy_op_id {} (already in in_flight with "
+            "remaining_workers={})",
+            copy_op_id, emplace_it->second.remaining_workers);
       }
 
       // Push programs to per-worker queues
@@ -998,9 +1003,6 @@ void NodeAgent::Dispatcher::Loop() {
         ASSERT_VALID_RUNTIME(it != state_.worker_queues.end(),
                              "No worker queue for device_rank: {}",
                              device_rank);
-
-        LOG_DEBUG("Dispatching program with {} instructions to worker {}",
-                  program.size(), device_rank);
         it->second.push(
             WorkerTask{copy_op_id, std::move(program),
                        std::chrono::steady_clock::now()});
