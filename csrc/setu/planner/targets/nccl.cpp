@@ -517,13 +517,16 @@ Plan NCCL::Run(const cir::Program& program,
 
   for (const auto& c : pending_copies) {
     auto op_size = c.count * torch::elementSize(c.dtype);
+    const bool dst_has_reader = read_buffers.contains(c.dst_ref);
     if (c.src_part == c.dst_part) {
       resolve_conflicts(c.src_part, c.src_ref, c.src_offset_bytes, op_size);
       copy_batches[c.src_part].emplace_back(c.src_ref, c.src_offset_bytes,
                                             c.dst_ref, c.dst_offset_bytes,
                                             c.count, c.dtype);
-      flush_copy_batches_for(c.dst_part);
-      record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
+      if (dst_has_reader) {
+        flush_copy_batches_for(c.dst_part);
+        record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
+      }
     } else if (ctx.HasP2PAccess(c.src_part, c.dst_part)) {
       // P2P pull: batch for receiver, will use cudaMemcpyBatchAsync.
       resolve_cross_conflicts(c.src_part, c.dst_part, c.src_ref,
@@ -531,8 +534,10 @@ Plan NCCL::Run(const cir::Program& program,
       pull_batches[c.dst_part].emplace_back(
           c.src_ref, c.src_offset_bytes, c.dst_ref, c.dst_offset_bytes,
           c.count, c.dtype, c.src_part.LocalDeviceIndex());
-      flush_pull_batches_for(c.dst_part);
-      record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
+      if (dst_has_reader) {
+        flush_pull_batches_for(c.dst_part);
+        record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
+      }
     } else {
       // NCCL Send/Receive.
       resolve_conflicts(c.src_part, c.src_ref, c.src_offset_bytes, op_size);

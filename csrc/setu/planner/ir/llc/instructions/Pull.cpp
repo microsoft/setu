@@ -22,7 +22,18 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string Pull::ToString() const {
-  return std::format("Pull({} entries)", entries.size());
+  std::string result = std::format("Pull(num_entries={})", entries.size());
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const auto& e = entries[i];
+    result += std::format(
+        "\n  [{}] src_ref={}, src_offset_bytes={}, dst_ref={}, "
+        "dst_offset_bytes={}, count={}, dtype={}, src_device={}, src_ptr={}, "
+        "dst_ptr={}",
+        i, e.src_ref.ToString(), e.src_offset_bytes, e.dst_ref.ToString(),
+        e.dst_offset_bytes, e.count, static_cast<int>(e.dtype), e.src_device,
+        e.src_ptr, e.dst_ptr);
+  }
+  return result;
 }
 
 void Pull::Serialize(BinaryBuffer& buffer) const {
