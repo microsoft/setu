@@ -166,13 +166,15 @@ struct ReplicationHint {
 using CompilerHint = std::variant<RoutingHint, BandwidthHint, ReplicationHint,
                                   PipelineChunkSizeHint>;
 
-/// @brief Compute an FNV-1a fingerprint of a hints vector for SPMD
-/// consistency verification. Cheap (~nanoseconds for typical hint lists).
-[[nodiscard]] inline std::uint64_t Fingerprint(
-    const std::vector<CompilerHint>& hints) {
+/// @brief Compute an FNV-1a fingerprint over a schedule for SPMD consistency
+/// verification.
+[[nodiscard]] inline std::uint64_t ScheduleFingerprint(
+    const std::vector<CompilerHint>& hints /*[in]*/,
+    const std::optional<std::vector<std::string>>& pass_names /*[in]*/) {
   setu::commons::BinaryBuffer buffer;
   setu::commons::utils::BinaryWriter writer(buffer);
   writer.Write(hints);
+  writer.Write(pass_names);
 
   // FNV-1a over the serialized bytes
   constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;

@@ -37,7 +37,6 @@ struct SubmitPullRequest : public BaseRequest {
   /// @brief Constructs a request with auto-generated request ID.
   SubmitPullRequest(ShardId shard_id_param, CopySpec copy_spec_param,
                     std::vector<CompilerHint> hints_param = {},
-                    std::uint64_t hints_fingerprint_param = 0,
                     std::uint64_t local_id_param = 0,
                     std::optional<std::vector<std::string>> pass_names_param =
                         std::nullopt)
@@ -45,7 +44,6 @@ struct SubmitPullRequest : public BaseRequest {
         shard_id(shard_id_param),
         copy_spec(std::move(copy_spec_param)),
         hints(std::move(hints_param)),
-        hints_fingerprint(hints_fingerprint_param),
         local_id(local_id_param),
         pass_names(std::move(pass_names_param)) {}
 
@@ -54,14 +52,12 @@ struct SubmitPullRequest : public BaseRequest {
   SubmitPullRequest(RequestId request_id_param, ShardId shard_id_param,
                     CopySpec copy_spec_param,
                     std::vector<CompilerHint> hints_param,
-                    std::uint64_t hints_fingerprint_param,
                     std::uint64_t local_id_param,
                     std::optional<std::vector<std::string>> pass_names_param)
       : BaseRequest(request_id_param),
         shard_id(shard_id_param),
         copy_spec(std::move(copy_spec_param)),
         hints(std::move(hints_param)),
-        hints_fingerprint(hints_fingerprint_param),
         local_id(local_id_param),
         pass_names(std::move(pass_names_param)) {}
 
@@ -79,7 +75,6 @@ struct SubmitPullRequest : public BaseRequest {
   const ShardId shard_id;
   const CopySpec copy_spec;
   const std::vector<CompilerHint> hints;
-  const std::uint64_t hints_fingerprint;
   const std::uint64_t local_id;
   const std::optional<std::vector<std::string>> pass_names;
 };

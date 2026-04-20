@@ -199,8 +199,7 @@ void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,
       AggregationParticipant{node_agent_identity, request.request_id},
-      expected_shards, std::vector(request.hints), request.hints_fingerprint,
-      request.pass_names});
+      expected_shards, std::vector(request.hints), request.pass_names});
 }
 
 void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
@@ -228,8 +227,7 @@ void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,
       AggregationParticipant{node_agent_identity, request.request_id},
-      expected_shards, std::vector(request.hints), request.hints_fingerprint,
-      request.pass_names});
+      expected_shards, std::vector(request.hints), request.pass_names});
 }
 
 void Handler::HandleShardSubmission(

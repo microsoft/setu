@@ -53,7 +53,6 @@ class DispatchManager {
     AggregationParticipant participant;
     std::size_t expected_count;
     std::vector<setu::planner::hints::CompilerHint> hints;
-    std::uint64_t hints_fingerprint;
     std::optional<std::vector<std::string>> pass_names;
   };
 
@@ -81,68 +80,73 @@ class DispatchManager {
 
   // --- Shard aggregation (pre-dispatch) ---
 
-  /// @brief Submit a shard for aggregation with per-operation hints.
+  /// @brief Submit a shard for aggregation.
   ///
-  /// First-writer-wins: the first shard submission's hints become
-  /// authoritative. Subsequent submissions must have a matching
-  /// fingerprint; a mismatch cancels the entire operation and returns
-  /// all participants so the caller can send error responses.
+  /// First-writer-wins per group: the first submission's CopySpec and schedule
+  /// become authoritative. Subsequent submissions must match both the CopySpec
+  /// (via `validate_fn`) and the schedule fingerprint; a mismatch cancels only
+  /// that group and returns all participants so the caller can send error
+  /// responses.
   template <typename ValidateFn>
   [[nodiscard]] SubmitResult SubmitShard(ShardSubmission submission /*[in]*/,
                                          ValidateFn validate_fn /*[in]*/) {
     CopyKey key{submission.copy_spec.src_name, submission.copy_spec.dst_name};
 
-    // First-writer-wins hint storage
-    auto [it, inserted] = pending_hints_.try_emplace(
-        key, PendingHints{std::move(submission.hints),
-                          submission.hints_fingerprint,
-                          std::move(submission.pass_names)});
-    if (!inserted && submission.hints_fingerprint != it->second.fingerprint) {
-      LOG_ERROR(
-          "SPMD hint mismatch for {} -> {}: shard {} sent fingerprint {} "
-          "but first submission had {} — cancelling operation",
-          submission.copy_spec.src_name, submission.copy_spec.dst_name,
-          submission.shard_id, submission.hints_fingerprint,
-          it->second.fingerprint);
-      return CancelKey(key, std::move(submission.participant));
-    }
+    const auto schedule_fingerprint = setu::planner::hints::ScheduleFingerprint(
+        submission.hints, submission.pass_names);
 
-    // Save before move — Submit consumes participant, but we need to
-    // reconstruct it if validation fails.
-    auto saved_identity = submission.participant.identity;
-    auto saved_request_id = submission.participant.request_id;
+    GroupPayload group_payload{std::move(submission.copy_spec),
+                               std::move(submission.hints),
+                               std::move(submission.pass_names),
+                               schedule_fingerprint};
 
-    bool valid = true;
-    auto result = shard_aggregator_.Submit(
-        key, submission.shard_id, submission.copy_spec,
+    // Save before move — Submit consumes participant, but DispatchManager
+    // must re-add the triggering submitter on cancellation (the aggregator
+    // returns only previously-accepted participants).
+    auto triggering_participant = submission.participant;
+
+    auto outcome = shard_aggregator_.Submit(
+        key, submission.shard_id, group_payload,
         std::move(submission.participant), submission.expected_count,
-        [&](const CopySpec& stored, const CopySpec& incoming) {
-          valid = validate_fn(stored, incoming);
-          return valid;
+        [&](const GroupPayload& stored, const GroupPayload& incoming) {
+          if (stored.schedule_fingerprint != incoming.schedule_fingerprint) {
+            LOG_ERROR(
+                "SPMD schedule mismatch for {} -> {}: incoming fingerprint={} "
+                "stored fingerprint={} — cancelling group",
+                incoming.spec.src_name, incoming.spec.dst_name,
+                incoming.schedule_fingerprint, stored.schedule_fingerprint);
+            return false;
+          }
+          return validate_fn(stored.spec, incoming.spec);
         });
 
-    if (!valid) {
-      return CancelKey(
-          key, {std::move(saved_identity), std::move(saved_request_id)});
-    }
-
-    if (!result.has_value()) {
-      return std::monostate{};
-    }
-
-    auto hints_node = pending_hints_.extract(key);
-
-    return CompletedAggregation{std::move(result->payload),
-                                std::move(result->participants),
-                                std::move(hints_node.mapped().hints),
-                                std::move(hints_node.mapped().pass_names)};
+    return std::visit(
+        [&](auto&& alt) -> SubmitResult {
+          using T = std::decay_t<decltype(alt)>;
+          if constexpr (std::is_same_v<T, std::monostate>) {
+            return std::monostate{};
+          } else if constexpr (std::is_same_v<
+                                   T, setu::commons::utils::CompletedGroup<
+                                          GroupPayload>>) {
+            return CompletedAggregation{std::move(alt.payload.spec),
+                                        std::move(alt.participants),
+                                        std::move(alt.payload.hints),
+                                        std::move(alt.payload.pass_names)};
+          } else {
+            // CancelledGroup — append triggering submitter so they also
+            // receive an error response.
+            alt.participants.push_back(std::move(triggering_participant));
+            return CancelledAggregation{std::move(alt.participants)};
+          }
+        },
+        std::move(outcome));
   }
 
   /// @brief Cancel all pending aggregation groups whose src or dst tensor
   /// is in the given set.
   [[nodiscard]] std::vector<AggregationParticipant> CancelPendingByTensors(
       const std::set<TensorName>& tensor_names /*[in]*/) {
-    return CancelPendingIf([&tensor_names](const CopyKey& key) {
+    return shard_aggregator_.CancelIf([&tensor_names](const CopyKey& key) {
       return tensor_names.contains(key.src_name) ||
              tensor_names.contains(key.dst_name);
     });
@@ -243,37 +247,19 @@ class DispatchManager {
     }
   };
 
-  /// @brief Merged hints + fingerprint for a pending aggregation group.
-  struct PendingHints {
+  /// @brief CopySpec + schedule stored per aggregation group. Schedule is
+  /// per-group so op-K and op-K+1 for the same (src, dst) can carry
+  /// different schedules.
+  struct GroupPayload {
+    CopySpec spec;
     std::vector<setu::planner::hints::CompilerHint> hints;
-    std::uint64_t fingerprint;
     std::optional<std::vector<std::string>> pass_names;
+    std::uint64_t schedule_fingerprint;
   };
 
-  SubmitResult CancelKey(
-      const CopyKey& key /*[in]*/,
-      AggregationParticipant triggering_participant /*[in]*/) {
-    auto cancelled = shard_aggregator_.Cancel(key);
-    cancelled.push_back(std::move(triggering_participant));
-    pending_hints_.erase(key);
-    return CancelledAggregation{std::move(cancelled)};
-  }
-
-  /// @brief Cancel all pending aggregation groups whose key matches the
-  /// predicate.
-  template <typename PredicateFn>
-  [[nodiscard]] std::vector<AggregationParticipant> CancelPendingIf(
-      PredicateFn predicate /*[in]*/) {
-    auto cancelled = shard_aggregator_.CancelIf(predicate);
-    std::erase_if(pending_hints_,
-                  [&](const auto& e) { return predicate(e.first); });
-    return cancelled;
-  }
-
   // Shard aggregation state (pre-dispatch)
-  setu::commons::utils::ShardAggregator<CopyKey, CopySpec, CopyKeyHash>
+  setu::commons::utils::ShardAggregator<CopyKey, GroupPayload, CopyKeyHash>
       shard_aggregator_;
-  std::unordered_map<CopyKey, PendingHints, CopyKeyHash> pending_hints_;
 
   // In-flight operation state (post-dispatch)
   std::unordered_map<CopyOperationId, CopyOperationStatePtr,

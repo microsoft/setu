@@ -226,13 +226,11 @@ std::uint64_t Client::SubmitCopy(
                        copy_spec.src_name, copy_spec.dst_name);
 
   const auto local_id = next_local_id_.fetch_add(1);
-  const auto fingerprint = setu::planner::hints::Fingerprint(hints);
 
   // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_id : involved_shards) {
     ClientRequest request = SubmitCopyRequest(shard_id, copy_spec, hints,
-                                                fingerprint, local_id,
-                                                pass_names);
+                                              local_id, pass_names);
     Comm::Send(submit_socket_, request);
   }
 
@@ -250,13 +248,11 @@ std::uint64_t Client::SubmitPull(
                        "Client has no shards for dst {}", copy_spec.dst_name);
 
   const auto local_id = next_local_id_.fetch_add(1);
-  const auto fingerprint = setu::planner::hints::Fingerprint(hints);
 
   // Fire-and-forget: send each shard submission via DEALER, no response
   for (const auto& shard_ref : it->second) {
-    ClientRequest request = SubmitPullRequest(
-        shard_ref->shard_id, copy_spec, hints, fingerprint, local_id,
-        pass_names);
+    ClientRequest request = SubmitPullRequest(shard_ref->shard_id, copy_spec,
+                                              hints, local_id, pass_names);
     Comm::Send(submit_socket_, request);
   }
 
