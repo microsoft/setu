@@ -33,6 +33,7 @@ using setu::commons::ShardId;
 using setu::commons::TensorDimName;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::DeviceId;
 using setu::commons::datatypes::TensorDimSpec;
 using setu::commons::datatypes::TensorShardMetadataPtr;
 using setu::commons::datatypes::TensorShardSpec;
@@ -47,7 +48,7 @@ TensorShardSpec Make1DShardSpec(const TensorName& name, std::size_t total_size,
                                 std::int32_t num_replicas = 1) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", total_size, start, end);
-  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU),
+  return TensorShardSpec(name, dims, torch::kFloat32, Device(DeviceId("test-device")),
                          replica_id, num_replicas);
 }
 
@@ -61,7 +62,7 @@ TensorShardSpec Make2DShardSpec(const TensorName& name, std::size_t rows,
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("row", rows, row_start, row_end);
   dims.emplace_back("col", cols, col_start, col_end);
-  return TensorShardSpec(name, dims, torch::kFloat32, Device(torch::kCPU),
+  return TensorShardSpec(name, dims, torch::kFloat32, Device(DeviceId("test-device")),
                          replica_id, num_replicas);
 }
 
@@ -562,7 +563,7 @@ TEST(MetaStoreTest, RegisterTensorShard_Float16Dtype_CorrectMetadata) {
   // Create shard spec with float16 dtype
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", 100, 0, 100);
-  TensorShardSpec spec(tensor_name, dims, torch::kFloat16, Device(torch::kCPU));
+  TensorShardSpec spec(tensor_name, dims, torch::kFloat16, Device(DeviceId("test-device")));
 
   auto shard_metadata = store.RegisterTensorShard(spec, owner_node);
   ASSERT_NE(shard_metadata, nullptr);
@@ -585,7 +586,7 @@ TEST(MetaStoreTest, RegisterTensorShard_DtypeMismatch_ReturnsNullptr) {
   std::vector<TensorDimSpec> dims1;
   dims1.emplace_back("x", 100, 0, 50);
   TensorShardSpec spec1(tensor_name, dims1, torch::kFloat32,
-                        Device(torch::kCPU));
+                        Device(DeviceId("test-device")));
   auto shard1 = store.RegisterTensorShard(spec1, owner_node);
   ASSERT_NE(shard1, nullptr);
 
@@ -593,7 +594,7 @@ TEST(MetaStoreTest, RegisterTensorShard_DtypeMismatch_ReturnsNullptr) {
   std::vector<TensorDimSpec> dims2;
   dims2.emplace_back("x", 100, 50, 100);
   TensorShardSpec spec2(tensor_name, dims2, torch::kFloat16,
-                        Device(torch::kCPU));
+                        Device(DeviceId("test-device")));
 
   auto shard2 = store.RegisterTensorShard(spec2, owner_node);
   EXPECT_EQ(shard2, nullptr);
@@ -627,7 +628,7 @@ TEST(MetaStoreTest, RegisterTensorShard_DimensionNameMismatch_ReturnsNullptr) {
   std::vector<TensorDimSpec> dims1;
   dims1.emplace_back("x", 100, 0, 50);
   TensorShardSpec spec1(tensor_name, dims1, torch::kFloat32,
-                        Device(torch::kCPU));
+                        Device(DeviceId("test-device")));
   auto shard1 = store.RegisterTensorShard(spec1, owner_node);
   ASSERT_NE(shard1, nullptr);
 
@@ -636,7 +637,7 @@ TEST(MetaStoreTest, RegisterTensorShard_DimensionNameMismatch_ReturnsNullptr) {
   std::vector<TensorDimSpec> dims2;
   dims2.emplace_back("y", 100, 50, 100);
   TensorShardSpec spec2(tensor_name, dims2, torch::kFloat32,
-                        Device(torch::kCPU));
+                        Device(DeviceId("test-device")));
 
   auto shard2 = store.RegisterTensorShard(spec2, owner_node);
   EXPECT_EQ(shard2, nullptr);
@@ -771,7 +772,7 @@ TEST(MetaStoreTest, GetTensorMetadata_DimensionNamesCorrect) {
   dims.emplace_back("batch", 8, 0, 8);
   dims.emplace_back("sequence", 512, 0, 512);
   dims.emplace_back("hidden", 768, 0, 768);
-  TensorShardSpec spec(tensor_name, dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec(tensor_name, dims, torch::kFloat32, Device(DeviceId("test-device")));
 
   auto shard_metadata = store.RegisterTensorShard(spec, owner_node);
   ASSERT_NE(shard_metadata, nullptr);

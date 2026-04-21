@@ -82,3 +82,22 @@ if(NCCL_FOUND AND NOT TARGET NCCL::NCCL)
   set_target_properties(NCCL::NCCL PROPERTIES IMPORTED_LOCATION "${NCCL_LIBRARY}"
                                               INTERFACE_INCLUDE_DIRECTORIES "${NCCL_INCLUDE_DIR}")
 endif()
+
+# NVML (NVIDIA Management Library) — used by DeviceMap for canonical GPU UUIDs.
+# Initialised and shut down in a one-shot call so we don't keep libnvidia-ml
+# attached for the process lifetime (measurable peer-memcpy regression).
+find_path(
+  NVML_INCLUDE_DIR
+  NAMES nvml.h
+  HINTS $ENV{CUDA_HOME} $ENV{CUDA_PATH}
+  PATHS /usr/local/cuda
+  PATH_SUFFIXES include)
+
+find_library(
+  NVML_LIBRARY
+  NAMES nvidia-ml
+  HINTS $ENV{CUDA_HOME} $ENV{CUDA_PATH}
+  PATHS /usr/local/cuda /usr/lib/x86_64-linux-gnu
+  PATH_SUFFIXES lib lib64 lib64/stubs lib/stubs)
+
+find_package_handle_standard_args(NVML REQUIRED_VARS NVML_LIBRARY NVML_INCLUDE_DIR)

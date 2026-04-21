@@ -515,9 +515,30 @@ Plan NCCL::Run(const cir::Program& program,
     pending_writes[part].push_back({buf, offset, size, sync_id});
   };
 
+  {
+    std::string p2p_str = "{";
+    bool first_node = true;
+    for (const auto& [node_id, pairs] : ctx.p2p_access) {
+      p2p_str += std::format("{}{}=[", first_node ? "" : ", ", node_id);
+      bool first_pair = true;
+      for (const auto& pair : pairs) {
+        p2p_str +=
+            std::format("{}({},{})", first_pair ? "" : ",",
+                        pair.src.ToString(), pair.dst.ToString());
+        first_pair = false;
+      }
+      p2p_str += "]";
+      first_node = false;
+    }
+    p2p_str += "}";
+    LOG_DEBUG("P2P access map: {}", p2p_str);
+  }
+
   for (const auto& c : pending_copies) {
     auto op_size = c.count * torch::elementSize(c.dtype);
     const bool dst_has_reader = read_buffers.contains(c.dst_ref);
+    LOG_DEBUG("pending_copy: src_part={}, dst_part={}", c.src_part.ToString(),
+              c.dst_part.ToString());
     if (c.src_part == c.dst_part) {
       resolve_conflicts(c.src_part, c.src_ref, c.src_offset_bytes, op_size);
       copy_batches[c.src_part].emplace_back(c.src_ref, c.src_offset_bytes,
@@ -533,7 +554,7 @@ Plan NCCL::Run(const cir::Program& program,
                               c.src_offset_bytes, op_size);
       pull_batches[c.dst_part].emplace_back(
           c.src_ref, c.src_offset_bytes, c.dst_ref, c.dst_offset_bytes,
-          c.count, c.dtype, c.src_part.LocalDeviceIndex());
+          c.count, c.dtype, c.src_part.device.GetDeviceId());
       if (dst_has_reader) {
         flush_pull_batches_for(c.dst_part);
         record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);

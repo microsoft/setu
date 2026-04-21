@@ -22,6 +22,7 @@
 #include "commons/Types.h"
 #include "commons/datatypes/CopySpec.h"
 #include "commons/datatypes/Device.h"
+#include "commons/datatypes/DeviceId.h"
 #include "commons/datatypes/TensorDim.h"
 #include "commons/datatypes/TensorDimShard.h"
 #include "commons/datatypes/TensorDimSpec.h"
@@ -37,29 +38,74 @@
 //==============================================================================
 namespace setu::commons::datatypes {
 //==============================================================================
+void InitDeviceIdPybind(py::module_& m) {
+  py::class_<DeviceId>(m, "DeviceId")
+      .def(py::init<>())
+      .def(py::init<std::string>(), py::arg("value"))
+      .def("__str__", &DeviceId::ToString)
+      .def("__repr__",
+           [](const DeviceId& d) {
+             return std::format("DeviceId({})", d.ToString());
+           })
+      .def("__eq__", &DeviceId::operator==, py::arg("other"))
+      .def("__hash__",
+           [](const DeviceId& d) { return std::hash<DeviceId>{}(d); })
+      .def("empty", &DeviceId::Empty,
+           "Whether this DeviceId is the empty sentinel")
+      .def_property_readonly("value", &DeviceId::ToString,
+                             "Canonical id string (e.g. NVML UUID for "
+                             "NVIDIA GPUs)")
+      // Pickle support for multiprocessing
+      .def(py::pickle(
+          [](const DeviceId& d) {  // __getstate__
+            return py::make_tuple(d.ToString());
+          },
+          [](py::tuple t) {  // __setstate__
+            if (t.size() != 1) {
+              throw std::runtime_error("Invalid state for DeviceId");
+            }
+            auto value = t[0].cast<std::string>();
+            return value.empty() ? DeviceId{} : DeviceId{std::move(value)};
+          }));
+}
+//==============================================================================
 void InitDevicePybind(py::module_& m) {
   py::class_<Device>(m, "Device")
       .def(py::init<torch::Device>(), py::arg("torch_device"))
+      .def(py::init<DeviceId>(), py::arg("device_id"))
       .def_readonly("torch_device", &Device::torch_device,
-                    "PyTorch device (type + local index)")
+                    "PyTorch device (type + process-local index)")
+      .def_readonly("device_id", &Device::device_id,
+                    "Canonical DeviceId; empty for non-CUDA devices")
       .def("__eq__", &Device::operator==, py::arg("other"))
       .def("__hash__", [](const Device& d) { return std::hash<Device>{}(d); })
       .def("__str__", &Device::ToString)
       .def("__repr__", &Device::ToString)
-      // Pickle support for multiprocessing
+      // Pickle support for multiprocessing. State is (device_type, device_id
+      // string) — the local torch index is intentionally not pickled; the
+      // receiving process reconstructs it via DeviceMap::Local().
       .def(py::pickle(
           [](const Device& d) {  // __getstate__
             return py::make_tuple(
                 static_cast<std::int8_t>(d.torch_device.type()),
-                static_cast<std::int16_t>(d.torch_device.index()));
+                d.device_id.ToString());
           },
           [](py::tuple t) {  // __setstate__
             if (t.size() != 2) {
               throw std::runtime_error("Invalid state for Device");
             }
-            return Device(torch::Device(
-                static_cast<torch::DeviceType>(t[0].cast<std::int8_t>()),
-                t[1].cast<torch::DeviceIndex>()));
+            auto device_type = static_cast<torch::DeviceType>(
+                t[0].cast<std::int8_t>());
+            auto id_value = t[1].cast<std::string>();
+            if (device_type == torch::kCUDA && !id_value.empty()) {
+              return Device(DeviceId(std::move(id_value)));
+            }
+            Device d;
+            d.torch_device = torch::Device(device_type);
+            if (!id_value.empty()) {
+              d.device_id = DeviceId(std::move(id_value));
+            }
+            return d;
           }));
 }
 //==============================================================================
@@ -349,6 +395,7 @@ void InitTensorShardWriteHandlePybind(py::module_& m) {
 void InitDatatypesPybindSubmodule(py::module_& pm) {
   auto m = pm.def_submodule("datatypes", "Datatypes submodule");
 
+  InitDeviceIdPybind(m);
   InitDevicePybind(m);
   InitTensorSlicePybind(m);
   InitTensorDimPybind(m);

@@ -14,7 +14,6 @@ from torch.multiprocessing.reductions import rebuild_cuda_tensor
 def _child_process_modify_tensor(spec_dict, result_queue):
     """Child process that rebuilds and modifies the tensor."""
     try:
-        # Rebuild tensor from spec
         args = {
             **spec_dict,
             "tensor_cls": torch.Tensor,

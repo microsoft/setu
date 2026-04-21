@@ -34,6 +34,7 @@ using setu::commons::TensorIndices;
 using setu::commons::TensorIndicesMap;
 using setu::commons::TensorName;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::DeviceId;
 using setu::commons::datatypes::TensorDimSpec;
 using setu::commons::datatypes::TensorSelection;
 using setu::commons::datatypes::TensorSelectionPtr;
@@ -68,7 +69,7 @@ TensorShardMetadataPtr Make1DShardMetadata(const TensorName& name,
                                            TensorIndex end) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", size, start, end);
-  TensorShardSpec spec(name, dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec(name, dims, torch::kFloat32, Device(DeviceId("test-device")));
   return std::make_shared<TensorShardMetadata>(spec, GenerateUUID());
 }
 
@@ -82,7 +83,7 @@ TensorShardMetadataPtr Make2DShardMetadata(const TensorName& name,
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("row", rows, row_start, row_end);
   dims.emplace_back("col", cols, col_start, col_end);
-  TensorShardSpec spec(name, dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec(name, dims, torch::kFloat32, Device(DeviceId("test-device")));
   return std::make_shared<TensorShardMetadata>(spec, GenerateUUID());
 }
 
@@ -95,7 +96,7 @@ TensorShardMetadataPtr Make3DShardMetadata(
   dims.emplace_back("d0", d0, d0_start, d0_end);
   dims.emplace_back("d1", d1, d1_start, d1_end);
   dims.emplace_back("d2", d2, d2_start, d2_end);
-  TensorShardSpec spec(name, dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec(name, dims, torch::kFloat32, Device(DeviceId("test-device")));
   return std::make_shared<TensorShardMetadata>(spec, GenerateUUID());
 }
 

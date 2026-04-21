@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
+#include "commons/datatypes/DeviceId.h"
 #include "commons/enums/Enums.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
@@ -28,6 +29,7 @@
 namespace setu::planner::ir::llc {
 //==============================================================================
 using setu::commons::DevicePtr;
+using setu::commons::datatypes::DeviceId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::commons::utils::BinaryReader;
@@ -41,8 +43,7 @@ struct PullEntry {
   PullEntry(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
             BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
             std::size_t count_param, torch::Dtype dtype_param,
-            std::int32_t src_device_param,
-            DevicePtr src_ptr_param = nullptr,
+            DeviceId src_device_param, DevicePtr src_ptr_param = nullptr,
             DevicePtr dst_ptr_param = nullptr)
       : src_ref(std::move(src_ref_param)),
         src_offset_bytes(src_offset_bytes_param),
@@ -50,7 +51,7 @@ struct PullEntry {
         dst_offset_bytes(dst_offset_bytes_param),
         count(count_param),
         dtype(dtype_param),
-        src_device(src_device_param),
+        src_device(std::move(src_device_param)),
         src_ptr(src_ptr_param),
         dst_ptr(dst_ptr_param) {}
 
@@ -66,7 +67,7 @@ struct PullEntry {
   std::size_t dst_offset_bytes;
   std::size_t count;
   torch::Dtype dtype;
-  std::int32_t src_device;
+  DeviceId src_device;
 
   // Embellished pointers
   DevicePtr src_ptr;
@@ -86,10 +87,11 @@ struct Pull {
   Pull(BufferRef src_ref_param, std::size_t src_offset_bytes_param,
        BufferRef dst_ref_param, std::size_t dst_offset_bytes_param,
        std::size_t count_param, torch::Dtype dtype_param,
-       std::int32_t src_device_param) {
+       DeviceId src_device_param) {
     entries.emplace_back(std::move(src_ref_param), src_offset_bytes_param,
                          std::move(dst_ref_param), dst_offset_bytes_param,
-                         count_param, dtype_param, src_device_param);
+                         count_param, dtype_param,
+                         std::move(src_device_param));
   }
 
   ~Pull() = default;

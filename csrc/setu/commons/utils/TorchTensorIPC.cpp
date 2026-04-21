@@ -32,7 +32,7 @@ TensorIPCSpec::TensorIPCSpec(torch::IntArrayRef tensor_size_param,
                              torch::IntArrayRef tensor_stride_param,
                              std::int64_t tensor_offset_param,
                              torch::Dtype dtype_param, bool requires_grad_param,
-                             std::int32_t storage_device_param,
+                             Device storage_device_param,
                              std::string storage_handle_param,
                              std::uint64_t storage_size_bytes_param,
                              std::uint64_t storage_offset_bytes_param,
@@ -45,7 +45,7 @@ TensorIPCSpec::TensorIPCSpec(torch::IntArrayRef tensor_size_param,
       tensor_offset(tensor_offset_param),
       dtype(dtype_param),
       requires_grad(requires_grad_param),
-      storage_device(storage_device_param),
+      storage_device(std::move(storage_device_param)),
       storage_handle(std::move(storage_handle_param)),
       storage_size_bytes(storage_size_bytes_param),
       storage_offset_bytes(storage_offset_bytes_param),
@@ -79,17 +79,17 @@ TensorIPCSpec TensorIPCSpec::Deserialize(const BinaryRange& range) {
         ref_counter_handle_val, ref_counter_offset_val, event_handle_val,
         event_sync_required_val] =
       reader.ReadFields<std::vector<std::int64_t>, std::vector<std::int64_t>,
-                        std::int64_t, torch::Dtype, bool, std::int32_t,
-                        std::string, std::uint64_t, std::uint64_t, std::string,
+                        std::int64_t, torch::Dtype, bool, Device, std::string,
+                        std::uint64_t, std::uint64_t, std::string,
                         std::uint64_t, cudaIpcEventHandle_t, bool>();
 
   return TensorIPCSpec(
       torch::IntArrayRef(tensor_size_val),
       torch::IntArrayRef(tensor_stride_val), tensor_offset_val, dtype_val,
-      requires_grad_val, storage_device_val, std::move(storage_handle_val),
-      storage_size_bytes_val, storage_offset_bytes_val,
-      std::move(ref_counter_handle_val), ref_counter_offset_val,
-      event_handle_val, event_sync_required_val);
+      requires_grad_val, std::move(storage_device_val),
+      std::move(storage_handle_val), storage_size_bytes_val,
+      storage_offset_bytes_val, std::move(ref_counter_handle_val),
+      ref_counter_offset_val, event_handle_val, event_sync_required_val);
 }
 //==============================================================================
 // Implementation matches THPStorage_shareCuda, minus the Python-specific
@@ -136,7 +136,7 @@ TensorIPCSpec PrepareTensorIPCSpec(const torch::Tensor& x) {
 
   return TensorIPCSpec(x.sizes(), x.strides(), x.storage_offset(),
                        torch::typeMetaToScalarType(x.dtype()),
-                       x.requires_grad(), storage.device().index(),
+                       x.requires_grad(), Device(storage.device()),
                        storage_handle, storage_size_bytes, storage_offset_bytes,
                        ref_counter_handle, ref_counter_offset, event_handle,
                        event_sync_required);

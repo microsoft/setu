@@ -20,6 +20,7 @@
 #include "commons/TorchCommon.h"
 //==============================================================================
 #include "commons/Types.h"
+#include "commons/datatypes/Device.h"
 //==============================================================================
 // To allow using CUDA IPC types and functions from torch
 #define USE_CUDA
@@ -28,13 +29,14 @@ namespace setu::commons::utils {
 //==============================================================================
 using setu::commons::BinaryBuffer;
 using setu::commons::BinaryRange;
+using setu::commons::datatypes::Device;
 //==============================================================================
 struct TensorIPCSpec final {
   // Constructor accepting IntArrayRef (copies data into vectors)
   TensorIPCSpec(torch::IntArrayRef tensor_size_param,
                 torch::IntArrayRef tensor_stride_param,
                 std::int64_t tensor_offset_param, torch::Dtype dtype_param,
-                bool requires_grad_param, std::int32_t storage_device_param,
+                bool requires_grad_param, Device storage_device_param,
                 std::string storage_handle_param,
                 std::uint64_t storage_size_bytes_param,
                 std::uint64_t storage_offset_bytes_param,
@@ -56,7 +58,7 @@ struct TensorIPCSpec final {
   const std::int64_t tensor_offset;
   const torch::Dtype dtype;
   const bool requires_grad;
-  const std::int32_t storage_device;
+  const Device storage_device;
   const std::string storage_handle;
   const std::uint64_t storage_size_bytes;
   const std::uint64_t storage_offset_bytes;

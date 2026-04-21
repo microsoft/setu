@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
+#include "commons/datatypes/DeviceId.h"
 //==============================================================================
 #include "planner/Participant.h"
 #include "planner/RegisterSet.h"
@@ -27,10 +28,11 @@
 namespace setu::planner::passes {
 //==============================================================================
 
-/// Represents a single directional P2P-capable device pair within a node.
+/// Represents a single directional P2P-capable device pair within a node,
+/// keyed on canonical DeviceId (not process-local torch indices).
 struct P2PDevicePair {
-  std::int16_t src;
-  std::int16_t dst;
+  setu::commons::datatypes::DeviceId src;
+  setu::commons::datatypes::DeviceId dst;
 
   bool operator<(const P2PDevicePair& other) const {
     return std::tie(src, dst) < std::tie(other.src, other.dst);
@@ -42,7 +44,7 @@ struct P2PDevicePair {
 };
 
 /// Per-node map of directional P2P-capable device pairs.
-/// Key: NodeId.  Value: set of (src_local_idx, dst_local_idx) where
+/// Key: NodeId.  Value: set of (src_device_id, dst_device_id) where
 /// cudaDeviceCanAccessPeer returned true.
 using P2PAccessMap =
     std::unordered_map<setu::commons::NodeId, std::set<P2PDevicePair>>;
@@ -64,7 +66,7 @@ struct PassContext {
     auto it = p2p_access.find(src.node_id);
     if (it == p2p_access.end()) return false;
     return it->second.contains(
-        {src.LocalDeviceIndex(), dst.LocalDeviceIndex()});
+        {src.device.GetDeviceId(), dst.device.GetDeviceId()});
   }
 };
 

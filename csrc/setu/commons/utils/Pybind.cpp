@@ -17,6 +17,7 @@
 #include "Pybind.h"
 //==============================================================================
 #include "commons/Time.h"
+#include "commons/datatypes/Device.h"
 #include "commons/utils/TorchTensorIPC.h"
 #include "commons/utils/ZmqHelper.h"
 //==============================================================================
@@ -59,9 +60,9 @@ void InitZmqHelperPybindClass(py::module_& m) {
 void InitTorchTensorIPCPybindClass(py::module_& m) {
   py::class_<TensorIPCSpec, TensorIPCSpecPtr>(m, "TensorIPCSpec")
       .def(py::init<torch::IntArrayRef, torch::IntArrayRef, std::int64_t,
-                    torch::Dtype, bool, std::int32_t, std::string,
-                    std::uint64_t, std::uint64_t, std::string, std::uint64_t,
-                    cudaIpcEventHandle_t, bool>(),
+                    torch::Dtype, bool, setu::commons::datatypes::Device,
+                    std::string, std::uint64_t, std::uint64_t, std::string,
+                    std::uint64_t, cudaIpcEventHandle_t, bool>(),
            py::arg("tensor_size"), py::arg("tensor_stride"),
            py::arg("tensor_offset"), py::arg("dtype"), py::arg("requires_grad"),
            py::arg("storage_device"), py::arg("storage_handle"),
@@ -77,8 +78,10 @@ void InitTorchTensorIPCPybindClass(py::module_& m) {
       .def_readonly("dtype", &TensorIPCSpec::dtype, "Tensor data type")
       .def_readonly("requires_grad", &TensorIPCSpec::requires_grad,
                     "Whether tensor requires gradient")
-      .def_readonly("storage_device", &TensorIPCSpec::storage_device,
-                    "Storage device (e.g., cuda:0)")
+      .def_readonly(
+          "storage_device", &TensorIPCSpec::storage_device,
+          "Storage device (Device, carrying both process-local torch_device "
+          "and a canonical DeviceId)")
       .def_property_readonly(
           "storage_handle",
           [](const TensorIPCSpec& spec) {
@@ -116,7 +119,11 @@ void InitTorchTensorIPCPybindClass(py::module_& m) {
             d["tensor_offset"] = spec.tensor_offset;
             d["dtype"] = spec.dtype;
             d["requires_grad"] = spec.requires_grad;
-            d["storage_device"] = spec.storage_device;
+            // to_dict is for splatting into torch.multiprocessing's
+            // rebuild_cuda_tensor; it only carries fields that function
+            // accepts. DeviceId is available via spec.storage_device.device_id.
+            d["storage_device"] = static_cast<std::int32_t>(
+                spec.storage_device.torch_device.index());
             d["storage_handle"] = py::bytes(spec.storage_handle);
             d["storage_size_bytes"] = spec.storage_size_bytes;
             d["storage_offset_bytes"] = spec.storage_offset_bytes;

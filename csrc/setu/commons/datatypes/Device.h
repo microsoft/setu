@@ -20,6 +20,7 @@
 #include "commons/StdCommon.h"
 #include "commons/TorchCommon.h"
 #include "commons/Types.h"
+#include "commons/datatypes/DeviceId.h"
 #include "commons/utils/Serialization.h"
 //==============================================================================
 namespace setu::commons::datatypes {
@@ -30,76 +31,93 @@ using setu::commons::utils::BinaryReader;
 using setu::commons::utils::BinaryWriter;
 //==============================================================================
 /**
- * @brief Represents a physical compute device
+ * @brief Represents a physical compute device.
  *
- * Device encapsulates information about a physical compute device including
- * its type (CPU, GPU, etc.) and local index via torch::Device.
+ * Device pairs a process-local torch::Device with a canonical, process-
+ * invariant DeviceId. The DeviceId is what travels across process
+ * boundaries; on construction (locally) and on deserialization (from the
+ * wire) the two fields are kept in sync via DeviceMap::Local() so that
+ * `LocalDeviceIndex()` is always valid in the current process.
  */
 struct Device {
   /**
-   * @brief Default constructor for empty device
+   * @brief Default constructor for an empty (sentinel) device.
    */
   Device() = default;
 
   /**
-   * @brief Constructs a device from a torch::Device
+   * @brief Constructs a Device from a local torch device.
    *
-   * @param torch_device_param PyTorch device (type + local index, e.g., cuda:0)
+   * Fills `device_id` from DeviceMap::Local() when possible.
    */
-  explicit Device(torch::Device torch_device_param)
-      : torch_device(torch_device_param) {}
+  explicit Device(torch::Device torch_device_param /*[in]*/);
 
   /**
-   * @brief Returns a string representation of the device
+   * @brief Constructs a Device from a canonical DeviceId.
    *
-   * @return String containing torch device info
+   * Fills `torch_device` from DeviceMap::Local() when possible.
+   */
+  explicit Device(DeviceId device_id_param /*[in]*/);
+
+  // TODO: add an Available() method to help gate whether a Device is fully
+  // initialized and available for use in this process.
+
+  /**
+   * @brief Returns a string representation of the device.
    */
   [[nodiscard]] std::string ToString() const {
-    return std::format("Device(torch_device={})", torch_device.str());
+    return std::format("Device(torch_device={}, device_id={})",
+                       torch_device.str(), device_id.ToString());
   }
 
   void Serialize(BinaryBuffer& buffer) const;
 
   static Device Deserialize(const BinaryRange& range);
 
-  /**
-   * @brief Equality comparison operator
-   *
-   * @param other Device to compare with
-   * @return true if devices are equal, false otherwise
-   */
+  // Equality / ordering / hashing key on device_id alone.
+  //
+  // device_id (for example, NVML UUID for CUDA) is the canonical,
+  // process-invariant identity; it uniquely identifies a physical device
+  // within a node. torch_device.index() is a process-local index derived
+  // from CUDA_VISIBLE_DEVICES ordering, so the same cuda:N can refer to
+  // different physical devices in different processes, and is deliberately
+  // excluded from these operators.
+  //
+  // System-wide uniqueness requires (node_id, device_id): two different
+  // nodes can in principle report the same device_id. Use Participant
+  // (which carries node_id + device) whenever crossing node boundaries.
+  //
+  // The constructor guarantees that device_id field is always populated.
   [[nodiscard]] bool operator==(const Device& other) const {
-    return torch_device == other.torch_device;
+    return device_id == other.device_id;
   }
 
-  /**
-   * @brief Inequality comparison operator
-   *
-   * @param other Device to compare with
-   * @return true if devices are not equal, false otherwise
-   */
   [[nodiscard]] bool operator!=(const Device& other) const {
     return !(*this == other);
   }
 
   [[nodiscard]] bool operator<(const Device& other) const {
-    if (torch_device.type() != other.torch_device.type()) {
-      return torch_device.type() < other.torch_device.type();
-    }
-    return torch_device.index() < other.torch_device.index();
+    return device_id < other.device_id;
   }
 
   /**
-   * @brief Returns the local device index
+   * @brief Returns the local torch device index (e.g. 0 for cuda:0).
    *
-   * @return Local device index (e.g., 0 for cuda:0)
+   * Always reflects this process's view, even if the Device was
+   * constructed via a cross-process DeviceId.
    */
   [[nodiscard]] std::int16_t LocalDeviceIndex() const {
     return static_cast<std::int16_t>(torch_device.index());
   }
 
+  /**
+   * @brief Canonical id of the physical device. Empty for non-CUDA devices.
+   */
+  [[nodiscard]] const DeviceId& GetDeviceId() const { return device_id; }
+
   torch::Device torch_device{
-      torch::kCUDA};  ///< PyTorch device (type + local index)
+      torch::kCUDA};   ///< PyTorch device (always process-local)
+  DeviceId device_id;  ///< Canonical id; empty for non-CUDA devices
 };
 //==============================================================================
 }  // namespace setu::commons::datatypes

@@ -31,6 +31,7 @@
 using setu::commons::GenerateUUID;
 using setu::commons::NodeId;
 using setu::commons::datatypes::Device;
+using setu::commons::datatypes::DeviceId;
 using setu::commons::datatypes::TensorDimSpec;
 using setu::commons::datatypes::TensorShard;
 using setu::commons::datatypes::TensorShardMetadata;
@@ -59,7 +60,7 @@ class TensorShardHandleTest : public ::testing::Test {
       const std::string& name = "test_tensor", std::int64_t size = 16) const {
     std::vector<TensorDimSpec> dims;
     dims.emplace_back("x", static_cast<std::size_t>(size), 0, size);
-    TensorShardSpec spec(name, dims, torch::kFloat32, Device(torch::kCPU));
+    TensorShardSpec spec(name, dims, torch::kFloat32, Device(DeviceId("test-device")));
     TensorShardMetadata metadata(spec, GenerateUUID());
     torch::Tensor tensor = torch::ones({size}, torch::kFloat32);
     return std::make_shared<TensorShard>(std::move(metadata), std::move(tensor),
@@ -91,7 +92,7 @@ TEST_F(TensorShardHandleTest, Constructor_ValidParams_CreatesLockFile) {
 TEST_F(TensorShardHandleTest, Constructor_InvalidTensor_Throws) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", 16, 0, 16);
-  TensorShardSpec spec("test", dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec("test", dims, torch::kFloat32, Device(DeviceId("test-device")));
   TensorShardMetadata metadata(spec, GenerateUUID());
 
   torch::Tensor empty_tensor;
@@ -107,7 +108,7 @@ TEST_F(TensorShardHandleTest, Constructor_InvalidTensor_Throws) {
 TEST_F(TensorShardHandleTest, Constructor_EmptyLockBaseDir_Throws) {
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", 16, 0, 16);
-  TensorShardSpec spec("test", dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec("test", dims, torch::kFloat32, Device(DeviceId("test-device")));
   TensorShardMetadata metadata(spec, GenerateUUID());
   torch::Tensor tensor = torch::ones({16}, torch::kFloat32);
 
@@ -121,7 +122,7 @@ TEST_F(TensorShardHandleTest, Constructor_SameShardId_SameLockFile) {
   // Two shards with the same metadata ID should produce the same lock file
   std::vector<TensorDimSpec> dims;
   dims.emplace_back("x", 16, 0, 16);
-  TensorShardSpec spec("test", dims, torch::kFloat32, Device(torch::kCPU));
+  TensorShardSpec spec("test", dims, torch::kFloat32, Device(DeviceId("test-device")));
 
   auto shared_id = GenerateUUID();
   NodeId owner = GenerateUUID();

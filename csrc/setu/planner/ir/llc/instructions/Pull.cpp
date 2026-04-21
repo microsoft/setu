@@ -30,8 +30,8 @@ std::string Pull::ToString() const {
         "dst_offset_bytes={}, count={}, dtype={}, src_device={}, src_ptr={}, "
         "dst_ptr={}",
         i, e.src_ref.ToString(), e.src_offset_bytes, e.dst_ref.ToString(),
-        e.dst_offset_bytes, e.count, static_cast<int>(e.dtype), e.src_device,
-        e.src_ptr, e.dst_ptr);
+        e.dst_offset_bytes, e.count, static_cast<int>(e.dtype),
+        e.src_device.ToString(), e.src_ptr, e.dst_ptr);
   }
   return result;
 }
@@ -58,10 +58,10 @@ Pull Pull::Deserialize(const BinaryRange& range) {
     auto [src_ref, src_offset, dst_ref, dst_offset, count, dtype, src_dev,
           src_ptr_val, dst_ptr_val] =
         reader.ReadFields<BufferRef, std::size_t, BufferRef, std::size_t,
-                          std::size_t, torch::Dtype, std::int32_t,
+                          std::size_t, torch::Dtype, DeviceId,
                           std::uintptr_t, std::uintptr_t>();
     entries.emplace_back(std::move(src_ref), src_offset, std::move(dst_ref),
-                         dst_offset, count, dtype, src_dev,
+                         dst_offset, count, dtype, std::move(src_dev),
                          reinterpret_cast<DevicePtr>(src_ptr_val),
                          reinterpret_cast<DevicePtr>(dst_ptr_val));
   }

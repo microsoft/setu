@@ -165,10 +165,9 @@ NodeAgent::NodeAgent(NodeId node_id, std::size_t port,
         CUDA_CHECK(cudaDeviceCanAccessPeer(
             &can_access, src.LocalDeviceIndex(), dst.LocalDeviceIndex()));
         if (can_access) {
-          p2p_pairs.push_back(
-              {src.LocalDeviceIndex(), dst.LocalDeviceIndex()});
+          p2p_pairs.push_back({src.GetDeviceId(), dst.GetDeviceId()});
           LOG_INFO("NodeAgent {}: P2P access available {} -> {}", node_id_,
-                   src.LocalDeviceIndex(), dst.LocalDeviceIndex());
+                   src.GetDeviceId().ToString(), dst.GetDeviceId().ToString());
         }
       }
     }

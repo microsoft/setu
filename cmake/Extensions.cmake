@@ -27,6 +27,15 @@ target_include_directories(setu_common INTERFACE ${NCCL_INCLUDE_DIR})
 target_link_libraries(setu_common INTERFACE ${NCCL_LIBRARY})
 message(STATUS "NCCL support enabled")
 
+# Add NVML support — used by DeviceMap in a one-shot init/shutdown.
+if(NOT NVML_FOUND)
+  message(FATAL_ERROR "NVML is required but was not found. "
+                      "Set CUDA_HOME or CUDA_PATH environment variable.")
+endif()
+target_include_directories(setu_common INTERFACE ${NVML_INCLUDE_DIR})
+target_link_libraries(setu_common INTERFACE ${NVML_LIBRARY})
+message(STATUS "NVML support enabled")
+
 # Function to configure common target properties
 function(setu_target_config target_name is_module)
   target_link_libraries(${target_name} PRIVATE setu_common)

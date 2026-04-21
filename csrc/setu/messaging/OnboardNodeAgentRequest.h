@@ -18,6 +18,7 @@
 //==============================================================================
 #include "commons/StdCommon.h"
 #include "commons/Types.h"
+#include "commons/datatypes/DeviceId.h"
 #include "commons/utils/Serialization.h"
 #include "messaging/BaseRequest.h"
 #include "planner/Participant.h"
@@ -25,16 +26,19 @@
 //==============================================================================
 namespace setu::commons::messages {
 //==============================================================================
+using setu::commons::datatypes::DeviceId;
 using setu::commons::utils::BinaryBuffer;
 using setu::commons::utils::BinaryRange;
 using setu::planner::Participant;
 using setu::planner::RegisterSet;
 //==============================================================================
 
-/// Directional P2P-capable device pair (src_local_idx → dst_local_idx).
+/// Directional P2P-capable device pair, keyed on canonical DeviceId so the
+/// coordinator can match against devices reported by any node agent without
+/// needing a process-local DeviceMap.
 struct P2PPair {
-  std::int16_t src;
-  std::int16_t dst;
+  DeviceId src;
+  DeviceId dst;
 
   void Serialize(BinaryBuffer& buffer) const {
     setu::commons::utils::BinaryWriter writer(buffer);
@@ -43,8 +47,8 @@ struct P2PPair {
 
   static P2PPair Deserialize(const BinaryRange& range) {
     setu::commons::utils::BinaryReader reader(range);
-    auto [s, d] = reader.ReadFields<std::int16_t, std::int16_t>();
-    return {s, d};
+    auto [s, d] = reader.ReadFields<DeviceId, DeviceId>();
+    return {std::move(s), std::move(d)};
   }
 };
 
