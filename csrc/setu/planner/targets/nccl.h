@@ -17,8 +17,10 @@
 #pragma once
 //==============================================================================
 #include "planner/RegisterSet.h"
+#include "planner/ir/cir/Analysis.h"
 #include "planner/ir/cir/Program.h"
 #include "planner/ir/llc/CommId.h"
+#include "planner/targets/NcclEmitInternal.h"
 #include "planner/targets/backend.h"
 //==============================================================================
 namespace setu::planner::targets {
@@ -47,20 +49,29 @@ namespace cir = setu::planner::ir::cir;
 ///   unpack    — splits source into destinations (multiple copies)
 ///   all_gather — emits LLC AllGather (N-way communicator)
 struct NCCL : public Backend {
-  NCCL() = default;
+  /// Default constructor: uses `ncclGetUniqueId` for comm id generation.
+  NCCL();
+
+  /// Test constructor: uses the caller-provided generator so that LLC
+  /// outputs are deterministic across runs.
+  explicit NCCL(UniqueIdGenerator unique_id_gen /*[in]*/);
 
   [[nodiscard]] Plan Run(
       const cir::Program& program /*[in]*/,
       const setu::planner::passes::PassContext& ctx /*[in]*/) override;
 
  private:
-  using CommId = setu::planner::ir::llc::CommId;
+  CommCache comm_cache_;
+  UniqueIdGenerator unique_id_gen_;
 
-  struct CommCacheEntry {
-    CommId id;
-    std::unordered_map<Participant, DeviceRank> ranks;
-  };
-  std::map<Participants, CommCacheEntry> comm_cache_;
+  /// Builds a DataDependence graph from the CIR program, then walks
+  /// it frontier-by-frontier, merging same-kind memcpys per
+  /// participant within each frontier.
+  void EmitWithDataDependence(
+      const cir::Program& program /*[in]*/,
+      const std::optional<cir::RegisterAllocation>& reg_alloc /*[in]*/,
+      const setu::planner::passes::PassContext& ctx /*[in]*/,
+      Plan& plan /*[inout]*/);
 };
 
 //==============================================================================

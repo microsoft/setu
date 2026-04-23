@@ -22,10 +22,17 @@ namespace setu::planner::ir::llc {
 //==============================================================================
 
 std::string InitComm::ToString() const {
+  // Sort by participant so output is deterministic and golden-testable.
+  std::vector<Participant> sorted_parts;
+  sorted_parts.reserve(participant_to_rank.size());
+  for (const auto& [p, _] : participant_to_rank) sorted_parts.push_back(p);
+  std::sort(sorted_parts.begin(), sorted_parts.end());
+
   std::string ranks_str;
-  for (const auto& [participant, rank] : participant_to_rank) {
+  for (const auto& participant : sorted_parts) {
     if (!ranks_str.empty()) ranks_str += ", ";
-    ranks_str += std::format("{}={}", participant.ToString(), rank);
+    ranks_str += std::format("{}={}", participant.ToString(),
+                             participant_to_rank.at(participant));
   }
 
   return std::format("InitComm(comm_id={}, ranks={{{}}})", comm_id.ToString(),

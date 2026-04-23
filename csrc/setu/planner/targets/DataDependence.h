@@ -57,10 +57,14 @@ struct DataDependenceNode {
 /// node i depends on, derived from buffer-overlap analysis: for each
 /// read region, edges from prior writes overlapping it; for each
 /// write region, edges from prior reads or writes overlapping it
-/// (RAW / WAW / WAR).
+/// (RAW / WAW / WAR). `succs[i]` is the transpose of `preds`: the
+/// set of nodes that depend on node i. Both are maintained by the
+/// builder in a single pass; users needing forward adjacency (for
+/// example a Kahn frontier walk) can read it directly.
 struct DataDependence {
   std::vector<DataDependenceNode> nodes;
   std::vector<std::set<std::uint32_t>> preds;  // indexed by node_idx
+  std::vector<std::set<std::uint32_t>> succs;  // indexed by node_idx
 };
 
 /// Build the data-dependence graph by walking the CIR program once.

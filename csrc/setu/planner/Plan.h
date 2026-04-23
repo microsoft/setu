@@ -47,9 +47,15 @@ struct Plan {
       result += std::format("    {}\n", p.ToString());
     }
 
-    // Programs section
+    // Programs section. Sort by participant so the output is
+    // deterministic and golden-testable.
     result += std::format("\n  Programs ({}):\n", program.size());
-    for (const auto& [participant, instructions] : program) {
+    std::vector<Participant> sorted_parts;
+    sorted_parts.reserve(program.size());
+    for (const auto& [p, _] : program) sorted_parts.push_back(p);
+    std::sort(sorted_parts.begin(), sorted_parts.end());
+    for (const auto& participant : sorted_parts) {
+      const auto& instructions = program.at(participant);
       result += std::format("    {} [{} instructions]:\n",
                             participant.ToString(), instructions.size());
       for (std::size_t i = 0; i < instructions.size(); ++i) {

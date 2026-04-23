@@ -107,6 +107,7 @@ DataDependence BuildDataDependence(
         .participants = std::move(parts),
     });
     dag.preds.emplace_back();
+    dag.succs.emplace_back();
     auto& my_preds = dag.preds.back();
 
     // RAW: each read picks up all prior writers overlapping its range;
@@ -137,6 +138,10 @@ DataDependence BuildDataDependence(
       w_map.Insert(w.start_bytes, w.end_bytes, node_idx);
       r_map.SupersedeRange(w.start_bytes, w.end_bytes);
     }
+
+    // Mirror preds into succs to keep the transpose in sync with edges
+    // added above.
+    for (auto p : my_preds) dag.succs[p].insert(node_idx);
   };
 
   for (std::uint32_t op_idx = 0; op_idx < program.NumOperations(); ++op_idx) {
