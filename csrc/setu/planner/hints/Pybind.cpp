@@ -46,12 +46,14 @@ void InitHintsPybind(py::module_& m) {
 
   py::enum_<ReplicationStrategy>(m, "ReplicationStrategy")
       .value("AllGather", ReplicationStrategy::kAllGather)
-      .value("Naive", ReplicationStrategy::kNaive);
+      .value("Naive", ReplicationStrategy::kNaive)
+      .value("BatchedCopy", ReplicationStrategy::kBatchedCopy);
 
   py::class_<ReplicationHint>(m, "ReplicationHint")
       .def(py::init<setu::commons::TensorName, ReplicationStrategy>(),
            py::arg("dst_name"), py::arg("strategy"),
-           "Create a replication hint to control AllGather vs Naive strategy")
+           "Create a replication hint to control replication strategy "
+           "(AllGather, Naive, or BatchedCopy)")
       .def_readonly("dst_name", &ReplicationHint::dst_name,
                     "Destination tensor name")
       .def_readonly("strategy", &ReplicationHint::strategy,

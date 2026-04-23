@@ -130,7 +130,7 @@ struct PipelineChunkSizeHint {
   }
 };
 
-enum class ReplicationStrategy { kAllGather, kNaive };
+enum class ReplicationStrategy { kAllGather, kNaive, kBatchedCopy };
 
 struct ReplicationHint {
   setu::commons::TensorName dst_name;
@@ -143,8 +143,18 @@ struct ReplicationHint {
       : dst_name(std::move(dst_name_param)), strategy(strategy_param) {}
 
   [[nodiscard]] std::string ToString() const {
-    auto strategy_str =
-        strategy == ReplicationStrategy::kAllGather ? "AllGather" : "Naive";
+    const char* strategy_str = "Unknown";
+    switch (strategy) {
+      case ReplicationStrategy::kAllGather:
+        strategy_str = "AllGather";
+        break;
+      case ReplicationStrategy::kNaive:
+        strategy_str = "Naive";
+        break;
+      case ReplicationStrategy::kBatchedCopy:
+        strategy_str = "BatchedCopy";
+        break;
+    }
     return std::format("ReplicationHint(dst_name={}, strategy={})", dst_name,
                        strategy_str);
   }

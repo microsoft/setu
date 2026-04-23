@@ -154,35 +154,23 @@ static void EmitTwoPointerCopies(
 
 //==============================================================================
 
-/// Emits CIR for the AllGather replication strategy.
-///
-/// Each of N replicas copies 1/N of the source, then an AllGather broadcasts
-/// the full data to all replicas.
-static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
-                                          const TensorMetadataPtr& src_meta,
-                                          const TensorMetadataPtr& dst_meta) {
+/// Pairing between a source replica and a destination replica.
+struct ReplicaPair {
+  TensorOwnershipMapPtr src_own;
+  TensorShardRangeView src_view;
+  TensorOwnershipMapPtr dst_own;
+  TensorShardRangeView dst_view;
+};
+
+/// Pair destination replicas to source replicas with round-robin src
+/// assignment, returning their ownership maps and shard-range views.
+static std::vector<ReplicaPair> PairReplicas(
+    const CopySpec& copy_spec, const TensorMetadataPtr& src_meta,
+    const TensorMetadataPtr& dst_meta) {
   auto num_src_replicas = static_cast<std::size_t>(src_meta->num_replicas);
   auto num_dst_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
 
-  auto total_elements = src_meta->size;
-  auto chunk_size = total_elements / num_dst_replicas;
-
-  ASSERT_VALID_RUNTIME(
-      total_elements % num_dst_replicas == 0,
-      "AllGather strategy requires src elements ({}) to be divisible "
-      "by num_dst_replicas ({}). Consider using Naive strategy.",
-      total_elements, num_dst_replicas);
-
-  cir::Program program;
-
-  // Collect per-replica info for the AllGather.
-  struct ReplicaInfo {
-    TensorOwnershipMapPtr src_own;
-    TensorShardRangeView src_view;
-    TensorOwnershipMapPtr dst_own;
-    TensorShardRangeView dst_view;
-  };
-  std::vector<ReplicaInfo> replicas;
+  std::vector<ReplicaPair> replicas;
   replicas.reserve(num_dst_replicas);
 
   for (std::size_t r = 0; r < num_dst_replicas; ++r) {
@@ -194,63 +182,159 @@ static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
                                                        src_replica_id);
     auto dst_own = dst_meta->GetOwnershipMapForReplica(copy_spec.dst_selection,
                                                        dst_replica_id);
+    auto src_view = TensorShardRangeView(src_own);
+    auto dst_view = TensorShardRangeView(dst_own);
 
-    // TODO: Support multi-shard replicas by decomposing into per-shard-position
-    // AllGathers. For now, require single shard per replica.
+    replicas.push_back(ReplicaPair{.src_own = std::move(src_own),
+                                   .src_view = std::move(src_view),
+                                   .dst_own = std::move(dst_own),
+                                   .dst_view = std::move(dst_view)});
+  }
+
+  return replicas;
+}
+
+//==============================================================================
+
+/// Emits CIR for the AllGather replication strategy.
+///
+/// Each of N replicas copies 1/N of the source, then an AllGather broadcasts
+/// the full data to all replicas.
+static cir::Program EmitAllGatherStrategy(const CopySpec& copy_spec,
+                                          const TensorMetadataPtr& src_meta,
+                                          const TensorMetadataPtr& dst_meta) {
+  auto num_src_replicas = static_cast<std::size_t>(src_meta->num_replicas);
+  auto num_dst_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
+
+  cir::Program program;
+
+  auto replicas = PairReplicas(copy_spec, src_meta, dst_meta);
+
+  // We derive the number of contiguous pieces from the view of the first
+  // replica. Each replica has the same sharding strategy, so this is correct.
+  auto num_pieces = replicas[0].dst_view.size();
+  ASSERT_VALID_RUNTIME(num_pieces > 0,
+                       "AllGather strategy requires a non-empty dst view");
+
+  // Emit one sparse pull + AllGather per piece.
+  std::size_t piece_selection_offset = 0;
+  std::size_t total_selection_elements = 0;
+  for (std::size_t i = 0; i < num_pieces; ++i) {
+    auto piece_size = (replicas[0].dst_view.begin() + i)->range.length;
+
     ASSERT_VALID_RUNTIME(
-        dst_own->GetNumShards() == 1,
-        "AllGather strategy currently requires single shard per replica, "
-        "but replica {} has {} shards. Consider using Naive strategy.",
-        r, dst_own->GetNumShards());
+        piece_size > 0 && piece_size % num_dst_replicas == 0,
+        "AllGather strategy requires piece {} size ({}) to be positive "
+        "and divisible by num_dst_replicas ({}). Consider using Naive "
+        "strategy.",
+        i, piece_size, num_dst_replicas);
 
-    replicas.push_back(ReplicaInfo{.src_own = src_own,
-                                   .src_view = TensorShardRangeView(src_own),
-                                   .dst_own = dst_own,
-                                   .dst_view = TensorShardRangeView(dst_own)});
+    auto chunk_size = piece_size / num_dst_replicas;
+
+    // Step 1: scatter piece i. Each dst replica r pulls chunk r of this
+    // piece from its round-robin src replica. The two-pointer walk handles
+    // src-side multi-range naturally.
+    for (std::size_t r = 0; r < num_dst_replicas; ++r) {
+      auto global_offset = piece_selection_offset + r * chunk_size;
+      EmitTwoPointerCopies(program, replicas[r].src_view, replicas[r].dst_view,
+                           global_offset, chunk_size);
+    }
+
+    // Step 2: AllGather for piece i
+    std::vector<Value> allgather_srcs;
+    std::vector<Value> allgather_dst_ins;
+    allgather_srcs.reserve(num_dst_replicas);
+    allgather_dst_ins.reserve(num_dst_replicas);
+    for (std::size_t r = 0; r < num_dst_replicas; ++r) {
+      const auto& piece = replicas[r].dst_view.begin() + i;
+      const auto& shard_meta = piece->metadata;
+      auto device = Device(shard_meta->owner, shard_meta->spec.device);
+      auto shard_ref = ref::ShardRef(shard_meta->id, shard_meta->spec.name,
+                                     shard_meta->owner);
+      auto dtype = shard_meta->spec.dtype;
+      auto piece_base = piece->range.start;
+      auto src_val = program.EmitView(
+          device, shard_ref,
+          Slice{.offset = piece_base + r * chunk_size, .size = chunk_size},
+          dtype);
+      auto dst_val = program.EmitView(
+          device, shard_ref,
+          Slice{.offset = piece_base, .size = piece_size}, dtype);
+      allgather_srcs.push_back(src_val);
+      allgather_dst_ins.push_back(dst_val);
+    }
+    (void)program.EmitAllGather(std::move(allgather_srcs),
+                                std::move(allgather_dst_ins));
+    piece_selection_offset += piece_size;
+    total_selection_elements += piece_size;
   }
-
-  // Step 1: Copy 1/N of source to each replica's chunk region.
-  // Replica r gets src elements [r*chunk_size, (r+1)*chunk_size) written
-  // to dst_replica_r at offset [r*chunk_size, (r+1)*chunk_size).
-  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
-    auto global_offset = r * chunk_size;
-    EmitTwoPointerCopies(program, replicas[r].src_view, replicas[r].dst_view,
-                         global_offset, chunk_size);
-  }
-
-  // Step 2: Emit AllGather across all replicas.
-  // For each replica r:
-  //   src  = view of dst_replica_r at [r*chunk_size, chunk_size]  (send region)
-  //   dst_in = view of dst_replica_r at [0, total_elements]       (full buffer)
-  std::vector<Value> allgather_srcs;
-  std::vector<Value> allgather_dst_ins;
-  allgather_srcs.reserve(num_dst_replicas);
-  allgather_dst_ins.reserve(num_dst_replicas);
-
-  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
-    const auto& shard_meta = replicas[r].dst_own->shard_mapping[0].second;
-    auto device = Device(shard_meta->owner, shard_meta->spec.device);
-    auto shard_ref =
-        ref::ShardRef(shard_meta->id, shard_meta->spec.name, shard_meta->owner);
-    auto dtype = shard_meta->spec.dtype;
-
-    auto src_val = program.EmitView(
-        device, shard_ref, Slice{.offset = r * chunk_size, .size = chunk_size},
-        dtype);
-    auto dst_val = program.EmitView(
-        device, shard_ref, Slice{.offset = 0, .size = total_elements}, dtype);
-
-    allgather_srcs.push_back(src_val);
-    allgather_dst_ins.push_back(dst_val);
-  }
-
-  (void)program.EmitAllGather(std::move(allgather_srcs),
-                              std::move(allgather_dst_ins));
 
   LOG_DEBUG(
-      "AllGather strategy: {} src replicas, {} dst replicas, chunk_size={}, "
-      "total={}",
-      num_src_replicas, num_dst_replicas, chunk_size, total_elements);
+      "AllGather strategy: {} src replicas, {} dst replicas, "
+      "{} pieces, selection_size={}",
+      num_src_replicas, num_dst_replicas, num_pieces, total_selection_elements);
+
+  return program;
+}
+
+//==============================================================================
+
+/// Emits CIR for the BatchedCopy replication strategy.
+///
+/// Each of N destination replicas pulls 1/N of the source into its own chunk
+/// slot within its destination buffer, then N*(N-1) inter-destination copies
+/// propagate every chunk across all destination replicas.
+///
+/// Unlike the AllGather strategy this does not need piece-level decomposition
+/// or rank-ordering: EmitTwoPointerCopies transparently handles multi-range
+/// and multi-shard src/dst views on both sides.
+static cir::Program EmitBatchedCopyStrategy(const CopySpec& copy_spec,
+                                            const TensorMetadataPtr& src_meta,
+                                            const TensorMetadataPtr& dst_meta) {
+  auto num_src_replicas = static_cast<std::size_t>(src_meta->num_replicas);
+  auto num_dst_replicas = static_cast<std::size_t>(dst_meta->num_replicas);
+
+  cir::Program program;
+
+  auto replicas = PairReplicas(copy_spec, src_meta, dst_meta);
+
+  // Selection size is the same across replicas (each replica holds a full
+  // copy of the selection).
+  std::size_t selection_size = 0;
+  for (const auto& shard_range : replicas[0].src_view) {
+    selection_size += shard_range.range.length;
+  }
+  ASSERT_VALID_RUNTIME(
+      selection_size > 0 && selection_size % num_dst_replicas == 0,
+      "BatchedCopy strategy requires selection elements ({}) to be positive "
+      "and divisible by num_dst_replicas ({}). Consider using Naive "
+      "strategy.",
+      selection_size, num_dst_replicas);
+  auto chunk_size = selection_size / num_dst_replicas;
+
+  // Step 1: scatter. Each dst replica r pulls chunk r from its round-robin
+  // src replica into its own dst view at selection offset
+  // [r*chunk_size, (r+1)*chunk_size).
+  for (std::size_t r = 0; r < num_dst_replicas; ++r) {
+    EmitTwoPointerCopies(program, replicas[r].src_view, replicas[r].dst_view,
+                         r * chunk_size, chunk_size);
+  }
+
+  // Step 2: batched gather among destination replicas. For every ordered
+  // (k, j) pair with k != j, copy chunk k from dst replica k to dst replica
+  // j at the same selection offset.
+  for (std::size_t k = 0; k < num_dst_replicas; ++k) {
+    for (std::size_t j = 0; j < num_dst_replicas; ++j) {
+      if (k == j) continue;
+      EmitTwoPointerCopies(program, replicas[k].dst_view, replicas[j].dst_view,
+                           k * chunk_size, chunk_size);
+    }
+  }
+
+  LOG_DEBUG(
+      "BatchedCopy strategy: {} src replicas, {} dst replicas, "
+      "selection_size={}, chunk_size={}",
+      num_src_replicas, num_dst_replicas, selection_size, chunk_size);
 
   return program;
 }
@@ -327,6 +411,9 @@ cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec, MetaStore& metastore,
 
   if (strategy == ReplicationStrategy::kAllGather) {
     return EmitAllGatherStrategy(copy_spec, src_meta, dst_meta);
+  }
+  if (strategy == ReplicationStrategy::kBatchedCopy) {
+    return EmitBatchedCopyStrategy(copy_spec, src_meta, dst_meta);
   }
   return EmitNaiveStrategy(copy_spec, src_meta, dst_meta);
 }
