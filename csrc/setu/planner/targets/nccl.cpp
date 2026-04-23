@@ -75,6 +75,24 @@ struct PendingCopy {
   std::uint32_t cir_op_index;  ///< Index in the CIR program, for depth lookup
 };
 
+/// Which LLC instruction a batched memcpy entry lowers to.
+enum class BatchKind { kCopy, kPull };
+
+/// A single batched one-sided memcpy entry accumulated on a participant's
+/// stream. Same-participant copies and P2P pulls share this shape; `kind`
+/// decides whether the run emits as `llc::Copy` or `llc::Pull` at flush
+/// time. `src_device` is only meaningful for `kPull` entries.
+struct BatchEntry {
+  BatchKind kind;
+  ref::BufferRef src_ref;
+  std::size_t src_offset_bytes;
+  ref::BufferRef dst_ref;
+  std::size_t dst_offset_bytes;
+  std::size_t count;
+  torch::Dtype dtype;
+  setu::commons::datatypes::DeviceId src_device;
+};
+
 //==============================================================================
 
 //==============================================================================
@@ -415,43 +433,45 @@ Plan NCCL::Run(const cir::Program& program,
   std::unordered_map<Participant, std::vector<WriteRegion>> pending_writes;
   std::uint32_t next_sync_id = 0;
 
-  std::unordered_map<Participant, std::vector<llc::CopyEntry>> copy_batches;
-  std::unordered_map<Participant, std::vector<llc::PullEntry>> pull_batches;
-
-  auto flush_copy_batches_for = [&](const Participant& part) {
-    auto it = copy_batches.find(part);
-    if (it != copy_batches.end() && !it->second.empty()) {
-      programs[part].emplace_back(llc::Copy(std::move(it->second)));
-      it->second.clear();
-    }
-  };
-
-  auto flush_pull_batches_for = [&](const Participant& part) {
-    auto it = pull_batches.find(part);
-    if (it != pull_batches.end() && !it->second.empty()) {
-      programs[part].emplace_back(llc::Pull(std::move(it->second)));
-      it->second.clear();
-    }
-  };
+  // Unified per-participant batch of one-sided memcpys (same-device copies
+  // and P2P pulls). `kind` on each entry decides whether it lowers to
+  // `llc::Copy` or `llc::Pull` at flush time. Within one un-flushed batch
+  // there are no inter-entry dependencies (`resolve_{cross_,}conflicts`
+  // flushes whenever a prior write is read), so the flush may partition by
+  // kind to maximize batching of same-kind runs.
+  std::unordered_map<Participant, std::vector<BatchEntry>> batches;
 
   auto flush_batches_for = [&](const Participant& part) {
-    flush_copy_batches_for(part);
-    flush_pull_batches_for(part);
+    auto it = batches.find(part);
+    if (it == batches.end() || it->second.empty()) return;
+    auto& entries = it->second;
+
+    std::vector<llc::CopyEntry> copy_run;
+    std::vector<llc::PullEntry> pull_run;
+    for (const auto& e : entries) {
+      if (e.kind == BatchKind::kCopy) {
+        copy_run.emplace_back(e.src_ref, e.src_offset_bytes, e.dst_ref,
+                              e.dst_offset_bytes, e.count, e.dtype);
+      } else {
+        pull_run.emplace_back(e.src_ref, e.src_offset_bytes, e.dst_ref,
+                              e.dst_offset_bytes, e.count, e.dtype,
+                              e.src_device);
+      }
+    }
+    if (!copy_run.empty()) {
+      programs[part].emplace_back(llc::Copy(std::move(copy_run)));
+    }
+    if (!pull_run.empty()) {
+      programs[part].emplace_back(llc::Pull(std::move(pull_run)));
+    }
+    entries.clear();
   };
 
-  auto flush_all_copy_batches = [&]() {
-    for (auto& [part, batch] : copy_batches) {
-      if (!batch.empty()) {
-        programs[part].emplace_back(llc::Copy(std::move(batch)));
-      }
-    }
-    copy_batches.clear();
-    for (auto& [part, batch] : pull_batches) {
-      if (!batch.empty()) {
-        programs[part].emplace_back(llc::Pull(std::move(batch)));
-      }
-    }
-    pull_batches.clear();
+  auto flush_all_batches = [&]() {
+    std::vector<Participant> parts_to_flush;
+    parts_to_flush.reserve(batches.size());
+    for (const auto& [p, _] : batches) parts_to_flush.push_back(p);
+    for (const auto& p : parts_to_flush) flush_batches_for(p);
   };
 
   // Emit Wait for each pending write that overlaps the read region.
@@ -541,22 +561,36 @@ Plan NCCL::Run(const cir::Program& program,
               c.dst_part.ToString());
     if (c.src_part == c.dst_part) {
       resolve_conflicts(c.src_part, c.src_ref, c.src_offset_bytes, op_size);
-      copy_batches[c.src_part].emplace_back(c.src_ref, c.src_offset_bytes,
-                                            c.dst_ref, c.dst_offset_bytes,
-                                            c.count, c.dtype);
+      batches[c.src_part].push_back(BatchEntry{
+          .kind = BatchKind::kCopy,
+          .src_ref = c.src_ref,
+          .src_offset_bytes = c.src_offset_bytes,
+          .dst_ref = c.dst_ref,
+          .dst_offset_bytes = c.dst_offset_bytes,
+          .count = c.count,
+          .dtype = c.dtype,
+          .src_device = {},
+      });
       if (dst_has_reader) {
-        flush_copy_batches_for(c.dst_part);
+        flush_batches_for(c.dst_part);
         record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
       }
     } else if (ctx.HasP2PAccess(c.src_part, c.dst_part)) {
       // P2P pull: batch for receiver, will use cudaMemcpyBatchAsync.
       resolve_cross_conflicts(c.src_part, c.dst_part, c.src_ref,
                               c.src_offset_bytes, op_size);
-      pull_batches[c.dst_part].emplace_back(
-          c.src_ref, c.src_offset_bytes, c.dst_ref, c.dst_offset_bytes,
-          c.count, c.dtype, c.src_part.device.GetDeviceId());
+      batches[c.dst_part].push_back(BatchEntry{
+          .kind = BatchKind::kPull,
+          .src_ref = c.src_ref,
+          .src_offset_bytes = c.src_offset_bytes,
+          .dst_ref = c.dst_ref,
+          .dst_offset_bytes = c.dst_offset_bytes,
+          .count = c.count,
+          .dtype = c.dtype,
+          .src_device = c.src_part.device.GetDeviceId(),
+      });
       if (dst_has_reader) {
-        flush_pull_batches_for(c.dst_part);
+        flush_batches_for(c.dst_part);
         record_write(c.dst_part, c.dst_ref, c.dst_offset_bytes, op_size);
       }
     } else {
@@ -582,7 +616,7 @@ Plan NCCL::Run(const cir::Program& program,
     }
   }
 
-  flush_all_copy_batches();
+  flush_all_batches();
 
   // === Step 4: Emit AllGather instructions ===
   for (const auto& ag : pending_all_gathers) {
