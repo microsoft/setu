@@ -98,7 +98,7 @@ void NCCLWorker::Setup() {
       std::format("setu::worker[gpu{}]", device_.LocalDeviceIndex()).c_str());
 
   // Enable P2P access to all other devices when peer memcpy is requested.
-  if (GetEnv<bool>("SETU_WORKER_USE_PEER_MEMCPY", false)) {
+  if (GetEnv<bool>("SETU_WORKER_USE_PEER_MEMCPY", true)) {
     int device_count = 0;
     CUDA_CHECK(cudaGetDeviceCount(&device_count));
     for (int i = 0; i < device_count; ++i) {
