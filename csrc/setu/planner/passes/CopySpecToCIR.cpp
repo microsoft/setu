@@ -398,7 +398,8 @@ cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec, MetaStore& metastore,
   }
 
   // Replicated destination: determine strategy from hints.
-  auto strategy = ReplicationStrategy::kAllGather;
+  // Default is batched copy.
+  auto strategy = ReplicationStrategy::kBatchedCopy;
   auto repl_hints = hints.GetHints<ReplicationHint>();
   for (const auto& hint : repl_hints) {
     if (hint.get().dst_name == copy_spec.dst_name) {
