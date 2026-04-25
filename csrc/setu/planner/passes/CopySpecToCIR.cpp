@@ -80,6 +80,23 @@ static void AdvanceIfConsumed(ShardBufferState& state,
 
 //==============================================================================
 
+/// Sum the lengths of every ShardBufferRange in the view.
+static std::size_t ViewTotalElements(const TensorShardRangeView& view) {
+  std::size_t total = 0;
+  for (const auto& r : view) total += r.range.length;
+  return total;
+}
+
+/// Dump every shard/range in the view. Used by the mismatch diagnostic
+/// below.
+static std::string DumpView(const TensorShardRangeView& view) {
+  std::string out;
+  for (const auto& r : view) {
+    out += std::format("\n    {}", r.ToString());
+  }
+  return out;
+}
+
 /// Two-pointer walk emitting View+Copy CIR ops for matched src/dst regions.
 ///
 /// Optionally windows to a sub-range: skips `global_offset` elements from both
@@ -92,6 +109,21 @@ static void EmitTwoPointerCopies(
     std::size_t global_length = std::numeric_limits<std::size_t>::max()) {
   ASSERT_VALID_RUNTIME(!src_view.empty() && !dst_view.empty(),
                        "Source and destination views must not be empty");
+
+  // Diagnostic: two-pointer walk assumes src_view and dst_view have
+  // the same total element count in [global_offset, global_offset +
+  // global_length).  If they diverge, the walk exits when the shorter
+  // one ends and triggers the "Only copied X of Y" assertion below.
+  // Print both views up front so the cause is traceable in logs.
+  auto src_total = ViewTotalElements(src_view);
+  auto dst_total = ViewTotalElements(dst_view);
+  if (src_total != dst_total) {
+    LOG_DEBUG(
+        "EmitTwoPointerCopies: view total mismatch (src={}, dst={},"
+        " global_offset={}, global_length={})\n  src_view:{}\n  dst_view:{}",
+        src_total, dst_total, global_offset, global_length, DumpView(src_view),
+        DumpView(dst_view));
+  }
 
   auto src_it = src_view.begin();
   auto dst_it = dst_view.begin();
@@ -378,6 +410,8 @@ static cir::Program EmitNaiveStrategy(const CopySpec& copy_spec,
 
 cir::Program CopySpecToCIR::Run(const CopySpec& copy_spec, MetaStore& metastore,
                                 const HintStore& hints) {
+  LOG_DEBUG("CopySpecToCIR::Run: {}", copy_spec.ToString());
+
   auto src_meta = metastore.GetTensorMetadata(copy_spec.src_name);
   auto dst_meta = metastore.GetTensorMetadata(copy_spec.dst_name);
 

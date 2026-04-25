@@ -91,15 +91,24 @@ struct TensorSelection {
     return false;
   }
 
+  /// Same dim names, same per-dim tensor size, and same per-dim count
+  /// of selected indices. The indices themselves may differ.
   [[nodiscard]] bool IsCompatible(TensorSelectionPtr other) const {
-    // First we need to check if the dimensions are the same
     if (indices.size() != other->indices.size()) {
       return false;
     }
 
-    // Now we need to make sure that the size of the dimensions are the same
     for (const auto& [dim_name, dim] : indices) {
-      if (dim.Size() != other->indices.at(dim_name).Size()) {
+      auto it = other->indices.find(dim_name);
+      if (it == other->indices.end()) {
+        return false;
+      }
+      const auto& other_dim = it->second;
+
+      if (dim.Size() != other_dim.Size()) {
+        return false;
+      }
+      if (dim.Count() != other_dim.Count()) {
         return false;
       }
     }

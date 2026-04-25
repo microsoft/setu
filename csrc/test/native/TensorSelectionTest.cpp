@@ -766,6 +766,105 @@ TEST(TensorSelectionLocalizeTest, LargeTensor_LocalizesCorrectly) {
   EXPECT_EQ(selected.front(), 100);
   EXPECT_EQ(selected.back(), 199);
 }
+
+//==============================================================================
+// IsCompatible tests
+//==============================================================================
+
+TEST(TensorSelectionIsCompatibleTest, SameShapeSameCount_Compatible) {
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 5, 10});
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["page"] = MakeBitset(100, {20, 30, 40});
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_TRUE(src->IsCompatible(dst));
+  EXPECT_TRUE(dst->IsCompatible(src));
+}
+
+TEST(TensorSelectionIsCompatibleTest, DifferentCountPerDim_NotCompatible) {
+  // Regression for the CopySpecToCIR "Only copied X of Y" crash: if
+  // the two selections have different counts on any dim, they cannot
+  // be copied element-for-element.
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 2, 3, 4});  // 4 pages
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["page"] = MakeBitset(100, {10, 20, 30});  // 3 pages
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_FALSE(src->IsCompatible(dst));
+  EXPECT_FALSE(dst->IsCompatible(src));
+}
+
+TEST(TensorSelectionIsCompatibleTest, DifferentDimSize_NotCompatible) {
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 2});
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["page"] = MakeBitset(200, {1, 2});
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_FALSE(src->IsCompatible(dst));
+}
+
+TEST(TensorSelectionIsCompatibleTest, DifferentDimNames_NotCompatible) {
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 2});
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["token"] = MakeBitset(100, {1, 2});
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_FALSE(src->IsCompatible(dst));
+}
+
+TEST(TensorSelectionIsCompatibleTest, DifferentNumberOfDims_NotCompatible) {
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 2});
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["page"] = MakeBitset(100, {1, 2});
+  dst_indices["head"] = MakeFullBitset(64);
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_FALSE(src->IsCompatible(dst));
+}
+
+TEST(TensorSelectionIsCompatibleTest, MultiDim_AllMatching_Compatible) {
+  const TensorName name = "tensor";
+
+  TensorIndicesMap src_indices;
+  src_indices["page"] = MakeBitset(100, {1, 2, 3});
+  src_indices["page_offset"] = MakeFullBitset(64);
+  src_indices["head_dim"] = MakeFullBitset(576);
+  auto src = std::make_shared<TensorSelection>(name, src_indices);
+
+  TensorIndicesMap dst_indices;
+  dst_indices["page"] = MakeBitset(100, {10, 20, 30});
+  dst_indices["page_offset"] = MakeFullBitset(64);
+  dst_indices["head_dim"] = MakeFullBitset(576);
+  auto dst = std::make_shared<TensorSelection>(name, dst_indices);
+
+  EXPECT_TRUE(src->IsCompatible(dst));
+}
+
 //==============================================================================
 }  // namespace setu::test::native
 //==============================================================================
