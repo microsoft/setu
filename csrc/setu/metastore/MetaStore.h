@@ -109,6 +109,19 @@ class MetaStore {
       const TensorName& tensor_name /*[in]*/) const;
 
   /**
+   * @brief Returns the total number of physical shards for a tensor,
+   * i.e. logical shards * num_replicas. This is the count of distinct
+   * registered shard ids (one per replica per logical shard) and the number
+   * of participants expected to take part in an SPMD operation over this
+   * tensor.
+   *
+   * @param tensor_name The name of the tensor to query
+   * @return Number of physical shards (0 if tensor not found)
+   */
+  [[nodiscard]] std::size_t GetNumPhysicalShardsForTensor(
+      const TensorName& tensor_name /*[in]*/) const;
+
+  /**
    * @brief Returns the tensor metadata for a fully registered tensor
    *
    * Builds and caches TensorMetadata when all shards have been registered.

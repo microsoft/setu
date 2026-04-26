@@ -191,10 +191,10 @@ void Handler::HandleSubmitCopyRequest(const Identity& node_agent_identity,
     return;
   }
 
-  // Expected = all src shards + all dst shards
+  // SPMD contract: every replica of every shard on each side submits.
   std::size_t expected_shards =
-      metastore_.GetNumShardsForTensor(request.copy_spec.src_name) +
-      metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
+      metastore_.GetNumPhysicalShardsForTensor(request.copy_spec.src_name) +
+      metastore_.GetNumPhysicalShardsForTensor(request.copy_spec.dst_name);
 
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,
@@ -220,9 +220,9 @@ void Handler::HandleSubmitPullRequest(const Identity& node_agent_identity,
     return;
   }
 
-  // For Pull: expected shards = number of DESTINATION shards only (one-sided)
+  // Pull is one-sided: only every replica of every destination shard submits.
   std::size_t expected_shards =
-      metastore_.GetNumShardsForTensor(request.copy_spec.dst_name);
+      metastore_.GetNumPhysicalShardsForTensor(request.copy_spec.dst_name);
 
   HandleShardSubmission(DispatchManager::ShardSubmission{
       request.shard_id, request.copy_spec,

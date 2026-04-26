@@ -182,6 +182,18 @@ std::int32_t MetaStore::GetNumReplicasForTensor(
   return 1;
 }
 //==============================================================================
+std::size_t MetaStore::GetNumPhysicalShardsForTensor(
+    const TensorName& tensor_name) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  auto it = registered_shards_data_.find(tensor_name);
+  if (it == registered_shards_data_.end()) {
+    return 0;
+  }
+  return it->second.unique_shard_count *
+         static_cast<std::size_t>(it->second.num_replicas);
+}
+//==============================================================================
 TensorMetadataPtr MetaStore::GetTensorMetadata(const TensorName& tensor_name) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
