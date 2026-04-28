@@ -50,27 +50,33 @@ class ReplicatedTensor:
 def _build_replicated_tensor(
     name: str,
     cluster_info: ClusterInfo,
-    nbytes: int,
+    num_pieces: int,
+    piece_elements: int,
     gpu_indices: List[int],
     dtype: torch.dtype = torch.float32,
 ) -> ReplicatedTensor:
     """Build a replicated tensor: full copy on each of the specified GPUs.
 
+    The tensor is shaped ``(2 * num_pieces, piece_elements)``. Selecting
+    every other index on the outer dim (see CLI) gives ``num_pieces``
+    non-contiguous pieces per replica. The trick mirrors the one in
+    ``experiments/pack/client.py``: same layout, but force the planner to
+    treat the per-replica copy as several disjoint runs in the shard
+    buffer so we can exercise multi-piece AllGather / BatchedCopy paths.
+
     Args:
         name: Tensor name.
         cluster_info: Running cluster description.
-        nbytes: Total tensor size in bytes (per replica).
+        num_pieces: Number of non-contiguous pieces per replica (>= 1).
+        piece_elements: Elements per piece.
         gpu_indices: GPU device indices (all on node 0).
         dtype: Element type.
     """
     node = cluster_info.nodes[0]
     node_id = uuid.UUID(node.node_id)
 
-    element_size = dtype.itemsize
-    assert nbytes % element_size == 0, (
-        f"Size {nbytes} bytes not divisible by element size {element_size}"
-    )
-    n_elements = nbytes // element_size
+    assert num_pieces >= 1, f"num_pieces must be >= 1, got {num_pieces}"
+    outer = 2 * num_pieces
     num_replicas = len(gpu_indices)
 
     participants = []
@@ -82,10 +88,13 @@ def _build_replicated_tensor(
         participant = Participant(node_id, node.devices[gpu_idx])
         participants.append(participant)
 
-        dim_spec = TensorDimSpec("dim0", n_elements, 0, n_elements)
+        dims = [
+            TensorDimSpec("piece", outer, 0, outer),
+            TensorDimSpec("data", piece_elements, 0, piece_elements),
+        ]
         shard = TensorShardSpec(
             name=name,
-            dims=[dim_spec],
+            dims=dims,
             dtype=dtype,
             device=participant.device,
             replica_id=replica_id,
@@ -94,7 +103,7 @@ def _build_replicated_tensor(
         shards.append(shard)
 
     mesh = Mesh(participants, axis_names=("replicas",))
-    per_shard_bytes = n_elements * element_size
+    per_shard_bytes = outer * piece_elements * dtype.itemsize
 
     return ReplicatedTensor(
         name=name,
@@ -111,7 +120,7 @@ def _build_replicated_tensor(
 # ---------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser(
-    description="Test AllGather vs Naive replication strategies"
+    description="Benchmark replicated tensor lowering strategies"
 )
 parser.add_argument("--cluster-info", type=str, required=True)
 parser.add_argument(
@@ -157,6 +166,15 @@ parser.add_argument(
     default=1,
     help="Number of warmup rounds (default: 1).",
 )
+parser.add_argument(
+    "--num-pieces",
+    type=int,
+    default=1,
+    help="Number of non-contiguous pieces per replica (default: 1). "
+    "When > 1 the tensor is shaped (2*num_pieces, piece_elements) and the "
+    "selection picks every other outer index, forcing the planner to see "
+    "num_pieces disjoint runs per replica. Mirrors experiments/pack.",
+)
 args = parser.parse_args()
 
 # Parse GPU indices
@@ -167,19 +185,40 @@ assert len(src_gpus) == len(dst_gpus), (
     f"got {len(src_gpus)} src vs {len(dst_gpus)} dst"
 )
 
+num_pieces = args.num_pieces
+assert num_pieces >= 1, f"--num-pieces must be >= 1, got {num_pieces}"
+
 # Connect to cluster
 cluster_info = connect_prespawned(args.cluster_info)
 print(cluster_info)
 
+dtype = torch.float32
+element_size = dtype.itemsize
 tensor_bytes = _parse_size(args.size)
+assert tensor_bytes % (num_pieces * element_size) == 0, (
+    f"Size {args.size} ({tensor_bytes} bytes) must be divisible by "
+    f"num_pieces * element_size ({num_pieces} * {element_size})"
+)
+piece_elements = tensor_bytes // (num_pieces * element_size)
+
+# Selection: every other index on the outer "piece" dim -> num_pieces pieces.
+piece_indices = list(range(0, 2 * num_pieces, 2))
+selections = {"piece": piece_indices}
 
 # Build replicated tensors
-src = _build_replicated_tensor("src_t", cluster_info, tensor_bytes, src_gpus)
-dst = _build_replicated_tensor("dst_t", cluster_info, tensor_bytes, dst_gpus)
+src = _build_replicated_tensor(
+    "src_t", cluster_info, num_pieces, piece_elements, src_gpus, dtype
+)
+dst = _build_replicated_tensor(
+    "dst_t", cluster_info, num_pieces, piece_elements, dst_gpus, dtype
+)
 
 print(f"Source GPUs: {src_gpus} ({len(src_gpus)} replicas)")
 print(f"Dest GPUs:   {dst_gpus} ({len(dst_gpus)} replicas)")
-print(f"Tensor size: {tensor_bytes / (1 << 20):.0f} MiB per replica")
+print(f"Selected:    {tensor_bytes / (1 << 20):.0f} MiB per replica "
+      f"({num_pieces} piece(s) of {piece_elements} elements)")
+print(f"Allocated:   {2 * tensor_bytes / (1 << 20):.0f} MiB per replica "
+      f"(tensor shape ({2 * num_pieces}, {piece_elements}))")
 print()
 
 for run_idx in range(args.runs):
@@ -198,6 +237,7 @@ for run_idx in range(args.runs):
         dst=dst,
         copy_mode=CopyMode("pull"),
         init_value=10,
+        selections=selections,
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
@@ -207,6 +247,27 @@ for run_idx in range(args.runs):
     print("=" * 10, "Naive Strategy", "=" * 10)
     print(result.pretty_print())
     result.dump_csv(os.path.join(run_dir, "naive"))
+
+    # --- BatchedCopy strategy ---
+    schedule_allgather = Schedule(
+        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.BatchedCopy)]
+    )
+    result = run_experiment(
+        cluster_info=cluster_info,
+        src=src,
+        dst=dst,
+        copy_mode=CopyMode("pull"),
+        init_value=10,
+        selections=selections,
+        n_copy_rounds=args.n_copy_rounds,
+        n_warmup_rounds=args.n_warmup_rounds,
+        blocking=False,
+
+        hints=schedule_allgather.hints,
+    )
+    print("=" * 10, "BatchedCopy Strategy", "=" * 10)
+    print(result.pretty_print())
+    result.dump_csv(os.path.join(run_dir, "allgather"))
 
     # --- AllGather strategy ---
     schedule_allgather = Schedule(
@@ -218,6 +279,7 @@ for run_idx in range(args.runs):
         dst=dst,
         copy_mode=CopyMode("pull"),
         init_value=10,
+        selections=selections,
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
