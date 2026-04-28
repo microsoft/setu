@@ -302,10 +302,15 @@ void Handler::HandleExecuteResponse(const Identity& /*node_identity*/,
         std::chrono::duration<double, std::milli>(
             std::chrono::high_resolution_clock::now() - state->start_time)
             .count();
-    // Compute transfer size from the source selection
-    const auto* tensor_spec = metastore_.GetTensorSpec(state->spec.src_name);
-    std::uint64_t total_bytes = state->spec.src_selection->NumElements() *
-                                torch::elementSize(tensor_spec->dtype);
+    // Lower bound on bytes any algorithm must move: the size of the
+    // destination region, including its replication factor.
+    const auto* dst_tensor_spec =
+        metastore_.GetTensorSpec(state->spec.dst_name);
+    std::uint64_t total_bytes =
+        state->spec.dst_selection->NumElements() *
+        torch::elementSize(dst_tensor_spec->dtype) *
+        static_cast<std::uint64_t>(
+            metastore_.GetNumReplicasForTensor(state->spec.dst_name));
 
     setu::telemetry::E2EMetrics e2e;
     e2e.copy_op_id = response.copy_op_id;
