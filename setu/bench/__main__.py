@@ -13,13 +13,17 @@ Usage::
     python -m setu.bench --topo nccl_topo.xml
     python -m setu.bench --src 0:0-1 --dst 0:0-3
 
+    # YAML-driven (replays a setu_metrics.json record):
+    python -m setu.bench --tensor-spec tensor_spec.yaml \\
+                         --selections selections.yaml
+
     # pre-spawned cluster:
     # Terminal 1:
     python -m setu.cluster.ray --dump-info cluster.yaml
     # Terminal 2:
     python -m setu.bench --cluster-info cluster.yaml
 
-Device spec format for --src / --dst:
+Device spec format for --src / --dst (also used by tensor_spec.yaml):
     "0"       — all devices on node 0
     "0:2"     — node 0, device 2
     "0:1-3"   — node 0, devices 1, 2, 3 (range)
@@ -127,6 +131,23 @@ def parse_args():
         help="Dest device specs, e.g. '0:0-3' or '0'. Default: all devices on node 0.",
     )
 
+    # YAML-driven path: tensor layout + selections.  Mutually exclusive with
+    # --size / --src / --dst.
+    parser.add_argument(
+        "--tensor-spec",
+        type=str,
+        default=None,
+        help="Path to tensor_spec.yaml describing src/dst tensors, dtype, "
+        "dims, and per-side mesh+partition layout. Requires --selections.",
+    )
+    parser.add_argument(
+        "--selections",
+        type=str,
+        default=None,
+        help="Path to selections.yaml with one copy entry "
+        "(src/dst per-dim selections). Requires --tensor-spec.",
+    )
+
     # Experiment parameters
     parser.add_argument(
         "--rounds",
@@ -200,7 +221,27 @@ def main():
 
     setup_logging()
 
-    tensor_bytes = parse_num_bytes(args.size)
+    # --tensor-spec / --selections are mutually exclusive with the
+    # --size / --src / --dst legacy path; both must be given together.
+    yaml_mode = args.tensor_spec is not None or args.selections is not None
+    if yaml_mode:
+        if args.tensor_spec is None or args.selections is None:
+            raise SystemExit("--tensor-spec and --selections must be given together")
+        explicit_legacy = []
+        if args.src is not None:
+            explicit_legacy.append("--src")
+        if args.dst is not None:
+            explicit_legacy.append("--dst")
+        # --size has a default ('256M'), so only flag it if the user passed it
+        # explicitly.  Detect by checking sys.argv.
+        if "--size" in sys.argv:
+            explicit_legacy.append("--size")
+        if explicit_legacy:
+            raise SystemExit(
+                f"--tensor-spec/--selections are mutually exclusive with "
+                f"{', '.join(explicit_legacy)}"
+            )
+
     copy_mode = CopyMode(args.mode)
 
     # Metrics are always enabled (required for bandwidth reporting).
@@ -224,22 +265,43 @@ def main():
         )
 
     print("=== Setu copy benchmark ===")
-    print(
-        f"Nodes: {cluster_info.num_nodes}, "
-        f"GPUs: {cluster_info.total_gpus}, "
-        f"tensor: {tensor_bytes / (1 << 20):.0f} MiB"
-    )
-    print(f"Src: {args.src or 'all of node 0'}")
-    print(f"Dst: {args.dst or 'all of node 0'}")
+    print(f"Nodes: {cluster_info.num_nodes}, GPUs: {cluster_info.total_gpus}")
     blocking_str = "blocking" if args.blocking else "non-blocking"
-    print(
-        f"Mode: {copy_mode.value}, rounds: {args.rounds} + {args.warmup_rounds} warmup, {blocking_str}"
-    )
-    print()
+
+    src_selections = None
+    dst_selections = None
 
     try:
-        src = build_sharded_tensor("src_t", cluster_info, tensor_bytes, args.src)
-        dst = build_sharded_tensor("dst_t", cluster_info, tensor_bytes, args.dst)
+        if yaml_mode:
+            from setu.bench.copy_spec import load_selections, load_tensor_spec
+
+            src, dst = load_tensor_spec(args.tensor_spec, cluster_info)
+            copies = load_selections(args.selections)
+            src_selections = copies.src
+            dst_selections = copies.dst
+            print(f"Tensor spec: {args.tensor_spec}")
+            print(f"Selections:  {args.selections}")
+            print(
+                f"Src tensor: {src.name}, mesh_shape={src.mesh.shape}, "
+                f"axes={src.mesh.axis_names}, partition={src.partition}"
+            )
+            print(
+                f"Dst tensor: {dst.name}, mesh_shape={dst.mesh.shape}, "
+                f"axes={dst.mesh.axis_names}, partition={dst.partition}"
+            )
+        else:
+            tensor_bytes = parse_num_bytes(args.size)
+            print(f"Tensor: {tensor_bytes / (1 << 20):.0f} MiB")
+            print(f"Src: {args.src or 'all of node 0'}")
+            print(f"Dst: {args.dst or 'all of node 0'}")
+            src = build_sharded_tensor("src_t", cluster_info, tensor_bytes, args.src)
+            dst = build_sharded_tensor("dst_t", cluster_info, tensor_bytes, args.dst)
+
+        print(
+            f"Mode: {copy_mode.value}, rounds: {args.rounds} + "
+            f"{args.warmup_rounds} warmup, {blocking_str}"
+        )
+        print()
 
         result = run_experiment(
             cluster_info=cluster_info,
@@ -247,6 +309,8 @@ def main():
             dst=dst,
             copy_mode=copy_mode,
             init_value=args.init_value,
+            src_selections=src_selections,
+            dst_selections=dst_selections,
             timeout=args.timeout,
             n_copy_rounds=args.rounds,
             n_warmup_rounds=args.warmup_rounds,
