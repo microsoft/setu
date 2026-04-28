@@ -34,7 +34,6 @@ class ShardedTensor:
         return shard_tensor(self.name, self.dims, self.mesh, self.partition, self.dtype)
 
 
-
 def shard_tensor(
     name: str,
     dims: List[TensorDim],
@@ -43,6 +42,12 @@ def shard_tensor(
     dtype: torch.dtype = torch.float32,
 ) -> List[TensorShardSpec]:
     """Produce one TensorShardSpec per mesh position from a Mesh + PartitionSpec.
+
+    Mesh axes that are not referenced by any tensor dim in ``partition`` are
+    treated as replica axes: the tensor is fully replicated along them.  The
+    product of unused-axis sizes becomes ``num_replicas``, and each shard's
+    ``replica_id`` is the row-major linearisation of its position over the
+    unused-axis components of the mesh index.
 
     Args:
         name: Tensor name.
@@ -66,12 +71,22 @@ def shard_tensor(
         raise ValueError(f"Duplicate axis names in PartitionSpec: {partition.specs}")
 
     # Validate all axis names exist in mesh
-    for axis in used_axes:
+    used_axes_set = set(used_axes)
+    for axis in used_axes_set:
         if axis not in mesh.axis_names:
             raise ValueError(
                 f"Axis {axis!r} in PartitionSpec not found in mesh "
                 f"axes {mesh.axis_names}"
             )
+
+    # Mesh axes not referenced by any dim become replica axes.
+    unused_axis_indices = [
+        i for i, name_ in enumerate(mesh.axis_names) if name_ not in used_axes_set
+    ]
+    unused_axis_sizes = [mesh.shape[i] for i in unused_axis_indices]
+    num_replicas = 1
+    for sz in unused_axis_sizes:
+        num_replicas *= sz
 
     shards: List[TensorShardSpec] = []
     devices_array = mesh._devices
@@ -93,9 +108,18 @@ def shard_tensor(
                 end = start + chunk
                 dim_specs.append(TensorDimSpec(dim.name, dim.size, start, end))
 
+        replica_id = 0
+        for ai, sz in zip(unused_axis_indices, unused_axis_sizes):
+            replica_id = replica_id * sz + idx[ai]
+
         shards.append(
             TensorShardSpec(
-                name=name, dims=dim_specs, dtype=dtype, device=participant.device
+                name=name,
+                dims=dim_specs,
+                dtype=dtype,
+                device=participant.device,
+                replica_id=replica_id,
+                num_replicas=num_replicas,
             )
         )
 
