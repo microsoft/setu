@@ -634,7 +634,8 @@ class TestExperimentRunnerSingleNode:
                 dst=dst,
                 copy_mode=CopyMode.PULL,
                 init_value=3.0,
-                selections={"dim0": slice(0, self.TENSOR_SIZE)},
+                src_selections={"dim0": slice(0, self.TENSOR_SIZE)},
+                dst_selections={"dim0": slice(0, self.TENSOR_SIZE)},
             )
             self._assert_success(result, src, dst)
 
@@ -669,6 +670,7 @@ class TestExperimentRunnerSingleNode:
                 dst=dst,
                 copy_mode=CopyMode.COPY,
                 init_value=3.0,
-                selections={"dim0": slice(0, self.TENSOR_SIZE)},
+                src_selections={"dim0": slice(0, self.TENSOR_SIZE)},
+                dst_selections={"dim0": slice(0, self.TENSOR_SIZE)},
             )
             self._assert_success(result, src, dst)

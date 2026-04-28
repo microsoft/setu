@@ -39,7 +39,8 @@ def _source_body(
     init_value,
     copy_mode,
     dst_name,
-    selections,
+    src_selections,
+    dst_selections,
     n_warmup_rounds,
     n_copy_rounds,
     blocking,
@@ -112,13 +113,17 @@ def _source_body(
             effective_pass_names = sched.passes
         src_selection = client.select(shard_spec.name)
         dst_selection = client.select(dst_name)
-        if selections is not None:
-            for dim_name, indices in selections.items():
+        if src_selections is not None:
+            for dim_name, indices in src_selections.items():
                 src_selection = src_selection.where(dim_name, indices)
+        if dst_selections is not None:
+            for dim_name, indices in dst_selections.items():
                 dst_selection = dst_selection.where(dim_name, indices)
         op_id = client.copy(
-            src_selection, dst_selection,
-            hints=effective_hints, pass_names=effective_pass_names,
+            src_selection,
+            dst_selection,
+            hints=effective_hints,
+            pass_names=effective_pass_names,
         )
         assert op_id is not None, "Copy operation returned None"
         return op_id
@@ -197,7 +202,8 @@ def _dest_body(
     src_name,
     copy_mode,
     value_to_match,
-    selections,
+    src_selections,
+    dst_selections,
     n_warmup_rounds,
     n_copy_rounds,
     blocking,
@@ -251,19 +257,25 @@ def _dest_body(
             effective_pass_names = sched.passes
         src_selection = client.select(src_name)
         dst_selection = client.select(shard_spec.name)
-        if selections is not None:
-            for dim_name, indices in selections.items():
+        if src_selections is not None:
+            for dim_name, indices in src_selections.items():
                 src_selection = src_selection.where(dim_name, indices)
+        if dst_selections is not None:
+            for dim_name, indices in dst_selections.items():
                 dst_selection = dst_selection.where(dim_name, indices)
         if copy_mode == CopyMode.PULL:
             op_id = client.pull(
-                src_selection, dst_selection,
-                hints=effective_hints, pass_names=effective_pass_names,
+                src_selection,
+                dst_selection,
+                hints=effective_hints,
+                pass_names=effective_pass_names,
             )
         else:
             op_id = client.copy(
-                src_selection, dst_selection,
-                hints=effective_hints, pass_names=effective_pass_names,
+                src_selection,
+                dst_selection,
+                hints=effective_hints,
+                pass_names=effective_pass_names,
             )
         assert op_id is not None, "Copy operation returned None"
         return op_id
@@ -324,16 +336,24 @@ def _dest_body(
             per_round,
         )
 
-    # Verify values after all rounds complete
+    # Verify values after all rounds complete.  Narrow the readback with the
+    # dst-side selection only: src/dst selections must be IsCompatible (same
+    # NumElements per dim) so the dst region is the source of truth for what
+    # was written.
     t_read = time.monotonic()
     with client.read(shard_ref) as tensor:
         view = tensor
-        if selections is not None:
+        if dst_selections is not None:
             for dim_idx, dim in enumerate(shard_spec.dims):
-                if dim.name in selections:
-                    idx = torch.tensor(
-                        selections[dim.name], device=tensor.device
-                    )
+                if dim.name in dst_selections:
+                    indices = dst_selections[dim.name]
+                    if isinstance(indices, slice):
+                        flat = list(range(indices.start, indices.stop))
+                    elif isinstance(indices, int):
+                        flat = [indices]
+                    else:
+                        flat = list(indices)
+                    idx = torch.tensor(flat, device=tensor.device)
                     view = view.index_select(dim_idx, idx)
         actual_value = view.mean().item()
         values_match = abs(actual_value - value_to_match) < 1e-5
@@ -416,7 +436,8 @@ def run_experiment(
     dst: ShardedTensor,
     copy_mode: CopyMode = CopyMode.PULL,
     init_value: float = 42.0,
-    selections: Optional[Dict[str, DimSelection]] = None,
+    src_selections: Optional[Dict[str, DimSelection]] = None,
+    dst_selections: Optional[Dict[str, DimSelection]] = None,
     timeout: float = 60.0,
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
@@ -436,8 +457,13 @@ def run_experiment(
         dst: ShardedTensor describing the destination.
         copy_mode: PULL (one-sided) or COPY (two-sided).
         init_value: Value to fill source tensors with.
-        selections: Optional dim name -> selection for partial copies.
-            Each value is either a ``set`` of integer indices or a ``slice``.
+        src_selections: Optional dim name -> selection narrowing the src
+            side.  Each value is an int, list of ints, or slice (mirrors
+            ``TensorSelection.where()``).
+        dst_selections: Optional dim name -> selection narrowing the dst
+            side.  Same value forms as ``src_selections``.  Per-dim element
+            counts must match the src side or the engine will reject the
+            copy as incompatible.
         timeout: Timeout in seconds for the entire experiment.
         n_copy_rounds: Number of *measured* copy rounds to execute.
         n_warmup_rounds: Number of warmup rounds executed before the measured
@@ -460,11 +486,13 @@ def run_experiment(
     n_total = len(src_shards) + len(dst_shards)
 
     logger.debug(
-        "run_experiment: mode=%s init_value=%s selections=%s timeout=%s "
-        "n_copy_rounds=%d n_warmup_rounds=%d n_total_clients=%d",
+        "run_experiment: mode=%s init_value=%s src_selections=%s "
+        "dst_selections=%s timeout=%s n_copy_rounds=%d n_warmup_rounds=%d "
+        "n_total_clients=%d",
         copy_mode,
         init_value,
-        selections,
+        src_selections,
+        dst_selections,
         timeout,
         n_copy_rounds,
         n_warmup_rounds,
@@ -532,7 +560,8 @@ def run_experiment(
                 init_value=init_value,
                 copy_mode=copy_mode,
                 dst_name=dst.name,
-                selections=selections,
+                src_selections=src_selections,
+                dst_selections=dst_selections,
                 n_warmup_rounds=n_warmup_rounds,
                 n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
@@ -553,7 +582,8 @@ def run_experiment(
                 src_name=src.name,
                 copy_mode=copy_mode,
                 value_to_match=init_value,
-                selections=selections,
+                src_selections=src_selections,
+                dst_selections=dst_selections,
                 n_warmup_rounds=n_warmup_rounds,
                 n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
