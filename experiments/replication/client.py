@@ -128,19 +128,37 @@ parser.add_argument(
     type=str,
     default="256M",
     help="Total tensor size in bytes, e.g. '256M', '1G', '512K'. "
-    "Suffix: K=KiB, M=MiB, G=GiB (default: 256 MiB).",
+    "Suffix: K=KiB, M=MiB, G=GiB (default: 256 MiB). "
+    "Ignored in --tensor-spec mode.",
 )
 parser.add_argument(
     "--src",
     type=str,
-    required=True,
-    help="Comma-separated GPU indices for source replicas (e.g. '0,1' or '0,1,2,3').",
+    default=None,
+    help="Comma-separated GPU indices for source replicas (e.g. '0,1' or '0,1,2,3'). "
+    "Required unless --tensor-spec / --selections is given.",
 )
 parser.add_argument(
     "--dst",
     type=str,
-    required=True,
-    help="Comma-separated GPU indices for destination replicas (e.g. '2,3' or '4,5,6,7').",
+    default=None,
+    help="Comma-separated GPU indices for destination replicas (e.g. '2,3' or '4,5,6,7'). "
+    "Required unless --tensor-spec / --selections is given.",
+)
+parser.add_argument(
+    "--tensor-spec",
+    type=str,
+    default=None,
+    help="Path to tensor_spec.yaml describing src/dst tensors, dtype, dims, "
+    "and per-side mesh+partition layout. Requires --selections. When given, "
+    "--src / --dst / --size / --num-pieces are ignored.",
+)
+parser.add_argument(
+    "--selections",
+    type=str,
+    default=None,
+    help="Path to selections.yaml with one copy entry (src/dst per-dim "
+    "selections). Requires --tensor-spec.",
 )
 parser.add_argument(
     "--runs",
@@ -177,59 +195,90 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# Parse GPU indices
-src_gpus = [int(g) for g in args.src.split(",")]
-dst_gpus = [int(g) for g in args.dst.split(",")]
-assert len(src_gpus) == len(dst_gpus), (
-    f"src and dst must have the same number of GPUs: "
-    f"got {len(src_gpus)} src vs {len(dst_gpus)} dst"
-)
-
-num_pieces = args.num_pieces
-assert num_pieces >= 1, f"--num-pieces must be >= 1, got {num_pieces}"
-
 # Connect to cluster
 cluster_info = connect_prespawned(args.cluster_info)
 print(cluster_info)
 
-dtype = torch.float32
-element_size = dtype.itemsize
-tensor_bytes = _parse_size(args.size)
-assert tensor_bytes % (num_pieces * element_size) == 0, (
-    f"Size {args.size} ({tensor_bytes} bytes) must be divisible by "
-    f"num_pieces * element_size ({num_pieces} * {element_size})"
-)
-piece_elements = tensor_bytes // (num_pieces * element_size)
+# Two input modes:
+#   1) tensor_spec.yaml + selections.yaml (replays a recorded workload)
+#   2) CLI-driven synthetic ReplicatedTensor (the original mode)
+yaml_mode = args.tensor_spec is not None or args.selections is not None
+if yaml_mode:
+    if args.tensor_spec is None or args.selections is None:
+        parser.error("--tensor-spec and --selections must be given together")
+    from setu.bench.copy_spec import load_selections, load_tensor_spec
 
-# Selection: every other index on the outer "piece" dim -> num_pieces pieces.
-piece_indices = list(range(0, 2 * num_pieces, 2))
-selections = {"piece": piece_indices}
+    src, dst = load_tensor_spec(args.tensor_spec, cluster_info)
+    copies = load_selections(args.selections)
+    src_selections = copies.src
+    dst_selections = copies.dst
+    print(f"Tensor spec: {args.tensor_spec}")
+    print(f"Selections:  {args.selections}")
+    print(
+        f"Src tensor: {src.name}, mesh_shape={src.mesh.shape}, "
+        f"axes={src.mesh.axis_names}, partition={src.partition}"
+    )
+    print(
+        f"Dst tensor: {dst.name}, mesh_shape={dst.mesh.shape}, "
+        f"axes={dst.mesh.axis_names}, partition={dst.partition}"
+    )
+    print()
+else:
+    if args.src is None or args.dst is None:
+        parser.error(
+            "--src and --dst are required when --tensor-spec/--selections "
+            "is not given"
+        )
+    # Parse GPU indices
+    src_gpus = [int(g) for g in args.src.split(",")]
+    dst_gpus = [int(g) for g in args.dst.split(",")]
+    assert len(src_gpus) == len(dst_gpus), (
+        f"src and dst must have the same number of GPUs: "
+        f"got {len(src_gpus)} src vs {len(dst_gpus)} dst"
+    )
 
-# Build replicated tensors
-src = _build_replicated_tensor(
-    "src_t", cluster_info, num_pieces, piece_elements, src_gpus, dtype
-)
-dst = _build_replicated_tensor(
-    "dst_t", cluster_info, num_pieces, piece_elements, dst_gpus, dtype
-)
+    num_pieces = args.num_pieces
+    assert num_pieces >= 1, f"--num-pieces must be >= 1, got {num_pieces}"
 
-print(f"Source GPUs: {src_gpus} ({len(src_gpus)} replicas)")
-print(f"Dest GPUs:   {dst_gpus} ({len(dst_gpus)} replicas)")
-print(f"Selected:    {tensor_bytes / (1 << 20):.0f} MiB per replica "
-      f"({num_pieces} piece(s) of {piece_elements} elements)")
-print(f"Allocated:   {2 * tensor_bytes / (1 << 20):.0f} MiB per replica "
-      f"(tensor shape ({2 * num_pieces}, {piece_elements}))")
-print()
+    dtype = torch.float32
+    element_size = dtype.itemsize
+    tensor_bytes = _parse_size(args.size)
+    assert tensor_bytes % (num_pieces * element_size) == 0, (
+        f"Size {args.size} ({tensor_bytes} bytes) must be divisible by "
+        f"num_pieces * element_size ({num_pieces} * {element_size})"
+    )
+    piece_elements = tensor_bytes // (num_pieces * element_size)
+
+    # Selection: every other index on the outer "piece" dim -> num_pieces pieces.
+    piece_indices = list(range(0, 2 * num_pieces, 2))
+    src_selections = {"piece": piece_indices}
+    dst_selections = {"piece": piece_indices}
+
+    # Build replicated tensors
+    src = _build_replicated_tensor(
+        "src_t", cluster_info, num_pieces, piece_elements, src_gpus, dtype
+    )
+    dst = _build_replicated_tensor(
+        "dst_t", cluster_info, num_pieces, piece_elements, dst_gpus, dtype
+    )
+
+    print(f"Source GPUs: {src_gpus} ({len(src_gpus)} replicas)")
+    print(f"Dest GPUs:   {dst_gpus} ({len(dst_gpus)} replicas)")
+    print(f"Selected:    {tensor_bytes / (1 << 20):.0f} MiB per replica "
+          f"({num_pieces} piece(s) of {piece_elements} elements)")
+    print(f"Allocated:   {2 * tensor_bytes / (1 << 20):.0f} MiB per replica "
+          f"(tensor shape ({2 * num_pieces}, {piece_elements}))")
+    print()
 
 for run_idx in range(args.runs):
     run_dir = os.path.join(args.output_dir, str(run_idx))
     os.makedirs(run_dir, exist_ok=True)
 
-    print(f"\n{'='*10} Run {run_idx} | src={src_gpus} dst={dst_gpus} {'='*10}")
+    print(f"\n{'='*10} Run {run_idx} | src={src.name} dst={dst.name} {'='*10}")
 
     # --- Naive strategy ---
     schedule_naive = Schedule(
-        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.Naive)]
+        hints=[ReplicationHint(dst_name=dst.name, strategy=ReplicationStrategy.Naive)]
     )
     result = run_experiment(
         cluster_info=cluster_info,
@@ -237,7 +286,8 @@ for run_idx in range(args.runs):
         dst=dst,
         copy_mode=CopyMode("pull"),
         init_value=10,
-        selections=selections,
+        src_selections=src_selections,
+        dst_selections=dst_selections,
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
@@ -250,7 +300,7 @@ for run_idx in range(args.runs):
 
     # --- BatchedCopy strategy ---
     schedule_allgather = Schedule(
-        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.BatchedCopy)]
+        hints=[ReplicationHint(dst_name=dst.name, strategy=ReplicationStrategy.BatchedCopy)]
     )
     result = run_experiment(
         cluster_info=cluster_info,
@@ -258,7 +308,8 @@ for run_idx in range(args.runs):
         dst=dst,
         copy_mode=CopyMode("pull"),
         init_value=10,
-        selections=selections,
+        src_selections=src_selections,
+        dst_selections=dst_selections,
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
@@ -271,7 +322,7 @@ for run_idx in range(args.runs):
 
     # --- AllGather strategy ---
     schedule_allgather = Schedule(
-        hints=[ReplicationHint(dst_name="dst_t", strategy=ReplicationStrategy.AllGather)]
+        hints=[ReplicationHint(dst_name=dst.name, strategy=ReplicationStrategy.AllGather)]
     )
     result = run_experiment(
         cluster_info=cluster_info,
@@ -279,7 +330,8 @@ for run_idx in range(args.runs):
         dst=dst,
         copy_mode=CopyMode("pull"),
         init_value=10,
-        selections=selections,
+        src_selections=src_selections,
+        dst_selections=dst_selections,
         n_copy_rounds=args.n_copy_rounds,
         n_warmup_rounds=args.n_warmup_rounds,
         blocking=False,
