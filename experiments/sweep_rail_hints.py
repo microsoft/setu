@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """
-Sweep data sizes with rail-aligned routing hints on a 2-node cluster.
+Sweep data sizes with rail-aligned bandwidth-aggregation hints on a
+2-node cluster.
 
-For each register size (outer loop) and data size (inner loop), runs
-two variants:
-  - baseline: no hints (planner chooses paths)
-  - rail_hints: rail-aligned hints forcing 0:src → 0:i → 1:i
+For each register size (outer loop) and data size (inner loop), runs:
+  - baseline: bandwidth_aggregation pass only, no hints (planner
+    aggregates over topology-discovered edge-disjoint paths)
+  - rail_hints: bandwidth_aggregation only, with rail-aligned
+    BandwidthHints forcing 0:src → 0:i → 1:i, one path per (src, dst),
+    weight 1.0
+  - rail_pipe_<chunk>: rail_hints plus the pipelining pass with a
+    PipelineChunkSizeHint for each chunk size in --pipeline-chunks
 
 Requires a 2-node Ray cluster (--ray-address).  Spawns its own Setu
-Cluster with shortest_path_routing pass enabled.
+Cluster with both bandwidth_aggregation and pipelining passes
+registered; each variant selects which to run via Schedule.passes.
 
 Usage::
 
     python experiments/sweep_rail_hints.py \
         --ray-address ray://10.0.0.1:10001 \
-        --output-dir results/rail_hints
+        --output-dir results/rail_hints \
+        --pipeline-chunks 1M 4M 16M
 """
 
 import argparse
@@ -28,8 +35,14 @@ from typing import List
 import ray
 
 from setu._commons.datatypes import TensorDim
-from setu._coordinator import Link, Participant, Path as RoutePath, RoutingHint
-from setu.bench.cluster_setup import build_sharded_tensor
+from setu._coordinator import (
+    BandwidthHint,
+    Link,
+    Participant,
+    Path as RoutePath,
+    PipelineChunkSizeHint,
+)
+from setu.bench.cluster_setup import build_sharded_tensor, connect_prespawned
 from setu.bench.result import CopyMode
 from setu.bench.runner import run_experiment
 from setu.cluster.ray.cluster import Cluster
@@ -42,7 +55,19 @@ def parse_args():
         description="Sweep data sizes with rail-aligned routing hints"
     )
     parser.add_argument(
-        "--ray-address", required=True, help="Ray head endpoint"
+        "--ray-address",
+        default=None,
+        help="Ray head endpoint. Required unless --cluster-info is given, "
+        "in which case Ray is reached via the YAML's ray_address.",
+    )
+    parser.add_argument(
+        "--cluster-info",
+        default=None,
+        help="Path to a cluster.yaml dumped by setu.cluster.ray (or the "
+        "boot_virtual_cluster helper). When set, skip the in-script Cluster() "
+        "spawn and connect to that pre-spawned cluster. The outer register-"
+        "size loop collapses to a single iteration since register size is "
+        "fixed at boot time.",
     )
     parser.add_argument(
         "--output-dir", required=True, help="Directory for results"
@@ -117,6 +142,16 @@ def parse_args():
         metavar="KEY=VALUE",
         help="Additional env vars to set on actors (repeatable).",
     )
+    parser.add_argument(
+        "--pipeline-chunks",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Pipeline chunk sizes to sweep (e.g. '1M 4M 16M'). Each value "
+        "produces a rail_pipe_<size> variant using the pipelining pass with "
+        "a PipelineChunkSizeHint. Empty list (default) skips pipelining "
+        "variants.",
+    )
     return parser.parse_args()
 
 
@@ -143,7 +178,12 @@ def _build_size_list(begin: int, end: int, factor: int) -> List[int]:
 
 
 def _build_rail_hints(cluster_info):
-    """Build rail-aligned routing hints for src on node0:dev0 → all devs on node1."""
+    """Build rail-aligned BandwidthHints for src on node0:dev0 → all devs on node1.
+
+    Each (src, dst) pair gets a single path forcing the rail
+    (0:src → 0:i → 1:i) with weight 1.0, so BandwidthAggregation routes
+    the full buffer along that path instead of discovering its own.
+    """
     node0 = cluster_info.nodes[0]
     node1 = cluster_info.nodes[1]
     node0_id = uuid.UUID(node0.node_id)
@@ -163,10 +203,11 @@ def _build_rail_hints(cluster_info):
             links=[Link(0.0, 1.0), Link(0.0, 1.0)],
         )
         hints.append(
-            RoutingHint(
+            BandwidthHint(
                 src=Participant(node0_id, src_dev),
                 dst=Participant(node1_id, dst_dev),
-                path=path,
+                paths=[path],
+                weights=[1.0],
             )
         )
     return hints
@@ -179,6 +220,7 @@ def main():
     end_bytes = parse_num_bytes(args.e)
     sizes = _build_size_list(begin_bytes, end_bytes, args.f)
     register_sizes = [parse_num_bytes(s) for s in args.register_sizes]
+    pipeline_chunks = [parse_num_bytes(s) for s in args.pipeline_chunks]
     copy_mode = CopyMode(args.mode)
 
     # Build env_vars for actors
@@ -190,46 +232,78 @@ def main():
         env_vars[key] = value
     env_vars = env_vars or None
 
-    if not ray.is_initialized():
-        ray.init(address=args.ray_address, log_to_driver=False)
+    # Two cluster modes:
+    #   --cluster-info: connect to a pre-spawned cluster (e.g. spawned by
+    #     boot_virtual_cluster.py for single-host testing).  Register size
+    #     is fixed at boot time, so the outer register-size loop collapses
+    #     to a single iteration labeled "preset".
+    #   --ray-address: spawn a fresh Setu Cluster() per register-size.
+    if args.cluster_info is not None:
+        # Skip ray.init: connect_prespawned reads ray_address from the YAML
+        # and connects there.
+        prespawned = connect_prespawned(args.cluster_info)
+        register_iterations = [(None, "preset", prespawned)]
+        if args.register_sizes != ["1M"]:  # non-default
+            print(
+                "Warning: --register-sizes is ignored when --cluster-info is "
+                "set; register size is fixed by the spawned cluster."
+            )
+    else:
+        if args.ray_address is None:
+            raise SystemExit(
+                "Either --cluster-info or --ray-address must be provided."
+            )
+        if not ray.is_initialized():
+            ray.init(address=args.ray_address, log_to_driver=False)
+        register_iterations = [
+            (rs, f"reg_{_human_label(rs)}", None) for rs in register_sizes
+        ]
 
     print(f"=== sweep_rail_hints ===")
     print(f"Output:          {args.output_dir}")
-    print(f"Register sizes:  {[_human_label(r) for r in register_sizes]}")
+    if args.cluster_info is not None:
+        print(f"Cluster:         pre-spawned ({args.cluster_info})")
+    else:
+        print(f"Register sizes:  {[_human_label(r) for r in register_sizes]}")
     print(f"Data sizes:      {_human_label(sizes[0])} .. {_human_label(sizes[-1])} ({len(sizes)} points)")
+    print(f"Pipeline chunks: {[_human_label(c) for c in pipeline_chunks] if pipeline_chunks else 'none'}")
     print(f"Mode:            {copy_mode.value}")
     blocking_str = "blocking" if args.blocking else "non-blocking"
     print(f"Rounds:          {args.rounds} + {args.warmup_rounds} warmup, {blocking_str}")
     print()
 
-    for register_size in register_sizes:
-        reg_label = f"reg_{_human_label(register_size)}"
+    for register_size, reg_label, prespawned_info in register_iterations:
         reg_dir = os.path.join(args.output_dir, reg_label)
         os.makedirs(reg_dir, exist_ok=True)
 
-        print(f"--- Register size: {_human_label(register_size)} ---")
-
-        # Start cluster with log capture
-        cluster_log_path = os.path.join(reg_dir, "cluster.log")
-        with open(cluster_log_path, "w") as log_f:
-            with contextlib.redirect_stdout(log_f), contextlib.redirect_stderr(log_f):
-                cluster = Cluster(
-                    passes=["shortest_path_routing"],
-                    register_size=register_size,
-                    env_vars=env_vars,
-                )
-                cluster_info = cluster.start()
-
-        # Write cluster info YAML for reference
-        Path(os.path.join(reg_dir, "cluster.yaml")).write_text(cluster_info.to_yaml())
+        cluster = None
+        if prespawned_info is not None:
+            cluster_info = prespawned_info
+            print(f"--- Pre-spawned cluster ---")
+        else:
+            print(f"--- Register size: {_human_label(register_size)} ---")
+            # Start cluster with log capture
+            cluster_log_path = os.path.join(reg_dir, "cluster.log")
+            with open(cluster_log_path, "w") as log_f:
+                with contextlib.redirect_stdout(log_f), contextlib.redirect_stderr(log_f):
+                    cluster = Cluster(
+                        passes=["bandwidth_aggregation", "pipelining"],
+                        register_size=register_size,
+                        env_vars=env_vars,
+                    )
+                    cluster_info = cluster.start()
+            # Write cluster info YAML for reference
+            Path(os.path.join(reg_dir, "cluster.yaml")).write_text(
+                cluster_info.to_yaml()
+            )
 
         assert len(cluster_info.nodes) == 2, (
             f"Expected 2 nodes, got {len(cluster_info.nodes)}"
         )
 
-        print(f"  Cluster started: {cluster_info.num_nodes} nodes, {cluster_info.total_gpus} GPUs")
+        print(f"  Cluster: {cluster_info.num_nodes} nodes, {cluster_info.total_gpus} GPUs")
 
-        rail_schedule = Schedule(hints=_build_rail_hints(cluster_info))
+        rail_hints = _build_rail_hints(cluster_info)
 
         failed = 0
         for data_size in sizes:
@@ -245,10 +319,39 @@ def main():
                 "dst_t", cluster_info, data_size, specs=["1"]
             )
 
+            # Each variant pins its own pass list so cluster-level pass
+            # registration doesn't accidentally pull pipelining into the
+            # baseline / rail_hints runs.
+            variants = [
+                ("baseline", Schedule(passes=["bandwidth_aggregation"])),
+                (
+                    "rail_hints",
+                    Schedule(
+                        hints=list(rail_hints),
+                        passes=["bandwidth_aggregation"],
+                    ),
+                ),
+            ]
+            for chunk_bytes in pipeline_chunks:
+                variants.append((
+                    f"rail_pipe_{_human_label(chunk_bytes)}",
+                    Schedule(
+                        hints=list(rail_hints) + [
+                            PipelineChunkSizeHint(chunk_bytes)
+                        ],
+                        passes=["bandwidth_aggregation", "pipelining"],
+                    ),
+                ))
+
             variant_results = []
-            for variant, variant_hints in [("baseline", None), ("rail_hints", rail_schedule.hints)]:
+            for variant, variant_schedule in variants:
                 point_dir = os.path.join(reg_dir, size_label, variant)
                 os.makedirs(point_dir, exist_ok=True)
+
+                # The runner expects a callable ctx -> Schedule.  Bind the
+                # per-variant Schedule via a default arg to avoid late-binding
+                # surprises if `variants` is ever extended.
+                variant_schedule_fn = lambda ctx, s=variant_schedule: s
 
                 bench_log_path = os.path.join(point_dir, "bench.log")
                 with open(bench_log_path, "w") as log_f:
@@ -262,7 +365,7 @@ def main():
                             n_copy_rounds=args.rounds,
                             n_warmup_rounds=args.warmup_rounds,
                             blocking=args.blocking,
-                            hints=variant_hints,
+                            schedule=variant_schedule_fn,
                         )
 
                 result.dump_csv(point_dir)
@@ -274,7 +377,8 @@ def main():
             print(", ".join(variant_results))
 
         print(f"  Done ({failed} failures)")
-        cluster.stop()
+        if cluster is not None:
+            cluster.stop()
         print()
 
     print("=== Sweep complete ===")
