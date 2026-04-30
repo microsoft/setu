@@ -57,8 +57,12 @@ struct ExecuteRequest : public BaseRequest {
 
   static ExecuteRequest Deserialize(const BinaryRange& range);
 
-  const CopyOperationId copy_op_id;
-  const Plan node_plan;
+  // NOTE: removed `const` from these members so the implicit move-ctor is
+  // not deleted; otherwise boost::concurrent::sync_queue::pull() falls back
+  // to copy via std::move_if_noexcept and pays a deep-copy of the Plan on
+  // every dequeue (~1.7 ms / message in the Sarvam-30B-TP=2 workload).
+  CopyOperationId copy_op_id;
+  Plan node_plan;
 };
 using ExecuteRequestPtr = std::shared_ptr<ExecuteRequest>;
 
