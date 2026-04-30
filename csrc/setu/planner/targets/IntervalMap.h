@@ -24,15 +24,17 @@ namespace setu::planner::targets {
 
 /// Stores (interval, value) pairs over a std::size_t offset space.
 ///
+/// Backed by an AVL-balanced interval tree with subtree-max-end
+/// augmentation. Overlap queries are O(log N + k) where k is the number
+/// of entries that actually overlap the query, not the number of entries
+/// with `start < query_end`. This is the real fix for workloads with many
+/// scattered intervals where a flat-vector linear scan or a non-augmented
+/// std::multimap both degrade to O(N) per query.
+///
 /// No invariant about disjointness of stored intervals: callers that want
 /// "latest writer per byte" semantics pair Insert with SupersedeRange;
 /// callers that want "all readers since the last write" semantics just
 /// Insert and periodically SupersedeRange to clear.
-///
-/// The public interface intentionally hides the representation so a
-/// different backing store (for example a balanced interval tree with
-/// max-end augmentation) can replace the flat-vector body without
-/// touching call sites.
 template <typename V>
 class IntervalMap {
  public:
@@ -42,98 +44,181 @@ class IntervalMap {
     V value;
   };
 
-  class OverlapIterator {
-   public:
-    using iterator_category = std::forward_iterator_tag;
-    using value_type = const Entry;
-    using reference = const Entry&;
-    using pointer = const Entry*;
-    using difference_type = std::ptrdiff_t;
+ private:
+  struct Node {
+    std::size_t start;
+    std::size_t end;
+    V value;
+    std::size_t subtree_max_end;  ///< max(end) over self and descendants
+    int height;
+    std::unique_ptr<Node> left;
+    std::unique_ptr<Node> right;
 
-    OverlapIterator() = default;
+    Node(std::size_t s, std::size_t e, V v)
+        : start(s), end(e), value(std::move(v)), subtree_max_end(e),
+          height(1) {}
+  };
 
-    [[nodiscard]] reference operator*() const { return *it_; }
-    [[nodiscard]] pointer operator->() const { return &*it_; }
-
-    OverlapIterator& operator++() {
-      ++it_;
-      AdvanceToOverlap();
-      return *this;
-    }
-
-    OverlapIterator operator++(int) {
-      auto copy = *this;
-      ++*this;
-      return copy;
-    }
-
-    [[nodiscard]] bool operator==(const OverlapIterator& other) const {
-      return it_ == other.it_;
-    }
-    [[nodiscard]] bool operator!=(const OverlapIterator& other) const {
-      return !(*this == other);
-    }
-
-   private:
-    friend class IntervalMap;
-    using Inner = typename std::vector<Entry>::const_iterator;
-
-    OverlapIterator(Inner it, Inner end, std::size_t query_start,
-                    std::size_t query_end)
-        : it_(it),
-          end_(end),
-          query_start_(query_start),
-          query_end_(query_end) {
-      AdvanceToOverlap();
-    }
-
-    void AdvanceToOverlap() {
-      while (it_ != end_ && !(it_->start < query_end_ && query_start_ < it_->end)) {
-        ++it_;
+  static int Height(const std::unique_ptr<Node>& n) {
+    return n ? n->height : 0;
+  }
+  static std::size_t MaxEnd(const std::unique_ptr<Node>& n) {
+    return n ? n->subtree_max_end : 0;
+  }
+  static void Refresh(std::unique_ptr<Node>& n) {
+    if (!n) return;
+    n->height = 1 + std::max(Height(n->left), Height(n->right));
+    n->subtree_max_end =
+        std::max({n->end, MaxEnd(n->left), MaxEnd(n->right)});
+  }
+  static int Balance(const std::unique_ptr<Node>& n) {
+    return n ? Height(n->left) - Height(n->right) : 0;
+  }
+  static std::unique_ptr<Node> RotateRight(std::unique_ptr<Node> y) {
+    auto x = std::move(y->left);
+    y->left = std::move(x->right);
+    Refresh(y);
+    x->right = std::move(y);
+    Refresh(x);
+    return x;
+  }
+  static std::unique_ptr<Node> RotateLeft(std::unique_ptr<Node> x) {
+    auto y = std::move(x->right);
+    x->right = std::move(y->left);
+    Refresh(x);
+    y->left = std::move(x);
+    Refresh(y);
+    return y;
+  }
+  static std::unique_ptr<Node> Rebalance(std::unique_ptr<Node> n) {
+    Refresh(n);
+    int bf = Balance(n);
+    if (bf > 1) {
+      if (Balance(n->left) < 0) {
+        n->left = RotateLeft(std::move(n->left));
       }
+      return RotateRight(std::move(n));
     }
-
-    Inner it_{};
-    Inner end_{};
-    std::size_t query_start_ = 0;
-    std::size_t query_end_ = 0;
-  };
-
-  class OverlapRange {
-   public:
-    [[nodiscard]] OverlapIterator begin() const { return begin_; }
-    [[nodiscard]] OverlapIterator end() const { return end_; }
-
-   private:
-    friend class IntervalMap;
-    OverlapRange(OverlapIterator begin_param, OverlapIterator end_param)
-        : begin_(begin_param), end_(end_param) {}
-
-    OverlapIterator begin_;
-    OverlapIterator end_;
-  };
-
-  /// Returns a lazy range over every entry whose [start, end) overlaps
-  /// [query_start, query_end).  Iteration order is unspecified.
-  [[nodiscard]] OverlapRange Overlaps(std::size_t query_start,
-                                      std::size_t query_end) const {
-    return OverlapRange(
-        OverlapIterator(entries_.begin(), entries_.end(), query_start,
-                        query_end),
-        OverlapIterator(entries_.end(), entries_.end(), query_start,
-                        query_end));
+    if (bf < -1) {
+      if (Balance(n->right) > 0) {
+        n->right = RotateRight(std::move(n->right));
+      }
+      return RotateLeft(std::move(n));
+    }
+    return n;
   }
 
-  /// Appends an entry.  Does not check for overlap with existing entries.
+  // BST insert keyed by `start` (ties allowed, go right).
+  static std::unique_ptr<Node> InsertImpl(std::unique_ptr<Node> n,
+                                          std::size_t s, std::size_t e,
+                                          V v) {
+    if (!n) return std::make_unique<Node>(s, e, std::move(v));
+    if (s < n->start) {
+      n->left = InsertImpl(std::move(n->left), s, e, std::move(v));
+    } else {
+      n->right = InsertImpl(std::move(n->right), s, e, std::move(v));
+    }
+    return Rebalance(std::move(n));
+  }
+
+  // Erase a single node matching (start, end). If multiple match, erases
+  // one (the first found by tree walk). Returns whether anything was erased.
+  static std::pair<std::unique_ptr<Node>, bool> EraseOne(
+      std::unique_ptr<Node> n, std::size_t s, std::size_t e) {
+    if (!n) return {nullptr, false};
+    bool erased = false;
+    if (s < n->start) {
+      auto [new_left, e_l] = EraseOne(std::move(n->left), s, e);
+      n->left = std::move(new_left);
+      erased = e_l;
+    } else if (s > n->start) {
+      auto [new_right, e_r] = EraseOne(std::move(n->right), s, e);
+      n->right = std::move(new_right);
+      erased = e_r;
+    } else if (n->end == e) {
+      // hit
+      if (!n->left) return {std::move(n->right), true};
+      if (!n->right) return {std::move(n->left), true};
+      // two children: replace with in-order successor (min of right subtree)
+      Node* succ = n->right.get();
+      while (succ->left) succ = succ->left.get();
+      // splice the successor's data into n, then erase succ from right
+      n->start = succ->start;
+      n->end = succ->end;
+      n->value = std::move(succ->value);
+      auto [new_right, _] = EraseOne(std::move(n->right), n->start, n->end);
+      n->right = std::move(new_right);
+      erased = true;
+    } else {
+      // same start, different end: try left then right (entries with same
+      // start may have been inserted right via the tie-break above).
+      auto [new_left, e_l] = EraseOne(std::move(n->left), s, e);
+      n->left = std::move(new_left);
+      if (e_l) {
+        erased = true;
+      } else {
+        auto [new_right, e_r] = EraseOne(std::move(n->right), s, e);
+        n->right = std::move(new_right);
+        erased = e_r;
+      }
+    }
+    return {Rebalance(std::move(n)), erased};
+  }
+
+  // DFS over overlapping entries with subtree-max-end pruning.
+  template <typename Fn>
+  static void OverlapsImpl(const std::unique_ptr<Node>& n, std::size_t qs,
+                           std::size_t qe, Fn& fn) {
+    if (!n || n->subtree_max_end <= qs) return;
+    OverlapsImpl(n->left, qs, qe, fn);
+    if (n->start >= qe) return;  // right subtree starts even later
+    if (qs < n->end) fn(n->start, n->end, n->value);
+    OverlapsImpl(n->right, qs, qe, fn);
+  }
+
+  std::unique_ptr<Node> root_;
+  std::size_t size_ = 0;
+
+ public:
+  /// View over overlapping entries, materialised eagerly into a small vector
+  /// so callers can iterate with the standard range-for syntax.
+  class OverlapRange {
+   public:
+    [[nodiscard]] auto begin() const { return entries_.begin(); }
+    [[nodiscard]] auto end() const { return entries_.end(); }
+    [[nodiscard]] bool empty() const { return entries_.empty(); }
+    [[nodiscard]] std::size_t size() const { return entries_.size(); }
+
+   private:
+    friend class IntervalMap;
+    std::vector<Entry> entries_;
+  };
+
+  /// Returns the entries whose [start, end) overlaps [query_start,
+  /// query_end). Iteration order is unspecified.
+  [[nodiscard]] OverlapRange Overlaps(std::size_t query_start,
+                                      std::size_t query_end) const {
+    OverlapRange out;
+    if (!root_) return out;  // common-case fast-path: empty tree.
+    auto fn = [&](std::size_t s, std::size_t e, const V& v) {
+      out.entries_.push_back(Entry{s, e, v});
+    };
+    OverlapsImpl(root_, query_start, query_end, fn);
+    return out;
+  }
+
+  /// Insert (start, end, value). Does not check for overlap with existing
+  /// entries.
   void Insert(std::size_t start, std::size_t end, V value) {
     ASSERT_VALID_ARGUMENTS(start < end,
                            "IntervalMap::Insert: empty interval [{}, {})",
                            start, end);
-    entries_.push_back(Entry{start, end, std::move(value)});
+    root_ = InsertImpl(std::move(root_), start, end, std::move(value));
+    ++size_;
   }
 
   /// Trims or erases every entry so that no byte in [range_start, range_end)
-  /// remains covered.  Entries fully covered are erased; entries straddling
+  /// remains covered. Entries fully covered are erased; entries straddling
   /// one boundary are trimmed; entries straddling both boundaries split
   /// into two remainders.
   void SupersedeRange(std::size_t range_start, std::size_t range_end) {
@@ -142,43 +227,39 @@ class IntervalMap {
         "IntervalMap::SupersedeRange: empty range [{}, {})", range_start,
         range_end);
 
-    // pop-and-swap every overlapping entry; push surviving remnants
-    // (up to two per original entry).
-    std::size_t i = 0;
-    while (i < entries_.size()) {
-      const auto& current = entries_[i];
-      const bool overlaps =
-          current.start < range_end && range_start < current.end;
-      if (!overlaps) {
-        ++i;
-        continue;
+    // Collect overlapping entries first.
+    std::vector<Entry> overlapping;
+    auto fn = [&](std::size_t s, std::size_t e, const V& v) {
+      overlapping.push_back(Entry{s, e, v});
+    };
+    OverlapsImpl(root_, range_start, range_end, fn);
+
+    // Erase each, then re-insert any remnants.
+    for (auto& o : overlapping) {
+      auto [new_root, erased] =
+          EraseOne(std::move(root_), o.start, o.end);
+      root_ = std::move(new_root);
+      ASSERT_VALID_RUNTIME(erased,
+                           "IntervalMap::SupersedeRange: failed to erase "
+                           "entry [{}, {}) that should have existed",
+                           o.start, o.end);
+      --size_;
+
+      if (o.start < range_start) {
+        Insert(o.start, range_start, o.value);
       }
-
-      const auto saved_start = current.start;
-      const auto saved_end = current.end;
-      V saved_value = std::move(entries_[i].value);
-
-      entries_[i] = std::move(entries_.back());
-      entries_.pop_back();
-      // Do NOT increment i; the swapped-in element still needs to be
-      // checked.
-
-      if (saved_start < range_start) {
-        entries_.push_back(Entry{saved_start, range_start, saved_value});
-      }
-      if (range_end < saved_end) {
-        entries_.push_back(
-            Entry{range_end, saved_end, std::move(saved_value)});
+      if (range_end < o.end) {
+        Insert(range_end, o.end, std::move(o.value));
       }
     }
   }
 
-  void Clear() { entries_.clear(); }
-  [[nodiscard]] bool Empty() const { return entries_.empty(); }
-  [[nodiscard]] std::size_t Size() const { return entries_.size(); }
-
- private:
-  std::vector<Entry> entries_;
+  void Clear() {
+    root_.reset();
+    size_ = 0;
+  }
+  [[nodiscard]] bool Empty() const { return !root_; }
+  [[nodiscard]] std::size_t Size() const { return size_; }
 };
 
 //==============================================================================
