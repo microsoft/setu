@@ -334,6 +334,7 @@ def main():
             n_warmup_rounds=n_warmup_rounds,
             blocking=args.blocking,
             schedule=schedule_spec,
+            progress_dir=args.output_dir,
         )
         print(result.pretty_print())
 

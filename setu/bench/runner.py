@@ -9,7 +9,10 @@ for client spawning and barrier synchronization.  Defaults to
 :class:`~setu.bench.backends.RayBackend` when no backend is given.
 """
 
+import csv
 import functools
+import os
+import threading
 import time
 from typing import Dict, List, Optional, Set, Union
 
@@ -24,6 +27,89 @@ logger = init_logger(__name__)
 
 # A per-dimension selection accepted by TensorSelection.where().
 DimSelection = Union[int, slice, List[int], Set[int]]
+
+# How often the parent polls the metrics server while bodies are running.
+# Trade-off: smaller = more responsive `tail -f`, more HTTP traffic.
+_STREAM_POLL_S = 2.0
+
+
+def _start_server_metrics_streamer(progress_dir, metrics_http_url):
+    """Spawn a background thread that polls the metrics server and appends
+    new per-copy reports to ``{progress_dir}/server_metrics.csv``.
+
+    Returns ``(thread, stop_event)``; both are ``None`` if streaming is
+    disabled (no ``progress_dir``).  The caller is responsible for setting
+    the stop event and joining the thread once the experiment is done.
+
+    The streamed columns mirror :meth:`ExperimentResult.dump_csv`'s
+    ``telemetry_summary.csv`` since both come from the same server
+    reports.  The file name says "server" because these are engine-side
+    timings (``e2e_time_ms``), not Python-side body timings.
+    """
+    if progress_dir is None:
+        return None, None
+    os.makedirs(progress_dir, exist_ok=True)
+    path = os.path.join(progress_dir, "server_metrics.csv")
+    f = open(path, "w", buffering=1)
+    writer = csv.writer(f)
+    writer.writerow(
+        [
+            "copy_op_id",
+            "total_bytes_transferred",
+            "compile_time_ms",
+            "e2e_time_ms",
+            "num_participants",
+            "num_workers",
+        ]
+    )
+
+    stop_event = threading.Event()
+    seen = set()
+
+    from setu.telemetry.server import MetricsClient
+
+    client = MetricsClient(metrics_http_url)
+
+    def _flush_new_reports():
+        try:
+            reports = client.get_all_reports()
+        except Exception:
+            return 0
+        n = 0
+        for op_id, report in reports.items():
+            if op_id in seen:
+                continue
+            seen.add(op_id)
+            writer.writerow(
+                [
+                    op_id,
+                    report.get("total_bytes_transferred", ""),
+                    report.get("compile_time_ms", ""),
+                    report.get("e2e_time_ms", ""),
+                    report.get("num_participants", ""),
+                    len(report.get("worker_metrics", [])),
+                ]
+            )
+            n += 1
+        if n:
+            f.flush()
+        return n
+
+    def _loop():
+        try:
+            while not stop_event.wait(_STREAM_POLL_S):
+                _flush_new_reports()
+            # Final pass after stop: catch reports that arrived between the
+            # last poll and the experiment's actual end.
+            _flush_new_reports()
+        finally:
+            f.close()
+
+    t = threading.Thread(target=_loop, name="server-metrics-streamer", daemon=True)
+    t.start()
+    return t, stop_event
+
+
 # Per-round narrowing of one side (src or dst) of a copy.  Either a single
 # mapping (reused for every measured round) or a list of mappings, one per
 # measured round.
@@ -500,6 +586,7 @@ def run_experiment(
     hints: Optional[List] = None,
     schedule=None,
     pass_names: Optional[List[str]] = None,
+    progress_dir: Optional[str] = None,
 ) -> ExperimentResult:
     """Run a copy experiment on a Setu cluster.
 
@@ -621,6 +708,15 @@ def run_experiment(
         MetricsClient(metrics_http_url).reset_reports()
     except Exception:
         logger.warning("run_experiment: failed to reset metrics", exc_info=True)
+
+    # Optional: stream server-side per-copy telemetry to a CSV that grows as
+    # the metrics server ingests reports.  Lets the user tail a long blocking
+    # run and see forward progress without waiting for the final dump.  These
+    # rows are server-side timings (engine's e2e_time_ms, not Python-side
+    # round elapsed); the file name encodes that.
+    streaming_thread, streaming_stop = _start_server_metrics_streamer(
+        progress_dir, metrics_http_url
+    )
 
     t0 = time.monotonic()
 
@@ -751,6 +847,9 @@ def run_experiment(
                 h.stop()
             except Exception:
                 pass
+        if streaming_thread is not None:
+            streaming_stop.set()
+            streaming_thread.join(timeout=10)
 
     # Collect telemetry metrics.
     metrics_reports = None
