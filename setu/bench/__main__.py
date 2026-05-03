@@ -270,17 +270,35 @@ def main():
 
     src_selections = None
     dst_selections = None
+    n_copy_rounds = args.rounds
+    n_warmup_rounds = args.warmup_rounds
 
     try:
         if yaml_mode:
             from setu.bench.copy_spec import load_selections, load_tensor_spec
 
             src, dst = load_tensor_spec(args.tensor_spec, cluster_info)
-            copies = load_selections(args.selections)
-            src_selections = copies.src
-            dst_selections = copies.dst
+            selections_list = load_selections(args.selections)
+            # YAML mode runs every copy entry back-to-back inside a single
+            # run_experiment (one cluster boot, one shard registration, one
+            # warmup).  Per-copy telemetry only makes sense in blocking mode.
+            assert args.blocking, (
+                "yaml mode requires --blocking (per-copy telemetry needs "
+                "blocking semantics)"
+            )
+            assert args.rounds == 1, (
+                f"yaml mode requires --rounds 1 (got {args.rounds}); each "
+                f"copies-entry is a single measured round"
+            )
+            assert args.warmup_rounds == 1, (
+                f"yaml mode requires --warmup-rounds 1 "
+                f"(got {args.warmup_rounds})"
+            )
+            src_selections = [s.src for s in selections_list]
+            dst_selections = [s.dst for s in selections_list]
+            n_copy_rounds = len(selections_list)
             print(f"Tensor spec: {args.tensor_spec}")
-            print(f"Selections:  {args.selections}")
+            print(f"Selections:  {args.selections} ({n_copy_rounds} copies)")
             print(
                 f"Src tensor: {src.name}, mesh_shape={src.mesh.shape}, "
                 f"axes={src.mesh.axis_names}, partition={src.partition}"
@@ -298,8 +316,8 @@ def main():
             dst = build_sharded_tensor("dst_t", cluster_info, tensor_bytes, args.dst)
 
         print(
-            f"Mode: {copy_mode.value}, rounds: {args.rounds} + "
-            f"{args.warmup_rounds} warmup, {blocking_str}"
+            f"Mode: {copy_mode.value}, rounds: {n_copy_rounds} + "
+            f"{n_warmup_rounds} warmup, {blocking_str}"
         )
         print()
 
@@ -312,8 +330,8 @@ def main():
             src_selections=src_selections,
             dst_selections=dst_selections,
             timeout=args.timeout,
-            n_copy_rounds=args.rounds,
-            n_warmup_rounds=args.warmup_rounds,
+            n_copy_rounds=n_copy_rounds,
+            n_warmup_rounds=n_warmup_rounds,
             blocking=args.blocking,
             schedule=schedule_spec,
         )

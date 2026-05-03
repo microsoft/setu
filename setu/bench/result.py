@@ -313,6 +313,7 @@ class ExperimentResult:
             w.writerow(
                 [
                     "copy_op_id",
+                    "total_bytes_transferred",
                     "compile_time_ms",
                     "e2e_time_ms",
                     "num_participants",
@@ -323,6 +324,7 @@ class ExperimentResult:
                 w.writerow(
                     [
                         op_id,
+                        report.get("total_bytes_transferred", ""),
                         report.get("compile_time_ms", ""),
                         report.get("e2e_time_ms", ""),
                         report.get("num_participants", ""),

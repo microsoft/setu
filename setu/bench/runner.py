@@ -24,6 +24,14 @@ logger = init_logger(__name__)
 
 # A per-dimension selection accepted by TensorSelection.where().
 DimSelection = Union[int, slice, List[int], Set[int]]
+# Per-round narrowing of one side (src or dst) of a copy.  Either a single
+# mapping (reused for every measured round) or a list of mappings, one per
+# measured round.
+SelectionSpec = Union[
+    None,
+    Dict[str, DimSelection],
+    List[Optional[Dict[str, DimSelection]]],
+]
 
 
 # ---------------------------------------------------------------------------
@@ -39,17 +47,17 @@ def _source_body(
     init_value,
     copy_mode,
     dst_name,
-    src_selections,
-    dst_selections,
+    src_selections_per_round,
+    dst_selections_per_round,
     n_warmup_rounds,
-    n_copy_rounds,
     blocking,
     hints=None,
     schedule=None,
     cluster_info=None,
     pass_names=None,
 ):
-    """Register a source shard, fill with init_value, then run N copy rounds.
+    """Register a source shard, fill with init_value, then run one copy per
+    entry in ``*_selections_per_round``.
 
     Plain function (no generator).  Uses *barrier* for SPMD coordination:
         1. Register shard, fill with init_value.
@@ -61,6 +69,10 @@ def _source_body(
 
     Returns a dict with results.
     """
+    n_copy_rounds = len(src_selections_per_round)
+    assert len(dst_selections_per_round) == n_copy_rounds, (
+        "src/dst selections-per-round length mismatch"
+    )
     t_body = time.monotonic()
     tag = f"source_body[{shard_spec.name}@{shard_spec.device}]"
 
@@ -95,7 +107,7 @@ def _source_body(
 
     barrier.wait()  # all registered
 
-    def _submit_source_copy(round_index=-1):
+    def _submit_source_copy(src_sel, dst_sel, round_index=-1):
         effective_hints = hints
         effective_pass_names = pass_names
         if schedule is not None and cluster_info is not None:
@@ -113,11 +125,11 @@ def _source_body(
             effective_pass_names = sched.passes
         src_selection = client.select(shard_spec.name)
         dst_selection = client.select(dst_name)
-        if src_selections is not None:
-            for dim_name, indices in src_selections.items():
+        if src_sel is not None:
+            for dim_name, indices in src_sel.items():
                 src_selection = src_selection.where(dim_name, indices)
-        if dst_selections is not None:
-            for dim_name, indices in dst_selections.items():
+        if dst_sel is not None:
+            for dim_name, indices in dst_sel.items():
                 dst_selection = dst_selection.where(dim_name, indices)
         op_id = client.copy(
             src_selection,
@@ -129,26 +141,34 @@ def _source_body(
         return op_id
 
     # Warmup rounds — always blocking so NCCL communicators are fully initialised
-    # before the timed section.
+    # before the timed section.  Warmup uses the first round's selections.
     warmup_times = []
+    warmup_src_sel = src_selections_per_round[0] if n_copy_rounds > 0 else None
+    warmup_dst_sel = dst_selections_per_round[0] if n_copy_rounds > 0 else None
     for round_i in range(n_warmup_rounds):
         barrier.wait()  # round start
         t_round = time.monotonic()
         if copy_mode == CopyMode.COPY:
-            client.wait(_submit_source_copy(round_index=-1))
+            client.wait(
+                _submit_source_copy(warmup_src_sel, warmup_dst_sel, round_index=-1)
+            )
         elapsed = time.monotonic() - t_round
         barrier.wait()  # round end
         warmup_times.append(elapsed)
         logger.debug("%s: warmup %d complete in %.3fs", tag, round_i, elapsed)
 
-    # Measured rounds.
+    # Measured rounds — one per (src_sel, dst_sel) pair.
     round_times = []
     if blocking:
         for round_i in range(n_copy_rounds):
             barrier.wait()  # round start
             t_round = time.monotonic()
             if copy_mode == CopyMode.COPY:
-                op_id = _submit_source_copy(round_index=round_i)
+                op_id = _submit_source_copy(
+                    src_selections_per_round[round_i],
+                    dst_selections_per_round[round_i],
+                    round_index=round_i,
+                )
                 logger.debug(
                     "%s: round %d, submitted copy op %s, waiting...",
                     tag,
@@ -168,7 +188,13 @@ def _source_body(
         op_ids = []
         if copy_mode == CopyMode.COPY:
             for round_i in range(n_copy_rounds):
-                op_ids.append(_submit_source_copy(round_index=round_i))
+                op_ids.append(
+                    _submit_source_copy(
+                        src_selections_per_round[round_i],
+                        dst_selections_per_round[round_i],
+                        round_index=round_i,
+                    )
+                )
                 logger.debug("%s: round %d, submitted (non-blocking)", tag, round_i)
         for op_id in op_ids:
             client.wait(op_id)
@@ -202,23 +228,27 @@ def _dest_body(
     src_name,
     copy_mode,
     value_to_match,
-    src_selections,
-    dst_selections,
+    src_selections_per_round,
+    dst_selections_per_round,
     n_warmup_rounds,
-    n_copy_rounds,
     blocking,
     hints=None,
     schedule=None,
     cluster_info=None,
     pass_names=None,
 ):
-    """Register a dest shard, then run N copy rounds with verification on the last.
+    """Register a dest shard, then run one copy per entry in
+    ``*_selections_per_round`` with per-copy verification at the end.
 
     Plain function (no generator).  Uses *barrier* for SPMD coordination
     with the same barrier call pattern as ``_source_body``.
 
     Returns a dict with results including value verification.
     """
+    n_copy_rounds = len(src_selections_per_round)
+    assert len(dst_selections_per_round) == n_copy_rounds, (
+        "src/dst selections-per-round length mismatch"
+    )
     t_body = time.monotonic()
     tag = f"dest_body[{shard_spec.name}@{shard_spec.device}]"
 
@@ -239,7 +269,7 @@ def _dest_body(
 
     barrier.wait()  # all registered
 
-    def _submit_dest_copy(round_index=-1):
+    def _submit_dest_copy(src_sel, dst_sel, round_index=-1):
         effective_hints = hints
         effective_pass_names = pass_names
         if schedule is not None and cluster_info is not None:
@@ -257,11 +287,11 @@ def _dest_body(
             effective_pass_names = sched.passes
         src_selection = client.select(src_name)
         dst_selection = client.select(shard_spec.name)
-        if src_selections is not None:
-            for dim_name, indices in src_selections.items():
+        if src_sel is not None:
+            for dim_name, indices in src_sel.items():
                 src_selection = src_selection.where(dim_name, indices)
-        if dst_selections is not None:
-            for dim_name, indices in dst_selections.items():
+        if dst_sel is not None:
+            for dim_name, indices in dst_sel.items():
                 dst_selection = dst_selection.where(dim_name, indices)
         if copy_mode == CopyMode.PULL:
             op_id = client.pull(
@@ -280,24 +310,32 @@ def _dest_body(
         assert op_id is not None, "Copy operation returned None"
         return op_id
 
-    # Warmup rounds — always blocking.
+    # Warmup rounds — always blocking.  Warmup uses the first round's selections.
     warmup_times = []
+    warmup_src_sel = src_selections_per_round[0] if n_copy_rounds > 0 else None
+    warmup_dst_sel = dst_selections_per_round[0] if n_copy_rounds > 0 else None
     for round_i in range(n_warmup_rounds):
         barrier.wait()  # round start
         t_round = time.monotonic()
-        client.wait(_submit_dest_copy(round_index=-1))
+        client.wait(
+            _submit_dest_copy(warmup_src_sel, warmup_dst_sel, round_index=-1)
+        )
         elapsed = time.monotonic() - t_round
         barrier.wait()  # round end
         warmup_times.append(elapsed)
         logger.debug("%s: warmup %d complete in %.3fs", tag, round_i, elapsed)
 
-    # Measured rounds.
+    # Measured rounds — one per (src_sel, dst_sel) pair.
     round_times = []
     if blocking:
         for round_i in range(n_copy_rounds):
             barrier.wait()  # round start
             t_round = time.monotonic()
-            op_id = _submit_dest_copy(round_index=round_i)
+            op_id = _submit_dest_copy(
+                src_selections_per_round[round_i],
+                dst_selections_per_round[round_i],
+                round_index=round_i,
+            )
             logger.debug(
                 "%s: round %d, submit %s op %s, waiting...",
                 tag,
@@ -315,7 +353,12 @@ def _dest_body(
         barrier.wait()  # all ranks start together
         t_all = time.monotonic()
         op_ids = [
-            _submit_dest_copy(round_index=round_i) for round_i in range(n_copy_rounds)
+            _submit_dest_copy(
+                src_selections_per_round[round_i],
+                dst_selections_per_round[round_i],
+                round_index=round_i,
+            )
+            for round_i in range(n_copy_rounds)
         ]
         logger.debug(
             "%s: submitted %d %s ops (non-blocking)",
@@ -336,33 +379,44 @@ def _dest_body(
             per_round,
         )
 
-    # Verify values after all rounds complete.  Narrow the readback with the
-    # dst-side selection only: src/dst selections must be IsCompatible (same
-    # NumElements per dim) so the dst region is the source of truth for what
-    # was written.
+    # Verify values after all rounds complete.  Single readback, then narrow
+    # by each round's dst selection independently — the source is filled with
+    # value_to_match so every dst region touched by any copy must contain it.
     t_read = time.monotonic()
+    per_copy_verifications = []
     with client.read(shard_ref) as tensor:
-        view = tensor
-        if dst_selections is not None:
-            for dim_idx, dim in enumerate(shard_spec.dims):
-                if dim.name in dst_selections:
-                    indices = dst_selections[dim.name]
-                    if isinstance(indices, slice):
-                        flat = list(range(indices.start, indices.stop))
-                    elif isinstance(indices, int):
-                        flat = [indices]
-                    else:
-                        flat = list(indices)
-                    idx = torch.tensor(flat, device=tensor.device)
-                    view = view.index_select(dim_idx, idx)
-        actual_value = view.mean().item()
-        values_match = abs(actual_value - value_to_match) < 1e-5
+        for round_i in range(n_copy_rounds):
+            dst_sel = dst_selections_per_round[round_i]
+            view = tensor
+            if dst_sel is not None:
+                for dim_idx, dim in enumerate(shard_spec.dims):
+                    if dim.name in dst_sel:
+                        indices = dst_sel[dim.name]
+                        if isinstance(indices, slice):
+                            flat = list(range(indices.start, indices.stop))
+                        elif isinstance(indices, int):
+                            flat = [indices]
+                        else:
+                            flat = list(indices)
+                        idx = torch.tensor(flat, device=tensor.device)
+                        view = view.index_select(dim_idx, idx)
+            actual = view.mean().item()
+            match = abs(actual - value_to_match) < 1e-5
+            per_copy_verifications.append(
+                {"round_index": round_i, "actual_value": actual, "match": match}
+            )
+
+    values_match = all(v["match"] for v in per_copy_verifications)
+    actual_value = (
+        per_copy_verifications[-1]["actual_value"]
+        if per_copy_verifications
+        else float("nan")
+    )
     logger.debug(
-        "%s: readback took %.3fs — expected=%s actual=%s match=%s",
+        "%s: readback took %.3fs — %d copies verified, all_match=%s",
         tag,
         time.monotonic() - t_read,
-        value_to_match,
-        actual_value,
+        len(per_copy_verifications),
         values_match,
     )
 
@@ -377,6 +431,7 @@ def _dest_body(
         "expected_value": value_to_match,
         "actual_value": actual_value,
         "values_match": values_match,
+        "per_copy_verifications": per_copy_verifications,
     }
 
 
@@ -436,8 +491,8 @@ def run_experiment(
     dst: ShardedTensor,
     copy_mode: CopyMode = CopyMode.PULL,
     init_value: float = 42.0,
-    src_selections: Optional[Dict[str, DimSelection]] = None,
-    dst_selections: Optional[Dict[str, DimSelection]] = None,
+    src_selections: SelectionSpec = None,
+    dst_selections: SelectionSpec = None,
     timeout: float = 60.0,
     n_copy_rounds: int = 1,
     n_warmup_rounds: int = 0,
@@ -457,23 +512,51 @@ def run_experiment(
         dst: ShardedTensor describing the destination.
         copy_mode: PULL (one-sided) or COPY (two-sided).
         init_value: Value to fill source tensors with.
-        src_selections: Optional dim name -> selection narrowing the src
-            side.  Each value is an int, list of ints, or slice (mirrors
-            ``TensorSelection.where()``).
-        dst_selections: Optional dim name -> selection narrowing the dst
-            side.  Same value forms as ``src_selections``.  Per-dim element
-            counts must match the src side or the engine will reject the
-            copy as incompatible.
+        src_selections: Either a single dim name -> selection mapping
+            (reused for every measured round) or a list of such mappings,
+            one per measured round.  Each value is an int, list of ints,
+            or slice (mirrors ``TensorSelection.where()``).  Pass a list
+            to run a sequence of distinct copies back-to-back without
+            paying setup costs again.
+        dst_selections: Same shape options as ``src_selections``; if both
+            are lists they must have the same length.  Per-dim element
+            counts on the dst side must match the src side or the engine
+            will reject the copy as incompatible.
         timeout: Timeout in seconds for the entire experiment.
         n_copy_rounds: Number of *measured* copy rounds to execute.
+            Ignored when either selection argument is a list — in that
+            case the list length determines the round count.
         n_warmup_rounds: Number of warmup rounds executed before the measured
-            rounds.  Warmup rounds run the same copy logic but their timings
-            are excluded from the reported results.  Use this to absorb
-            one-time costs like NCCL communicator initialisation.
+            rounds.  Warmup rounds always use the first measured round's
+            selections; their timings are excluded from the reported
+            results.  Use this to absorb one-time costs like NCCL
+            communicator initialisation.
 
     Returns:
         ExperimentResult with timing and per-shard results.
     """
+    # Normalise selections to a per-round list.  Single-dict (or None) input
+    # is reused n_copy_rounds times; list input fixes the round count.
+    src_is_list = isinstance(src_selections, list)
+    dst_is_list = isinstance(dst_selections, list)
+    if src_is_list or dst_is_list:
+        if src_is_list and dst_is_list:
+            assert len(src_selections) == len(dst_selections), (
+                f"src_selections (len {len(src_selections)}) and dst_selections "
+                f"(len {len(dst_selections)}) must have the same length"
+            )
+            src_per_round = list(src_selections)
+            dst_per_round = list(dst_selections)
+        elif src_is_list:
+            src_per_round = list(src_selections)
+            dst_per_round = [dst_selections] * len(src_per_round)
+        else:
+            dst_per_round = list(dst_selections)
+            src_per_round = [src_selections] * len(dst_per_round)
+        n_copy_rounds = len(src_per_round)
+    else:
+        src_per_round = [src_selections] * n_copy_rounds
+        dst_per_round = [dst_selections] * n_copy_rounds
     from setu.bench.backends import backend_for
 
     backend = backend_for(cluster_info)
@@ -486,14 +569,11 @@ def run_experiment(
     n_total = len(src_shards) + len(dst_shards)
 
     logger.debug(
-        "run_experiment: mode=%s init_value=%s src_selections=%s "
-        "dst_selections=%s timeout=%s n_copy_rounds=%d n_warmup_rounds=%d "
-        "n_total_clients=%d",
+        "run_experiment: mode=%s init_value=%s n_copy_rounds=%d "
+        "n_warmup_rounds=%d n_total_clients=%d (src/dst selections per round "
+        "logged by client bodies)",
         copy_mode,
         init_value,
-        src_selections,
-        dst_selections,
-        timeout,
         n_copy_rounds,
         n_warmup_rounds,
         n_total,
@@ -560,10 +640,9 @@ def run_experiment(
                 init_value=init_value,
                 copy_mode=copy_mode,
                 dst_name=dst.name,
-                src_selections=src_selections,
-                dst_selections=dst_selections,
+                src_selections_per_round=src_per_round,
+                dst_selections_per_round=dst_per_round,
                 n_warmup_rounds=n_warmup_rounds,
-                n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
                 hints=hints,
                 schedule=schedule,
@@ -582,10 +661,9 @@ def run_experiment(
                 src_name=src.name,
                 copy_mode=copy_mode,
                 value_to_match=init_value,
-                src_selections=src_selections,
-                dst_selections=dst_selections,
+                src_selections_per_round=src_per_round,
+                dst_selections_per_round=dst_per_round,
                 n_warmup_rounds=n_warmup_rounds,
-                n_copy_rounds=n_copy_rounds,
                 blocking=blocking,
                 hints=hints,
                 schedule=schedule,
@@ -636,11 +714,27 @@ def run_experiment(
                     f"{result.get('error')}"
                 )
             elif not result.get("values_match", True):
-                errors.append(
-                    f"Dest shard {result['shard_name']}: value mismatch "
-                    f"expected={result['expected_value']} "
-                    f"actual={result['actual_value']}"
-                )
+                bad = [
+                    v
+                    for v in result.get("per_copy_verifications", [])
+                    if not v["match"]
+                ]
+                if bad:
+                    detail = ", ".join(
+                        f"round={v['round_index']} actual={v['actual_value']}"
+                        for v in bad
+                    )
+                    errors.append(
+                        f"Dest shard {result['shard_name']}: value mismatch "
+                        f"expected={result['expected_value']} "
+                        f"in {len(bad)} copies [{detail}]"
+                    )
+                else:
+                    errors.append(
+                        f"Dest shard {result['shard_name']}: value mismatch "
+                        f"expected={result['expected_value']} "
+                        f"actual={result['actual_value']}"
+                    )
 
     except Exception as e:
         errors.append(str(e))

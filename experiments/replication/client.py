@@ -210,8 +210,11 @@ if yaml_mode:
 
     src, dst = load_tensor_spec(args.tensor_spec, cluster_info)
     copies = load_selections(args.selections)
-    src_selections = copies.src
-    dst_selections = copies.dst
+    assert len(copies) == 1, (
+        f"replication client supports one copy entry; got {len(copies)}"
+    )
+    src_selections = copies[0].src
+    dst_selections = copies[0].dst
     print(f"Tensor spec: {args.tensor_spec}")
     print(f"Selections:  {args.selections}")
     print(

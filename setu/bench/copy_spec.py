@@ -4,8 +4,9 @@ A *tensor-spec* file describes the src and dst tensors and their layouts
 (mesh + partition + device placement) over a running cluster.
 
 A *selections* file describes the per-dim narrowing applied to the src and
-dst when issuing a copy.  Today exactly one ``copies:`` entry is required;
-multi-copy semantics will be defined later.
+dst when issuing a copy.  The file always wraps copies in a list; each
+entry produces one independent copy operation, executed sequentially in
+file order.
 """
 
 from dataclasses import dataclass
@@ -201,12 +202,11 @@ class CopySelections:
     dst: Dict[str, DimSelection]
 
 
-def load_selections(path: str) -> CopySelections:
-    """Parse a selections.yaml into a single CopySelections.
+def load_selections(path: str) -> List[CopySelections]:
+    """Parse a selections.yaml into a list of CopySelections, in file order.
 
-    The file format always wraps copies in a list, but for now we assert
-    exactly one entry; multi-copy playback semantics are intentionally
-    undefined.
+    Every entry under ``copies:`` produces one CopySelections; callers run
+    them sequentially as independent copy operations.
     """
     raw = yaml.safe_load(Path(path).read_text())
     if not isinstance(raw, dict) or "copies" not in raw:
@@ -215,22 +215,11 @@ def load_selections(path: str) -> CopySelections:
     copies = raw["copies"]
     if not isinstance(copies, list) or not copies:
         raise ValueError(f"selections {path}: 'copies' must be a non-empty list")
-    if len(copies) != 1:
-        raise NotImplementedError(
-            f"selections {path}: got {len(copies)} copy entries; multi-copy "
-            f"playback is not yet defined (one copy per file for now)"
-        )
 
-    entry = copies[0]
-    if not isinstance(entry, dict) or "src" not in entry or "dst" not in entry:
-        raise ValueError(
-            f"selections {path}: each copy entry must have 'src' and 'dst' mappings"
-        )
-
-    def _parse_side(side: str, raw_side: Any) -> Dict[str, DimSelection]:
+    def _parse_side(idx: int, side: str, raw_side: Any) -> Dict[str, DimSelection]:
         if not isinstance(raw_side, dict):
             raise ValueError(
-                f"selections {path}: copies[0].{side} must be a mapping of "
+                f"selections {path}: copies[{idx}].{side} must be a mapping of "
                 f"dim_name -> selection"
             )
         return {
@@ -238,7 +227,17 @@ def load_selections(path: str) -> CopySelections:
             for dim_name, value in raw_side.items()
         }
 
-    return CopySelections(
-        src=_parse_side("src", entry["src"]),
-        dst=_parse_side("dst", entry["dst"]),
-    )
+    parsed: List[CopySelections] = []
+    for idx, entry in enumerate(copies):
+        if not isinstance(entry, dict) or "src" not in entry or "dst" not in entry:
+            raise ValueError(
+                f"selections {path}: copies[{idx}] must have 'src' and 'dst' "
+                f"mappings"
+            )
+        parsed.append(
+            CopySelections(
+                src=_parse_side(idx, "src", entry["src"]),
+                dst=_parse_side(idx, "dst", entry["dst"]),
+            )
+        )
+    return parsed
