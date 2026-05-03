@@ -16,6 +16,13 @@ from typing import Any, Dict, List, Tuple
 import torch
 import yaml
 
+# Use the libyaml-backed C loader when available; the pure-Python loader
+# is unusably slow on large selections.yaml files (10s of MB).
+try:
+    from yaml import CSafeLoader as _SafeLoader
+except ImportError:
+    from yaml import SafeLoader as _SafeLoader
+
 from setu._commons.datatypes import TensorDim
 from setu._coordinator import Participant
 from setu.bench.cluster_setup import resolve_device_specs
@@ -128,7 +135,7 @@ def load_tensor_spec(
       * src and dst have identical dim names and sizes (in matching order).
       * src.dtype == dst.dtype.
     """
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.load(Path(path).read_text(), Loader=_SafeLoader)
     if not isinstance(raw, dict) or "src" not in raw or "dst" not in raw:
         raise ValueError(
             f"tensor_spec {path}: top-level must contain 'src' and 'dst' keys"
@@ -208,7 +215,7 @@ def load_selections(path: str) -> List[CopySelections]:
     Every entry under ``copies:`` produces one CopySelections; callers run
     them sequentially as independent copy operations.
     """
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.load(Path(path).read_text(), Loader=_SafeLoader)
     if not isinstance(raw, dict) or "copies" not in raw:
         raise ValueError(f"selections {path}: top-level must contain a 'copies' list")
 
